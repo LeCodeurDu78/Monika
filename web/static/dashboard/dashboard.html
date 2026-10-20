@@ -1,0 +1,70 @@
+<!-- Dashboard fragment, injected into index.html by server.py. -->
+<link rel="stylesheet" href="/dashboard/dashboard.css">
+<button id="dash-toggle" type="button" aria-controls="dash" aria-expanded="false">Tableau de bord</button>
+
+<aside id="dash" aria-labelledby="dash-title" data-token="__DASHBOARD_TOKEN__" inert>
+    <header class="top">
+        <div>
+            <h1 id="dash-title">Ce que Monika sait et fait</h1>
+            <p id="status" class="status">Chargement…</p>
+        </div>
+        <button id="dash-close" type="button" class="quiet" aria-label="Fermer le tableau de bord">Fermer</button>
+    </header>
+
+    <main>
+        <section id="live" aria-labelledby="live-title">
+            <h2 id="live-title">En ce moment</h2>
+            <div id="live-body"></div>
+        </section>
+
+        <section id="knowledge" aria-labelledby="knowledge-title">
+            <div class="section-head">
+                <h2 id="knowledge-title">Ce qu'elle sait de toi</h2>
+                <span id="facts-count" class="count"></span>
+            </div>
+            <input id="facts-filter" type="search" placeholder="Filtrer les souvenirs" aria-label="Filtrer les souvenirs" autocomplete="off">
+            <div id="facts-state" class="state" role="status"></div>
+            <ol id="facts" class="facts"></ol>
+            <p class="note">Ce sont les faits de la mémoire rapide, ceux qu'elle relit avant chaque réponse. Les projets et décisions de la mémoire longue ne sont pas listés ici : demande-lui « que sais-tu de… ».</p>
+        </section>
+
+        <section id="journal" aria-labelledby="journal-title">
+            <h2 id="journal-title">Journal d'actions</h2>
+            <div id="failures" class="failures"></div>
+            <div class="filters">
+                <label>État
+                    <select id="f-status">
+                        <option value="">Tous</option>
+                        <option value="failed">Échecs</option>
+                        <option value="ok">Réussis</option>
+                    </select>
+                </label>
+                <label>Origine
+                    <select id="f-source">
+                        <option value="">Toutes</option>
+                        <option value="agent">Conversation</option>
+                        <option value="fond">Tâche de fond</option>
+                        <option value="tableau de bord">Tableau de bord</option>
+                    </select>
+                </label>
+                <label>Outil
+                    <input id="f-tool" type="text" list="tool-names" placeholder="ex. web_search" autocomplete="off">
+                    <datalist id="tool-names"></datalist>
+                </label>
+            </div>
+            <div class="table-wrap">
+                <table>
+                    <thead>
+                        <tr><th>Heure</th><th>Origine</th><th>Outil</th><th>Arguments</th><th class="num">Durée</th><th>État</th></tr>
+                    </thead>
+                    <tbody id="actions"></tbody>
+                </table>
+            </div>
+            <div id="actions-state" class="state" role="status"></div>
+            <button id="more" type="button" class="quiet" hidden>Afficher plus</button>
+        </section>
+    </main>
+</aside>
+
+<div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+<script type="module" src="/dashboard/dashboard.js"></script>

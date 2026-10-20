@@ -1,0 +1,12 @@
+# Qdrant pour le RAG de Monika (le mode local de qdrant-client ne tient pas la charge pour tout un dossier personnel).
+#   docker compose -f dev_animations/docker-compose.qdrant.yml up -d
+# Lié à 127.0.0.1 : aucune authentification n'est configurée, ne l'expose pas sur le réseau.
+services:
+  qdrant:
+    image: qdrant/qdrant:latest
+    container_name: monika-qdrant
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6333:6333"
+    volumes:
+      - ${HOME}/.config/monika/rag/qdrant_storage:/qdrant/storage

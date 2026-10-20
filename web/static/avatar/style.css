@@ -1,0 +1,39 @@
+:root {
+    --aura-idle: #6ee7ff;
+    --aura-listening: #7dd3fc;
+    --aura-thinking: #c4b5fd;
+    --aura-speaking: #fb7185;
+}
+
+html, body {
+    margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden;
+    background: radial-gradient(ellipse at 50% 30%, #0b3603 0%, #0c1a0b 60%, #060b05 100%);
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+}
+
+#canvas-holder { position: fixed; inset: 0; }
+canvas { display: block; }
+
+#status-pill {
+    position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%);
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 18px; border-radius: 999px;
+    background: rgb(19 32 15 / 0.55);
+    border: 1px solid rgba(255,255,255,0.08);
+    backdrop-filter: blur(10px);
+    color: #e5e7ff; font-size: 14px; letter-spacing: 0.02em;
+    box-shadow: 0 8px 30px rgba(0,0,0,0.35);
+    transition: box-shadow 0.4s ease;
+}
+
+#status-dot {
+    width: 9px; height: 9px; border-radius: 50%;
+    background: var(--aura-idle);
+    box-shadow: 0 0 12px 3px var(--aura-idle);
+    transition: background-color 0.5s ease, box-shadow 0.5s ease;
+}
+
+#loading {
+    position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+    color: #a4d19a; font-size: 14px; letter-spacing: 0.05em; z-index: 10;
+}

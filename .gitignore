@@ -1,0 +1,6 @@
+.env
+.venv
+.idea
+monika.zip
+__pycache__
+tools/__pycache__

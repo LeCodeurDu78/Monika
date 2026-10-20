@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="fr">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <!-- Import map FIRST: it is ignored if a module script (e.g. the injected dashboard) comes before it. -->
+        <script type="importmap">
+            {
+              "imports": {
+                "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+              }
+            }
+        </script>
+        <link rel="stylesheet" href="/avatar/style.css">
+        <title>Monika</title>
+    </head>
+    <body>
+        <div id="canvas-holder"></div>
+        <div id="loading">Chargement de Monika…</div>
+
+        <div id="status-pill">
+            <div id="status-dot"></div>
+            <span id="status-label">Au repos</span>
+        </div>
+
+        <!--DASHBOARD-->
+
+        <script type="module" src="/avatar/script.js"></script>
+    </body>
+</html>

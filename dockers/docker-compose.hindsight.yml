@@ -1,0 +1,53 @@
+# Serveur Hindsight (mémoire long terme de Monika).
+#
+#   docker compose -f docker-compose.hindsight.yml up -d
+#   docker logs -f hindsight        # le 1er démarrage télécharge ~1 Go de modèles
+#
+# API : http://localhost:8888 (HINDSIGHT_BASE_URL)   |   interface web : http://localhost:9999
+# Les ${...} sont lus dans le .env de Monika : HINDSIGHT_LLM_* (LLM propre à Hindsight, voir plus bas),
+# à défaut LLM_BASE_URL, OPENAI_API_KEY et MODEL_NAME.
+# Après toute modification : relancer la commande « up -d » (un simple « docker restart » ne relit pas le .env).
+
+services:
+  hindsight:
+    image: ghcr.io/vectorize-io/hindsight:latest
+    container_name: hindsight
+    restart: unless-stopped
+    ports:
+      - "8888:8888"
+      - "9999:9999"
+    extra_hosts:
+      - "host.docker.internal:host-gateway" # pour joindre un LLM qui tourne sur ta machine (Linux)
+    environment:
+      # --- LLM de Hindsight : extraction des faits et réflexion ---
+      # Indépendant du LLM de Monika. À régler dans le .env (une variable absente reprend la valeur de Monika) :
+      #   HINDSIGHT_LLM_PROVIDER  openai (défaut : tout endpoint compatible OpenAI) | anthropic | gemini | groq |
+      #                           openrouter | ollama | lmstudio | ...
+      #   HINDSIGHT_LLM_MODEL     nom du modèle                      (sinon MODEL_NAME)
+      #   HINDSIGHT_LLM_API_KEY   clé réservée à Hindsight            (sinon OPENAI_API_KEY)
+      #   HINDSIGHT_LLM_BASE_URL  URL de l'API                        (sinon LLM_BASE_URL)
+      #
+      # Si tu changes de fournisseur, définis AUSSI HINDSIGHT_LLM_BASE_URL : vide (« HINDSIGHT_LLM_BASE_URL= »)
+      # pour utiliser l'URL du fournisseur, sinon l'URL de ton LLM principal serait reprise.
+      # Si ton LLM tourne sur ta machine, « localhost » désigne ici le conteneur :
+      # utilise HINDSIGHT_LLM_BASE_URL=http://host.docker.internal:<port>/v1.
+      HINDSIGHT_API_LLM_PROVIDER: ${HINDSIGHT_LLM_PROVIDER:-openai}
+      HINDSIGHT_API_LLM_BASE_URL: ${HINDSIGHT_LLM_BASE_URL-${LLM_BASE_URL}}
+      HINDSIGHT_API_LLM_API_KEY: ${HINDSIGHT_LLM_API_KEY:-${OPENAI_API_KEY}}
+      HINDSIGHT_API_LLM_MODEL: ${HINDSIGHT_LLM_MODEL:-${MODEL_NAME:-qwen3.8-27b}}
+
+      # --- Français : les modèles par défaut de Hindsight (embeddings, reranker, BM25) sont anglais ---
+      HINDSIGHT_API_EMBEDDINGS_LOCAL_MODEL: sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
+      HINDSIGHT_API_RERANKER_LOCAL_MODEL: cross-encoder/mmarco-mMiniLMv2-L12-H384-v1
+      HINDSIGHT_API_TEXT_SEARCH_EXTENSION_NATIVE_LANGUAGE: french
+
+      HF_HOME: /home/hindsight/.pg0/hf-cache
+      HINDSIGHT_API_MODEL_INIT_TIMEOUT: "1800"
+
+      HF_HUB_DISABLE_XET: "1"
+      HF_HUB_DOWNLOAD_TIMEOUT: "30"
+    volumes:
+      - hindsight-data:/home/hindsight/.pg0 # base PostgreSQL embarquée : tes souvenirs
+
+volumes:
+  hindsight-data:
