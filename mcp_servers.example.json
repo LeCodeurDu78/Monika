@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "fichiers": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "${HOME}"],
+      "slow_tools": {
+        "search_files": ["Je cherche dans tes fichiers, une seconde.", "Je fouille un peu, patiente."]
+      }
+    },
+    "exemple_http": {
+      "enabled": false,
+      "url": "http://127.0.0.1:8000/mcp",
+      "headers": {"Authorization": "Bearer ${MON_TOKEN}"},
+      "slow": true
+    }
+  }
+}

@@ -1,183 +1,222 @@
-"""Qdrant access: one collection with a dense vector and a sparse vector (BM25, server-side IDF)."""
+"""Document index storage: llama-index vector store on a local Qdrant folder, plus the models."""
 
+from __future__ import annotations
+
+import asyncio
+import functools
 import os
-import threading
 import uuid
-from pathlib import Path
-from typing import Iterable, Optional
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass
+from typing import Any
 
-from qdrant_client import QdrantClient, models
+from monika.config import Settings
+from monika.embeddings import lookup_dims
+from monika.paths import Paths
+from rag import lexical
+from rag.chunking import Chunk, Position
+from rag.manifest import Manifest
+from rag.rerank import FastembedReranker, Reranker
 
-from core.settings import settings
-
-DENSE = "dense"
-SPARSE = "bm25"
-_LOCAL_MODE_WARN_POINTS = 20_000
-_UPSERT_BATCH = 128
-
-
-def point_id(path: str, index: int) -> str:
-    """Deterministic identifier: re-indexing a file overwrites its old chunks instead of duplicating them."""
-    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"{path}#{index}"))
-
-
-def normalize_prefix(path: str) -> str:
-    return os.path.abspath(os.path.expanduser(path)).rstrip(os.sep) or os.sep
+COLLECTION = "monika_docs"
+SCHEMA = "v1"
+_NAMESPACE = uuid.UUID("6f0c1d1e-3a43-4a54-9f6e-0d4c1b7a9e11")
 
 
-class VectorStore:
-    def __init__(self) -> None:
-        self._client: Optional[QdrantClient] = None
-        self._lock = threading.RLock()  # Qdrant's local mode is not thread-safe
-        self._ready = False
-        self._warned_local = False
+class RagError(Exception):
+    """The document index cannot work; the message is in French."""
 
-    @property
-    def is_local(self) -> bool:
-        return not settings.RAG_QDRANT_URL
 
-    def _get_client(self) -> QdrantClient:
-        if self._client is None:
-            if settings.RAG_QDRANT_URL:
-                self._client = QdrantClient(
-                    url=settings.RAG_QDRANT_URL, api_key=settings.RAG_QDRANT_API_KEY, timeout=60
-                )
-            else:
-                path = settings.RAG_QDRANT_PATH or (settings.APP_DIR / "rag" / "qdrant")
-                Path(path).mkdir(parents=True, exist_ok=True)
-                self._client = QdrantClient(path=str(path))
-        return self._client
+@dataclass
+class Hit:
+    """One retrieved passage with everything needed to cite it."""
 
-    def ensure_collection(self) -> None:
-        with self._lock:
-            if self._ready:
-                return
-            client = self._get_client()
-            name = settings.RAG_COLLECTION
-            if not client.collection_exists(name):
-                client.create_collection(
-                    collection_name=name,
-                    vectors_config={
-                        DENSE: models.VectorParams(
-                            size=settings.RAG_EMBED_DIMS, distance=models.Distance.COSINE, on_disk=True
-                        )
-                    },
-                    sparse_vectors_config={SPARSE: models.SparseVectorParams(modifier=models.Modifier.IDF)},
-                )
-                if not self.is_local:  # payload indexes do not exist in local mode
-                    for field in ("path", "ancestors"):
-                        client.create_payload_index(name, field, models.PayloadSchemaType.KEYWORD)
-            else:
-                params = client.get_collection(name).config.params.vectors
-                size = params[DENSE].size if isinstance(params, dict) and DENSE in params else None
-                if size is not None and size != settings.RAG_EMBED_DIMS:
-                    raise RuntimeError(
-                        f"La collection '{name}' a des vecteurs de dimension {size}, mais RAG_EMBED_DIMS="
-                        f"{settings.RAG_EMBED_DIMS}. Change de modèle = nouvelle collection : supprime-la "
-                        f"(python -m rag reset) ou change RAG_COLLECTION."
-                    )
-            self._ready = True
+    path: str
+    display: str
+    kind: str
+    position: Position
+    text: str
+    score: float
 
-    def reset(self) -> None:
-        with self._lock:
-            client = self._get_client()
-            if client.collection_exists(settings.RAG_COLLECTION):
-                client.delete_collection(settings.RAG_COLLECTION)
-            self._ready = False
+    def citation(self) -> str:
+        return f"{self.display} — {self.position.label()}"
 
-    def upsert(self, points: list[models.PointStruct]) -> None:
-        with self._lock:
-            self.ensure_collection()
-            client = self._get_client()
-            for i in range(0, len(points), _UPSERT_BATCH):
-                client.upsert(settings.RAG_COLLECTION, points=points[i : i + _UPSERT_BATCH])
-            self._warn_if_local_is_large(client)
 
-    def delete_path(self, path: str) -> None:
-        with self._lock:
-            self.ensure_collection()
-            self._get_client().delete(
-                settings.RAG_COLLECTION,
-                points_selector=models.FilterSelector(
-                    filter=models.Filter(
-                        must=[models.FieldCondition(key="path", match=models.MatchValue(value=path))]
-                    )
-                ),
-            )
+def file_id_for(path: str) -> str:
+    return uuid.uuid5(_NAMESPACE, path).hex
 
-    def delete_ids(self, ids: Iterable[str]) -> None:
-        ids = list(ids)
-        if not ids:
-            return
-        with self._lock:
-            self.ensure_collection()
-            self._get_client().delete(
-                settings.RAG_COLLECTION, points_selector=models.PointIdsList(points=ids)
-            )
 
-    def count(self) -> int:
-        with self._lock:
-            self.ensure_collection()
-            return self._get_client().count(settings.RAG_COLLECTION, exact=False).count
+def build_nodes(path: str, display: str, kind: str, chunks: list[Chunk]) -> list[Any]:
+    """Turn chunks into llama-index nodes whose embedded text includes the file name."""
+    from llama_index.core.schema import NodeRelationship, RelatedNodeInfo, TextNode
 
-    def search(
-        self,
-        dense: list[float],
-        sparse: Optional[models.SparseVector],
-        limit: int,
-        prefix: Optional[str] = None,
-    ) -> list[models.ScoredPoint]:
-        """Hybrid search: dense + BM25, fused by RRF (or dense only if the query has no term)."""
-        flt = None
-        if prefix:
-            flt = models.Filter(
-                must=[models.FieldCondition(key="ancestors", match=models.MatchValue(value=normalize_prefix(prefix)))]
-            )
-        with self._lock:
-            self.ensure_collection()
-            client = self._get_client()
-            if sparse is None:
-                result = client.query_points(
-                    settings.RAG_COLLECTION, query=dense, using=DENSE, limit=limit,
-                    query_filter=flt, with_payload=True,
-                )
-            else:
-                # The filter must be repeated in each prefetch: it does not propagate from the final query.
-                result = client.query_points(
-                    settings.RAG_COLLECTION,
-                    prefetch=[
-                        models.Prefetch(query=dense, using=DENSE, limit=limit, filter=flt),
-                        models.Prefetch(query=sparse, using=SPARSE, limit=limit, filter=flt),
-                    ],
-                    query=models.FusionQuery(fusion=models.Fusion.RRF),
-                    limit=limit,
-                    with_payload=True,
-                )
-        return list(result.points)
+    file_id = file_id_for(path)
+    nodes = []
+    for i, chunk in enumerate(chunks):
+        node = TextNode(
+            id_=str(uuid.uuid5(_NAMESPACE, f"{file_id}:{i}")),
+            text=chunk.text,
+            metadata={"file": display, "path": path, "kind": kind, "pos_kind": chunk.position.kind,
+                      "pos_start": chunk.position.start, "pos_end": chunk.position.end},
+            # Only the file name takes part in the embedding and keyword text; positions do not
+            excluded_embed_metadata_keys=["path", "kind", "pos_kind", "pos_start", "pos_end"],
+            excluded_llm_metadata_keys=["path", "kind", "pos_kind", "pos_start", "pos_end"],
+        )
+        node.relationships[NodeRelationship.SOURCE] = RelatedNodeInfo(node_id=file_id)
+        nodes.append(node)
+    return nodes
 
-    def _warn_if_local_is_large(self, client: QdrantClient) -> None:
-        if not self.is_local or self._warned_local:
-            return
+
+class RagStore:
+    """Owns the Qdrant client, the manifest and the models; every call runs on a dedicated thread."""
+
+    def __init__(self, settings: Settings, paths: Paths, client: Any, manifest: Manifest,
+                 dims: int, embed_model: Any | None, reranker: Reranker | None) -> None:
+        self._s = settings
+        self._paths = paths
+        self._client = client
+        self.manifest = manifest
+        self._dims = dims
+        self._embed = embed_model
+        self._reranker = reranker
+        self._vs = self._build_vector_store()
+        # One thread per resource: local Qdrant is not concurrent, and the ONNX models are heavy
+        self._qdrant_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="monika-rag-qdrant")
+        self._embed_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="monika-rag-embed")
+        self._rerank_pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="monika-rag-rerank")
+
+    @staticmethod
+    def fingerprint_for(settings: Settings) -> str:
+        return (f"{settings.rag_embedding_model}|{settings.rag_chunk_chars}|"
+                f"{settings.rag_chunk_overlap_chars}|{SCHEMA}")
+
+    @classmethod
+    def create(cls, settings: Settings, paths: Paths, embed_model: Any | None = None,
+               dims: int | None = None, reranker: Reranker | None = None,
+               ignore_fingerprint: bool = False) -> RagStore:
+        """Open the index (blocking). Models are loaded lazily, on first use.
+
+        ignore_fingerprint lets a reset open an index built with other settings.
+        """
+        paths.rag.mkdir(parents=True, exist_ok=True)
+        manifest = Manifest(paths.rag_manifest)
+        existing = manifest.fingerprint()
+        expected = cls.fingerprint_for(settings)
+        if existing and existing != expected and not ignore_fingerprint:
+            manifest.close()
+            raise RagError(
+                "L'index a été construit avec d'autres réglages (modèle d'embeddings ou taille des "
+                "passages). Reconstruis-le avec : python -m monika --rag-index --reset")
+        dims = dims or lookup_dims(settings.rag_embedding_model)
+        if dims is None:
+            manifest.close()
+            raise RagError(f"Modèle d'embeddings inconnu de fastembed : "
+                           f"{settings.rag_embedding_model}. Vérifie RAG_EMBEDDING_MODEL.")
         try:
-            total = client.count(settings.RAG_COLLECTION).count
-        except Exception:
-            return
-        if total > _LOCAL_MODE_WARN_POINTS:
-            self._warned_local = True
-            print(
-                f"⚠️ [RAG] {total} extraits en mode Qdrant local (recherche brute en mémoire, de plus en plus "
-                "lente). Passe à un serveur : docker compose -f dev_animations/docker-compose.qdrant.yml up -d "
-                "puis RAG_QDRANT_URL=http://localhost:6333."
-            )
+            from qdrant_client import QdrantClient
 
+            client = QdrantClient(path=str(paths.rag_qdrant))
+        except Exception as exc:
+            manifest.close()
+            text = str(exc)
+            if "already accessed" in text:
+                raise RagError("Index des documents indisponible : une autre instance de Monika "
+                               f"utilise déjà {paths.rag_qdrant}.") from exc
+            raise RagError(f"Index des documents indisponible : {type(exc).__name__}: {text[:300]}") from exc
+        if not existing:
+            manifest.set_fingerprint(expected)
+        reranker = reranker or (FastembedReranker(settings.rag_reranker_model, cls._threads(settings))
+                                if settings.rag_rerank_enabled else None)
+        return cls(settings, paths, client, manifest, dims, embed_model, reranker)
 
-_store: Optional[VectorStore] = None
-_store_lock = threading.Lock()
+    @staticmethod
+    def _threads(settings: Settings) -> int:
+        return settings.rag_threads or max(1, (os.cpu_count() or 2) // 2)
 
+    def _build_vector_store(self) -> Any:
+        from llama_index.vector_stores.qdrant import QdrantVectorStore
+        from qdrant_client import models
 
-def get_store() -> VectorStore:
-    global _store
-    with _store_lock:
-        if _store is None:
-            _store = VectorStore()
-        return _store
+        return QdrantVectorStore(
+            collection_name=COLLECTION, client=self._client, enable_hybrid=True,
+            # Own keyword encoder: no model to download, accent-insensitive, understands identifiers
+            sparse_doc_fn=lexical.encode_documents, sparse_query_fn=lexical.encode_queries,
+            sparse_config=models.SparseVectorParams(modifier=models.Modifier.IDF),
+            dense_config=models.VectorParams(size=self._dims, distance=models.Distance.COSINE),
+            index_doc_id=False,  # Payload indexes are not supported (and warn) in local mode
+            batch_size=64)
+
+    def _embedder(self) -> Any:
+        if self._embed is None:
+            from llama_index.embeddings.fastembed import FastEmbedEmbedding
+
+            self._embed = FastEmbedEmbedding(
+                model_name=self._s.rag_embedding_model, threads=self._threads(self._s),
+                embed_batch_size=self._s.rag_embed_batch)
+        return self._embed
+
+    async def _run(self, pool: ThreadPoolExecutor, fn: Any, *args: Any, **kwargs: Any) -> Any:
+        return await asyncio.get_running_loop().run_in_executor(
+            pool, functools.partial(fn, *args, **kwargs))
+
+    async def embed_texts(self, texts: list[str]) -> list[list[float]]:
+        return await self._run(self._embed_pool, lambda: self._embedder().get_text_embedding_batch(texts))
+
+    async def embed_query(self, text: str) -> list[float]:
+        return await self._run(self._embed_pool, lambda: self._embedder().get_query_embedding(text))
+
+    async def add_nodes(self, nodes: list[Any]) -> None:
+        await self._run(self._qdrant_pool, self._vs.add, nodes)
+
+    async def delete_file(self, file_id: str) -> None:
+        await self._run(self._qdrant_pool, self._vs.delete, ref_doc_id=file_id)
+
+    async def query(self, text: str, vector: list[float], k: int, alpha: float) -> list[Hit]:
+        from llama_index.core.vector_stores.types import VectorStoreQuery, VectorStoreQueryMode
+
+        def run() -> Any:
+            if not self._client.collection_exists(COLLECTION):
+                return None
+            return self._vs.query(VectorStoreQuery(
+                query_embedding=vector, query_str=text, similarity_top_k=k, sparse_top_k=k,
+                hybrid_top_k=k, mode=VectorStoreQueryMode.HYBRID, alpha=alpha))
+
+        result = await self._run(self._qdrant_pool, run)
+        hits = []
+        for node, score in zip(getattr(result, "nodes", None) or [], getattr(result, "similarities", None) or []):
+            meta = node.metadata
+            hits.append(Hit(path=meta["path"], display=meta["file"], kind=meta["kind"],
+                            position=Position(meta["pos_kind"], int(meta["pos_start"]), int(meta["pos_end"])),
+                            text=node.get_content(), score=float(score)))
+        return hits
+
+    async def rerank(self, query: str, texts: list[str]) -> list[float]:
+        if self._reranker is None:
+            raise RagError("reranking désactivé")
+        return await self._run(self._rerank_pool, self._reranker.score, query, texts)
+
+    async def count_points(self) -> int:
+        def run() -> int:
+            return self._client.count(COLLECTION).count if self._client.collection_exists(COLLECTION) else 0
+        return await self._run(self._qdrant_pool, run)
+
+    async def reset(self) -> None:
+        """Forget everything: vectors, manifest, and adopt the current settings fingerprint."""
+        def run() -> None:
+            if self._client.collection_exists(COLLECTION):
+                self._client.delete_collection(COLLECTION)
+            self._vs = self._build_vector_store()
+        await self._run(self._qdrant_pool, run)
+        self.manifest.clear()
+        self.manifest.set_fingerprint(self.fingerprint_for(self._s))
+
+    async def close(self) -> None:
+        def run() -> None:
+            try:
+                self._client.close()
+            except Exception:  # Closing is best effort
+                pass
+        await self._run(self._qdrant_pool, run)
+        self.manifest.close()
+        for pool in (self._qdrant_pool, self._embed_pool, self._rerank_pool):
+            pool.shutdown(wait=False)

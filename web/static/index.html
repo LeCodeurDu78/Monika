@@ -1,31 +1,33 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="fr">
-    <head>
-        <meta charset="UTF-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <!-- Import map FIRST: it is ignored if a module script (e.g. the injected dashboard) comes before it. -->
-        <script type="importmap">
-            {
-              "imports": {
-                "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
-                "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
-              }
-            }
-        </script>
-        <link rel="stylesheet" href="/avatar/style.css">
-        <title>Monika</title>
-    </head>
-    <body>
-        <div id="canvas-holder"></div>
-        <div id="loading">Chargement de Monika…</div>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Monika</title>
+  <meta name="monika-token" content="__MONIKA_TOKEN__">
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <header class="top">
+    <h1>Monika</h1>
+    <span id="state-chip" class="chip" data-state="idle" role="status" aria-live="polite">Au repos</span>
+    <span id="link-chip" class="chip chip-quiet" data-link="off">Connexion…</span>
+    <span id="meta" class="meta"></span>
+  </header>
 
-        <div id="status-pill">
-            <div id="status-dot"></div>
-            <span id="status-label">Au repos</span>
-        </div>
+  <main class="layout">
+    <section class="stage" aria-label="Avatar">
+      <canvas id="avatar" aria-label="Avatar 3D de Monika"></canvas>
+      <p id="stage-note" class="stage-note" hidden></p>
+    </section>
 
-        <!--DASHBOARD-->
+    <section class="panels" aria-label="Tableau de bord">
+      <article class="panel" id="p-context"><h2>Contexte</h2><div class="body"></div></article>
+      <article class="panel" id="p-memory"><h2>Mémoire</h2><div class="body"></div></article>
+    </section>
+  </main>
 
-        <script type="module" src="/avatar/script.js"></script>
-    </body>
+  <script type="module" src="/static/dashboard.js"></script>
+</body>
 </html>

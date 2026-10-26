@@ -1,0 +1,446 @@
+"""Command-line entry point: python -m """
+
+from __future__ import annotations
+
+import argparse
+import asyncio
+from contextlib import asynccontextmanager
+import logging
+import sys
+import time
+from pathlib import Path
+
+from rich.console import Console
+from rich.table import Table
+from __init__ import __version__
+from agent.context import ToolOutputStore
+from agent.llm import LLMClient
+from agent.loop import Agent
+from config import ENV_FILE, Settings, get_settings
+from paths import Paths
+from security.audit import AuditLog
+from security.masking import Masker, MaskingFilter
+from tools.mcp_client import McpConfigError, McpManager, load_mcp_config
+from memory.capture import MemoryCapture
+from memory.fast import FastMemory, MemoryUnavailable
+from rag.service import RagError, RagService
+from tools.internal import (register_document_tools, register_memory_tools,
+                                   register_result_reader)
+from tools.registry import ToolRegistry
+
+console = Console()
+
+
+def dotenv_for_mcp() -> dict[str, str]:
+    """Values of the project's .env, so ${VARIABLE} in mcp_servers.json can use them (e.g. an API key)."""
+    from dotenv import dotenv_values
+
+    return {k: v for k, v in dotenv_values(ENV_FILE).items() if v is not None}
+
+
+def setup_logging(settings: Settings) -> Masker:
+    """Configure logging with secret masking and return the masker."""
+    masker = Masker(settings.secret_values())
+    handler = logging.StreamHandler()
+    handler.addFilter(MaskingFilter(masker))
+    logging.basicConfig(
+        level=settings.log_level,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+        handlers=[handler],
+        force=True,
+    )
+    # HTTP libraries log every request at INFO, which clutters the chat
+    for noisy in ("httpx", "httpx2", "httpcore", "openai"):
+        logging.getLogger(noisy).setLevel(max(logging.WARNING, logging.getLogger().level))
+    return masker
+
+
+def show_config(settings: Settings, paths: Paths) -> None:
+    table = Table(title=f"Configuration de Monika v{__version__}")
+    table.add_column("Réglage", style="cyan")
+    table.add_column("Valeur")
+    for name, value in settings.public_dict().items():
+        table.add_row(name.upper(), value)
+    console.print(table)
+    env_state = "trouvé" if ENV_FILE.exists() else "absent (valeurs par défaut)"
+    console.print(f"Fichier .env : {ENV_FILE} — {env_state}")
+    console.print(f"Dossier de données : {paths.home}")
+
+
+async def load_fast_memory(settings: Settings, paths: Paths) -> FastMemory | None:
+    """Start the fast memory, or explain clearly why it is unavailable."""
+    if not settings.fast_memory_enabled:
+        console.print("[dim]Mémoire rapide désactivée (FAST_MEMORY_ENABLED=false).[/dim]")
+        return None
+    console.print("[dim]Chargement de la mémoire (le premier lancement télécharge le modèle "
+                  "d'embeddings, environ 1 Go)…[/dim]")
+    try:
+        memory = await asyncio.to_thread(FastMemory.create, settings, paths)
+    except MemoryUnavailable as exc:
+        console.print(f"[red]{exc}[/red]\nDémarrage sans mémoire rapide.")
+        return None
+    console.print("[green]✓[/green] Mémoire rapide prête.")
+    return memory
+
+
+def load_rag(settings: Settings, paths: Paths, ignore_fingerprint: bool = False) -> RagService | None:
+    """Open the document index (models load lazily), or explain why it is unavailable."""
+    if not settings.rag_enabled:
+        console.print("[dim]Index de documents désactivé (RAG_ENABLED=false).[/dim]")
+        return None
+    try:
+        return RagService.create(settings, paths, ignore_fingerprint=ignore_fingerprint)
+    except RagError as exc:
+        console.print(f"[red]{exc}[/red]\nDémarrage sans index de documents.")
+        return None
+
+
+async def run_rag_command(settings: Settings, paths: Paths, args: argparse.Namespace) -> int:
+    """--rag-index / --rag-status / --rag-search, run in the foreground."""
+    rag = load_rag(settings, paths, ignore_fingerprint=args.reset)
+    if rag is None:
+        return 1
+    try:
+        if args.rag_search:
+            return await _rag_search(rag, " ".join(args.rag_search))
+        if args.rag_index is not None:
+            roots = [Path(p).expanduser().resolve() for p in args.rag_index] or None
+            console.print("Indexation de : " + ", ".join(str(r) for r in (roots or settings.rag_root_paths())))
+            console.print("[dim]Le premier lancement télécharge le modèle d'embeddings (environ 1 Go). "
+                          "Ctrl+C interrompt ; la prochaine fois, seuls les fichiers nouveaux ou modifiés "
+                          "seront traités.[/dim]")
+            rag.start_sync(roots, reset=args.reset)
+            last = ""
+            while rag.running:
+                await asyncio.sleep(1.0)
+                p = rag.progress
+                line = f"{p.state} : {p.processed}/{p.total} fichiers, {p.chunks} passages — {p.current}"
+                if line != last and p.state == "indexation":
+                    console.print(f"[dim]{line}[/dim]")
+                    last = line
+            console.print(rag.progress.summary())
+            return 1 if rag.progress.state == "échec" else 0
+        console.print(await rag.status_text())
+        return 0
+    except KeyboardInterrupt:
+        await rag.stop_sync()
+        console.print("\nIndexation interrompue (reprise possible).")
+        return 130
+    finally:
+        await rag.close()
+
+
+async def _rag_search(rag: RagService, query: str) -> int:
+    start = time.perf_counter()
+    try:
+        outcome = await rag.search(query)
+    except Exception as exc:
+        console.print(f"[red]Échec de la recherche :[/red] {type(exc).__name__}: {exc}")
+        return 1
+    if outcome.index_empty:
+        console.print("Aucun document indexé : lance d'abord python -m monika --rag-index")
+        return 0
+    how = "hybride + reranking" if outcome.reranked else "hybride"
+    console.print(f"{len(outcome.hits)} passage(s) en {time.perf_counter() - start:.1f} s (recherche {how})")
+    if outcome.warning:
+        console.print(f"[yellow]{outcome.warning}[/yellow]")
+    for i, hit in enumerate(outcome.hits, start=1):
+        console.print(f"\n[bold][{i}] {hit.citation()}[/bold]  (score {hit.score:.2f})")
+        console.out(hit.text[:600], highlight=False)
+    return 0
+
+
+@asynccontextmanager
+async def open_tools(settings: Settings, paths: Paths, masker: Masker):
+    """Connect the MCP servers (if any) and yield the audited tool registry."""
+    registry = ToolRegistry(
+        AuditLog(paths.audit_log, masker, settings.audit_enabled, settings.audit_max_chars))
+    try:
+        servers = load_mcp_config(paths.mcp_config)
+    except McpConfigError as exc:
+        console.print(f"[red]{exc}[/red]\nDémarrage sans outils.")
+        servers = {}
+    if not servers:
+        console.print("[dim]Aucun outil : pas de serveur MCP configuré "
+                      f"({paths.mcp_config}).[/dim]")
+        yield registry
+        return
+    async with McpManager(servers, registry, paths.logs, settings.mcp_start_timeout_s,
+                          settings.mcp_call_timeout_s, extra_env=dotenv_for_mcp()) as manager:
+        for st in manager.statuses:
+            mark = "[green]✓[/green]" if st.ok else "[red]✗[/red]"
+            console.print(f"{mark} MCP {st.name} : {st.detail}")
+        yield registry
+
+
+async def start_voice(settings: Settings, paths: Paths):
+    """Open the microphone and load the speech models; returns a VoiceListener, or None with a message."""
+    from voice.audio import ParecSource
+    from voice.errors import VoiceError
+    from voice.listener import VoiceListener
+    from voice.stt import Transcriber
+    from voice.vad import SileroStreamingVAD
+
+    transcriber = Transcriber(settings, paths)
+    probe = ParecSource(settings.audio_input_device)
+    try:  # Fail fast on a missing or wrong microphone, before any model download
+        await probe.start()
+        await probe.read_frame()
+    except VoiceError as exc:
+        console.print(f"[red]{exc}[/red]")
+        return None
+    finally:
+        await probe.close()
+    console.print(f"[dim]Chargement de la reconnaissance vocale (Whisper « {settings.stt_model} » ; "
+                  "le premier lancement télécharge le modèle)…[/dim]")
+    try:
+        seconds = await transcriber.load()
+        listener = VoiceListener(ParecSource(settings.audio_input_device), SileroStreamingVAD(),
+                                 transcriber, settings)
+        await listener.start()
+    except VoiceError as exc:
+        console.print(f"[red]{exc}[/red]")
+        return None
+    except Exception as exc:  # e.g. missing onnxruntime or a broken install
+        console.print(f"[red]Reconnaissance vocale indisponible : {type(exc).__name__}: {exc}[/red]")
+        return None
+    console.print(f"[green]✓[/green] Reconnaissance vocale prête (modèle chargé en {seconds:.1f} s).")
+    return listener
+
+
+async def start_speech(settings: Settings, paths: Paths, voice: bool, on_level=None):
+    """Load the voice (XTTS v2); returns a Speaker, or None with a clear message (answers stay on screen)."""
+    import shutil
+
+    from voice.errors import VoiceError
+    from voice.playback import PacatSink
+    from voice.speaker import Speaker
+    from voice.tts import XttsEngine
+
+    if not settings.tts_enabled:
+        if voice:
+            console.print("[dim]Synthèse vocale désactivée (TTS_ENABLED=false) : réponses à l'écran seulement.[/dim]")
+        return None
+    if not voice and not settings.tts_text_mode:
+        return None
+    if shutil.which("pacat") is None:  # Checked first: the model download is long
+        console.print("[red]pacat est introuvable[/red] : installe libpulse (sudo pacman -S libpulse). "
+                      "[yellow]Je continue sans voix : mes réponses s'afficheront à l'écran seulement.[/yellow]")
+        return None
+    console.print(f"[dim]Chargement de la voix (XTTS v2, d'après tes enregistrements dans {paths.voice} ; "
+                  "le premier lancement télécharge environ 1,9 Go)…[/dim]")
+    engine = XttsEngine(settings, paths)
+    try:
+        seconds = await engine.load()
+    except VoiceError as exc:
+        console.print(f"[red]{exc}[/red]")
+        console.print("[yellow]Je continue sans voix : mes réponses s'afficheront à l'écran seulement.[/yellow]")
+        engine.close()
+        return None
+    except Exception as exc:  # e.g. a broken PyTorch install
+        console.print(f"[red]Synthèse vocale indisponible : {type(exc).__name__}: {exc}[/red]")
+        console.print("[yellow]Je continue sans voix : mes réponses s'afficheront à l'écran seulement.[/yellow]")
+        engine.close()
+        return None
+    cached = ", voix analysée en cache" if engine.latents_cached else ""
+    console.print(f"[green]✓[/green] Voix prête sur {engine.device.upper()} (chargée en {seconds:.1f} s{cached}).")
+    if engine.fallback_reason:
+        console.print(f"[yellow]⚠ {engine.fallback_reason} : la voix tourne sur le CPU, c'est plus lent. "
+                      "Libère de la mémoire GPU pour laisser plus de place au modèle.[/yellow]")
+    for warning in engine.warnings:
+        console.print(f"[yellow]⚠ {warning}[/yellow]")
+    return Speaker(engine, PacatSink(engine.sample_rate, settings.audio_output_device, on_level=on_level))
+
+
+async def start_web(settings: Settings, paths: Paths, voice: bool):
+    """Start the local page (avatar and dashboard); returns (hub, dashboard, server) or None with a message."""
+    if not settings.web_enabled:
+        return None
+    from web.dashboard import Dashboard
+    from web.hub import Hub
+    from web.server import WebError, WebServer
+
+    hub = Hub()
+    dashboard = Dashboard(settings, paths, hub, mode="voix" if voice else "texte")
+    server = WebServer(hub, dashboard.snapshot, settings.web_port, actions=dashboard.actions())
+    try:
+        await server.start()
+    except WebError as exc:
+        console.print(f"[yellow]{exc} Je continue sans la page web.[/yellow]")
+        return None
+    console.print(f"[green]✓[/green] Page de Monika (avatar et tableau de bord) : {server.url} "
+                  "[dim](visible depuis cet ordinateur seulement)[/dim]")
+    return hub, dashboard, server
+
+
+async def run_chat(settings: Settings, paths: Paths, masker: Masker, voice: bool = False) -> int:
+    """Start the chat: keyboard (text mode) or microphone (voice mode), with tools, memory and documents."""
+    from modes.text import TextSession
+
+    listener = None
+    if voice:
+        listener = await start_voice(settings, paths)
+        if listener is None:
+            return 1
+    console.print(f"[dim]Modèle {settings.model_name} via {settings.llm_base_url}[/dim]")
+    store = ToolOutputStore(paths.tool_results, settings.tool_result_max_chars)
+    store.purge(settings.tool_results_keep_days)
+    memory = await load_fast_memory(settings, paths)
+    capture = None
+    if memory and settings.memory_capture_enabled:
+        capture = MemoryCapture([memory.capture], settings.memory_capture_min_chars)
+    rag = load_rag(settings, paths)
+    web = await start_web(settings, paths, voice)
+    hub = web[0] if web else None
+    speaker = await start_speech(settings, paths, voice, on_level=hub.on_level if hub else None)
+    try:
+        async with open_tools(settings, paths, masker) as registry:
+            if memory:
+                register_memory_tools(registry, memory)
+            if rag:
+                register_document_tools(registry, rag)
+                if rag._store.manifest.counts()["indexed"] == 0:
+                    console.print("[dim]Aucun document indexé : /indexer pour commencer.[/dim]")
+            if registry.tools():  # Without other tools no result is ever truncated
+                register_result_reader(registry, store)
+            llm = LLMClient(settings)
+            agent = Agent(settings, llm, registry, store, memory=memory,
+                          capture=capture, rag=rag, voice=voice)
+            if web:
+                web[1].agent = agent
+            if listener is not None:
+                from modes.voice import BANNER, BANNER_SPOKEN, VoiceReader
+
+                reader = VoiceReader(listener, lambda text: (sys.stdout.write(text), sys.stdout.flush()), speaker,
+                                     hub=hub)
+                await TextSession(agent, reader, masker=masker, speaker=speaker,
+                                  banner=BANNER_SPOKEN if speaker else BANNER,
+                                  speech_max_chars=settings.tts_max_sentence_chars, hub=hub).run()
+            else:
+                from prompt_toolkit import PromptSession
+                from prompt_toolkit.patch_stdout import patch_stdout
+
+                prompt = PromptSession()
+
+                async def read_line() -> str:
+                    return await prompt.prompt_async("Toi › ")
+
+                with patch_stdout():
+                    await TextSession(agent, read_line, masker=masker, speaker=speaker,
+                                      speech_max_chars=settings.tts_max_sentence_chars, hub=hub).run()
+    finally:
+        if web:
+            await web[2].stop()
+        if speaker is not None:
+            await speaker.close()
+            speaker.engine.close()
+        if listener is not None:
+            await listener.close()
+        if rag:
+            await rag.close()
+        if memory:
+            await memory.close()
+    return 0
+
+
+async def run_tools_command(settings: Settings, paths: Paths, masker: Masker,
+                            call: list[str] | None) -> int:
+    """List MCP servers and tools, and optionally call one tool (for checking a setup)."""
+    try:
+        servers = load_mcp_config(paths.mcp_config)
+    except McpConfigError as exc:
+        console.print(f"[red]{exc}[/red]")
+        return 1
+    if not servers:
+        console.print(f"Aucun serveur MCP configuré. Crée {paths.mcp_config} "
+                      "(modèle : mcp_servers.example.json à la racine du projet).")
+        return 0
+    audit = AuditLog(paths.audit_log, masker, settings.audit_enabled, settings.audit_max_chars)
+    registry = ToolRegistry(audit)
+    async with McpManager(servers, registry, paths.logs, settings.mcp_start_timeout_s,
+                          settings.mcp_call_timeout_s, extra_env=dotenv_for_mcp()) as manager:
+        table = Table(title="Serveurs MCP")
+        for col in ("Serveur", "État", "Détail"):
+            table.add_column(col)
+        for st in manager.statuses:
+            table.add_row(st.name, "[green]connecté[/green]" if st.ok else "[red]indisponible[/red]",
+                          st.detail)
+        console.print(table)
+        tools = Table(title="Outils")
+        for col in ("Outil", "Source", "Lent", "Description"):
+            tools.add_column(col)
+        for t in registry.tools():
+            tools.add_row(t.name, t.source, "oui" if t.slow else "", t.description.splitlines()[0][:70])
+        console.print(tools)
+        if call:
+            result = await registry.call(call[0], call[1] if len(call) > 1 else None)
+            state = "[red]ERREUR[/red]" if result.is_error else "[green]OK[/green]"
+            console.print(f"{state} ({result.duration_ms:.0f} ms) :")
+            console.out(result.text, highlight=False)
+            return 1 if result.is_error else 0
+    return 0
+
+
+def choose_mode() -> str | None:
+    """Ask which mode to start; return None if the user gives up."""
+    try:
+        answer = console.input("Mode ? [bold]t[/bold]exte / [bold]v[/bold]oix (Entrée = texte) : ")
+    except (EOFError, KeyboardInterrupt):
+        return None
+    return "voix" if answer.strip().lower().startswith("v") else "texte"
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        prog="monika", description="Monika, assistante IA personnelle locale."
+    )
+    parser.add_argument("--mode", choices=["texte", "voix"],
+                        help="Mode d'interaction (sinon demandé au lancement).")
+    parser.add_argument("--config", action="store_true",
+                        help="Affiche la configuration chargée (secrets masqués) et quitte.")
+    parser.add_argument("--rag-index", nargs="*", metavar="DOSSIER",
+                        help="Indexe tes documents (dossiers de RAG_ROOTS, ou ceux donnés) et quitte.")
+    parser.add_argument("--reset", action="store_true",
+                        help="Avec --rag-index : repart d'un index vide (après un changement de modèle).")
+    parser.add_argument("--rag-search", nargs="+", metavar="MOT",
+                        help="Cherche dans l'index de documents et quitte.")
+    parser.add_argument("--rag-status", action="store_true",
+                        help="Affiche l'état de l'index de documents et quitte.")
+    parser.add_argument("--tools", action="store_true",
+                        help="Liste les serveurs MCP et leurs outils, puis quitte.")
+    parser.add_argument("--call", nargs="+", metavar=("OUTIL", "JSON"),
+                        help="Appelle un outil, ex. --call fichiers__read_file '{\"path\": \"/tmp/a\"}'.")
+    args = parser.parse_args(argv)
+
+    try:
+        settings = get_settings()
+    except Exception as exc:  # Invalid .env values: report them in French and stop
+        console.print(f"[red]Configuration invalide :[/red] {exc}")
+        return 1
+    paths = Paths.from_settings(settings)
+    paths.ensure()
+    masker = setup_logging(settings)
+
+    if args.config:
+        show_config(settings, paths)
+        return 0
+    if args.rag_index is not None or args.rag_search or args.rag_status:
+        try:
+            return asyncio.run(run_rag_command(settings, paths, args))
+        except KeyboardInterrupt:
+            return 130
+    if args.tools or args.call:
+        return asyncio.run(run_tools_command(settings, paths, masker, args.call))
+
+    mode = args.mode or choose_mode()
+    if mode is None:
+        return 0
+    try:
+        return asyncio.run(run_chat(settings, paths, masker, voice=(mode == "voix")))
+    except KeyboardInterrupt:
+        console.print("\nÀ bientôt.")
+        return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
