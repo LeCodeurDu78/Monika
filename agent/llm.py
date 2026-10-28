@@ -70,11 +70,12 @@ class LLMClient:
 
     async def stream(self, messages: list[dict[str, Any]],
                      tools: list[dict[str, Any]] | None = None,
-                     temperature: float | None = None
+                     temperature: float | None = None,
+                     model: str | None = None
                      ) -> AsyncIterator[TextDelta | Completion]:
         """Yield TextDelta pieces, then one final Completion."""
         kwargs: dict[str, Any] = {
-            "model": self._settings.model_name,
+            "model": model or self._settings.model_name,
             "messages": messages,
             "temperature": self._settings.llm_temperature if temperature is None else temperature,
             "stream": True,
@@ -110,10 +111,11 @@ class LLMClient:
         yield Completion("".join(parts), tool_calls, finish)
 
     async def ask(self, messages: list[dict[str, Any]],
-                  tools: list[dict[str, Any]] | None = None) -> Completion:
+                  tools: list[dict[str, Any]] | None = None,
+                  temperature: float | None = None, model: str | None = None) -> Completion:
         """Run a request to the end and return the final Completion."""
         final: Completion | None = None
-        async for item in self.stream(messages, tools):
+        async for item in self.stream(messages, tools, temperature, model):
             if isinstance(item, Completion):
                 final = item
         assert final is not None

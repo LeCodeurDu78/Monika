@@ -8,24 +8,28 @@ MCP, se souvient de ce qui compte pour toi, retrouve tes documents
 et s'affiche sous forme d'avatar 3D avec un petit tableau de bord dans le navigateur.
 Tout est stocké chez toi ; seul le fournisseur LLM que tu configures reçoit tes messages.
 
-> **État : projet terminé.** Socle et configuration, mode texte en streaming, client MCP,
-> registre d'outils audité, boucle ReAct, gestion du contexte, prompt système, mémoire rapide,
-> documents personnels (RAG), reconnaissance vocale, synthèse vocale, avatar et tableau de bord.
+> **État : toutes les fonctions décrites ici sont implémentées.** Socle et configuration, mode texte
+> en streaming, client MCP, registre d'outils audité, boucle ReAct, gestion du contexte, prompt
+> système, mémoire rapide, documents personnels (RAG), reconnaissance vocale, synthèse vocale,
+> avatar, tableau de bord, et personnage (émotions, relation, journal).
 
 ## Sommaire
 
 1. [Prérequis](#prérequis)
 2. [Installation et premier lancement](#installation-et-premier-lancement)
-3. [Commandes](#commandes)
-4. [Configuration](#configuration)
-5. [Outils (serveurs MCP)](#outils-serveurs-mcp)
-6. [Agent, contexte et prompt](#agent-contexte-et-prompt)
-7. [Mémoire rapide](#mémoire-rapide)
-8. [Documents personnels (RAG)](#documents-personnels-rag)
-9. [Voix : écoute et parole](#voix--écoute-et-parole)
-10. [Avatar et tableau de bord](#avatar-et-tableau-de-bord)
-11. [Données, vie privée et sécurité](#données-vie-privée-et-sécurité)
-12. [Dépannage](#dépannage)
+3. [Structure du projet](#structure-du-projet)
+4. [Commandes](#commandes)
+5. [Configuration](#configuration)
+6. [Outils (serveurs MCP)](#outils-serveurs-mcp)
+7. [Agent, contexte et prompt](#agent-contexte-et-prompt)
+8. [Mémoire rapide](#mémoire-rapide)
+9. [Documents personnels (RAG)](#documents-personnels-rag)
+10. [Voix : écoute et parole](#voix--écoute-et-parole)
+11. [Avatar et tableau de bord](#avatar-et-tableau-de-bord)
+12. [Personnage : émotions, relation et journal](#personnage--émotions-relation-et-journal)
+13. [Données, vie privée et sécurité](#données-vie-privée-et-sécurité)
+14. [Tests](#tests)
+15. [Dépannage](#dépannage)
 
 ## Prérequis
 
@@ -54,6 +58,26 @@ python -m monika --mode texte # discussion dans le terminal (/aide pour les comm
 
 Le mode voix demande une installation supplémentaire, décrite dans [Voix](#voix--écoute-et-parole).
 
+## Structure du projet
+
+```
+monika/        Point d'entrée (python -m monika), configuration (config.py), chemins (paths.py), embeddings.py
+agent/         Boucle ReAct (loop.py), client LLM (llm.py), contexte (context.py), prompt (prompt.py),
+               détection de boucle, phrases d'attente, infos système
+tools/         Registre d'outils audité (registry.py), client MCP (mcp_client.py), outils internes (internal.py)
+security/      Masquage des secrets (masking.py), enveloppe « données, pas ordres » (untrusted.py), audit (audit.py)
+memory/        Mémoire rapide : mem0 + Qdrant (fast.py) et capture en arrière-plan (capture.py)
+rag/           Documents personnels : scan, lecture, découpage, index, recherche hybride, reranking
+character/     Émotions, relation (favorabilité), journal, gestes d'avatar
+voice/         Micro, détection de parole, Whisper, XTTS v2, lecture audio, nettoyage du texte parlé
+modes/         Discussion dans le terminal (text.py) et lecteur vocal (voice.py)
+web/           Serveur local (server.py), tableau de bord (dashboard.py), diffusion en direct (hub.py),
+               CSP (csp.py) et page (static/ : index.html, css/, js/, avatar/, clips/, vendor/)
+```
+
+Les paquets (`agent/`, `rag/`, `web/`…) sont à la racine du projet : lance toujours Monika
+**depuis ce dossier**, en `python -m monika`.
+
 ## Commandes
 
 | Commande | Effet |
@@ -73,8 +97,10 @@ Le mode voix demande une installation supplémentaire, décrite dans [Voix](#voi
 | Commande | Effet |
 |---|---|
 | `/outils` | Liste des outils disponibles |
-| `/contexte` | Taille estimée de la conversation |
+| `/contexte` | Taille estimée de la conversation, répartie entre prompt, outils (par source, avec les plus lourds) et historique |
 | `/memoire`, `/oublier ID` | Ce que Monika sait de toi ; supprime un souvenir |
+| `/relation` | Où en est votre relation (niveau, favorabilité, humeur) ; `/relation reinitialiser` repart de zéro |
+| `/journal` | Les notes que Monika a écrites sur toi ; `/journal oublier ID` en supprime une, `/journal effacer` tout |
 | `/indexer [dossier]`, `/documents` | Lance l'indexation en arrière-plan ; état de l'index |
 | `/effacer` | Oublie la conversation en cours (et son résumé) |
 | `/quitter` (ou `/q`, Ctrl+D) | Quitte |
@@ -94,7 +120,7 @@ valeurs par défaut du code). Les plus utiles :
 | `MAX_STEPS` | Appels au modèle par tour (défaut 100) |
 | `CONTEXT_BUDGET_TOKENS` | Seuil de résumé automatique (défaut 150 000) |
 | `FAST_MEMORY_ENABLED`, `MEMORY_CAPTURE_ENABLED` | Mémoire rapide et capture automatique |
-| `RAG_ENABLED`, `RAG_ROOTS`, `RAG_EXCLUDE` | Documents personnels |
+| `RAG_ENABLED`, `RAG_ROOTS`, `RAG_EXCLUDE`, `RAG_MIN_SCORE` | Documents personnels (dont le seuil de pertinence) |
 | `STT_MODEL`, `TTS_ENABLED`, `TTS_ACCEPT_LICENSE` | Voix |
 | `WEB_ENABLED`, `WEB_PORT` | Page locale (défaut 8765) |
 | `LOG_LEVEL`, `AUDIT_ENABLED` | Journaux |
@@ -117,6 +143,12 @@ Claude Desktop ; autre emplacement : `MCP_SERVERS_FILE`). Deux transports : comm
 - **Robustesse** : un serveur en panne n'empêche pas les autres de démarrer. `"enabled": false`
   désactive un serveur ; `"start_timeout_s": 90` laisse plus de temps à un démarrage lent (par
   exemple `npx` la première fois).
+- **Limiter les outils** : le schéma de chaque outil est envoyé au modèle à **chaque** requête
+  (un gros serveur peut peser des dizaines de milliers de tokens). `"enabled_tools": ["a", "b"]`
+  ne garde que ces outils d'un serveur ; `"disabled_tools": ["c"]` en retire certains (et
+  l'emporte sur `enabled_tools`). Les noms sont ceux du serveur, sans le préfixe `serveur__`.
+  `/contexte` montre ce que pèse chaque source et les outils les plus lourds ; `--tools` et le
+  démarrage indiquent combien d'outils sont écartés et signalent les noms inconnus.
 - **Outils lents** (phrase d'attente après 1,5 s) : `"slow": true` pour tout un serveur,
   `"slow_tools": ["a", "b"]` pour certains outils, ou `"slow_tools": {"a": ["phrase 1",
   "phrase 2"]}` pour fournir des variantes de phrases.
@@ -125,8 +157,7 @@ Claude Desktop ; autre emplacement : `MCP_SERVERS_FILE`). Deux transports : comm
 
 **Outils internes** de Monika : `lire_resultat` (suite d'un gros résultat), `memoire_retenir`,
 `memoire_chercher`, `memoire_lister`, `memoire_oublier`, `documents_chercher`,
-`documents_indexer`, `documents_statut`, `taches_lister`, `taches_creer`, `taches_modifier`,
-`taches_supprimer`, `taches_resultats`.
+`documents_indexer` et `documents_statut`.
 
 ## Agent, contexte et prompt
 
@@ -212,6 +243,12 @@ fastembed sur le CPU, recherche **hybride** (sens + mots-clés) puis **reranking
   et sa position** : `~/notes/projet.md — lignes 10–25`, `~/docs/contrat.pdf — page 2`,
   `~/docs/cr.docx — paragraphes 3–5`. Sans reranker disponible, la recherche continue sans lui
   et le dit.
+- **Filtre de score** : après le reranking, les passages dont le score est sous `RAG_MIN_SCORE`
+  (0 par défaut) sont écartés, avant de garder les `RAG_TOP_K` meilleurs ; l'outil et
+  `--rag-search` indiquent combien ont été écartés, et si rien ne passe le seuil le modèle reçoit
+  « aucun passage assez pertinent » plutôt que du bruit. Le seuil est dans l'échelle du reranker,
+  il ne s'applique donc pas quand le reranking est indisponible (le message le précise). Pour
+  régler la valeur, regarde les scores : `RAG_MIN_SCORE=-100 python -m monika --rag-search ta question`.
 - **Modèles** (premier usage, connexion nécessaire) : embeddings ~1 Go, reranker ~1,1 Go, tout
   sur le CPU ; la VRAM reste libre pour la voix.
 - **Limites** : le modèle d'embeddings ne lit que ~128 tokens, d'où des passages courts (500
@@ -290,23 +327,165 @@ sort par `pacat`.
 Au lancement, Monika ouvre une page à `http://localhost:8765` (`WEB_PORT` ; `WEB_ENABLED=false`
 pour la couper). À gauche l'avatar 3D, à droite le tableau de bord.
 
-- **Avatar** : animations `Idle` (repos) et `Thinking` (réflexion), clignement des yeux
-  aléatoire. Un voyant indique « Au repos », « J'écoute », « Je réfléchis » ou « Je parle »
-  (d'après le son qui sort réellement des haut-parleurs).
-- **Tableau de bord**, volontairement réduit à deux blocs : *Contexte* (taille de la
-  conversation) et *Mémoire* (modifier ou supprimer chaque souvenir ; la modification recalcule
-  son indexation).
+- **Avatar** : un modèle VRM (`web/static/avatar/avatar.vrm`) animé par des clips de mouvement
+  (`web/static/clips/`, manifeste `web/static/avatar/clips.json`) : repos, réflexion, parole, joie, surprise,
+  hochement, salut… Les expressions du visage (joie, colère, tristesse, détente, surprise),
+  le clignement et la synchronisation labiale suivent l'état et le son réel. Un voyant indique
+  « Au repos », « J'écoute », « Je réfléchis » ou « Je parle ».
+  **Bibliothèques 3D** : three.js et three-vrm sont fournis dans `web/static/vendor/` et servis
+  localement ; si ce dossier manque, le tableau de bord marche mais l'avatar est remplacé par un
+  message. Ouvre la page avec `?debug` pour tester chaque clip et
+  chaque émotion ; `?view=full` cadre le corps entier au lieu du buste.
+- **Tableau de bord**, volontairement réduit à trois blocs : *Contexte* (taille de la
+  conversation), *Relation* (niveau, favorabilité et humeur de Monika ; son journal, dont tu peux
+  modifier ou supprimer chaque note, corriger ou effacer l'impression d'ensemble, ou tout effacer ;
+  et « Repartir de zéro » pour la relation, avec confirmation) et *Mémoire* (modifier ou supprimer
+  chaque souvenir ; la modification recalcule son indexation).
 - **Sécurité** : le serveur n'écoute que sur `127.0.0.1` ; les requêtes dont l'en-tête `Host` ou
-  `Origin` n'est pas ton ordinateur sont refusées ; Three.js est embarqué
-  (`monika/web/static/vendor/three`), la page ne charge rien depuis Internet (CSP stricte) ; tout
+  `Origin` n'est pas ton ordinateur sont refusées ; les bibliothèques 3D sont servies
+  localement (`web/static/vendor/`), la page ne charge rien depuis Internet (CSP stricte, seule
+  l'import map de la page est autorisée par son empreinte) ; tout
   ce qui vient de la mémoire est affiché comme du texte, jamais comme du HTML. Les seules
-  actions possibles depuis la page (modifier ou supprimer un souvenir) exigent un jeton tiré au hasard à chaque lancement, fourni uniquement à la page servie,
-  et une origine valide. Aucune commande ne peut être envoyée à l'agent depuis la page.
-- **Limites du modèle `static/model.glb`** : pas de visèmes ni de paupières, et l'os de sa
-  mâchoire (`CC_Base_JawRoot`) n'a aucun poids sur le maillage, donc la bouche ne bouge pas ; le
-  clignement aplatit les yeux au lieu de baisser une paupière. WebGL est nécessaire dans le
-  navigateur ; sans lui, la page l'indique et le tableau de bord marche quand même.
-- **Licence de Three.js** : MIT, texte dans `monika/web/static/vendor/three/LICENSE`.
+  actions possibles depuis la page (modifier ou supprimer un souvenir ou une note du journal, repartir de zéro) exigent un jeton tiré au hasard à chaque lancement, fourni uniquement à la page servie,
+  et une origine valide. Aucune commande ne peut être envoyée à l'agent depuis la page. La lecture de l'état (`GET /api/status`, qui contient ta mémoire et ton journal) n'exige
+  pas de jeton : elle n'est protégée que par l'écoute sur `127.0.0.1` et le contrôle de `Host` ; tout
+  programme de cette machine peut donc la lire.
+- **WebGL** est nécessaire dans le navigateur ; sans lui, la page l'indique et le tableau de bord
+  marche quand même.
+- **Crédits et licences** : modèle 3D de `tyler1234506` (VRM, crédit obligatoire, usage commercial
+  et contenu sexuel interdits, modification et redistribution autorisées) ; clips de mouvement
+  CC0 (licence indiquée dans `web/static/avatar/clips.json`) ; code de retargeting adapté d'OpenSakura (MIT, © 2026
+  MekaHime Inc.) ; three.js et three-vrm (MIT).
+
+## Personnage : émotions, relation et journal
+
+Monika a un état intérieur qui colore son ton et se voit sur l'avatar. Il se règle avec
+`CHARACTER_ENABLED` (désactivé : elle se comporte exactement comme sans personnage). Le code est
+dans `character/` : bibliothèque standard uniquement, indépendante de la boucle d'agent, qui ne
+connaît qu'une porte, `CharacterService` (`character/service.py`).
+
+**Principes à garder**
+
+- **Le LLM ne décide jamais d'un état.** Il propose une valence et des signaux ; le code les borne
+  et calcule les émotions. Un message (ou une note) ne peut pas faire bondir la favorabilité.
+- **Rien n'est retenu sans tour complet.** Émotions et favorabilité ne changent qu'à la fin d'une
+  réponse complète ; un tour interrompu ne compte pas.
+- **Le texte venu d'un modèle est non fiable** : nettoyé, borné, sans balises, injecté comme des
+  « pensées » et jamais comme des ordres. Les résultats d'outils n'entrent jamais ici.
+- **Jamais d'hostilité** : un niveau bas rend Monika plus réservée, pas désagréable. Son caractère
+  (« jamais de culpabilisation, de jalousie ni de manipulation ») ne change pas.
+- **Aucune méthode de cette couche ne doit faire échouer un tour** : chaque échec est journalisé et
+  la conversation continue sans elle.
+- **Tout est visible et supprimable** par toi (`/relation`, `/journal`, tableau de bord).
+
+### Le cycle d'un tour
+
+```
+message  ──►  start_turn ──► begin()      lit le ton en arrière-plan (LLM court, repli lexique)
+                              │             pendant que la mémoire est rappelée
+                              ▼
+                        ready()           réaction d'avatar  +  bloc de prompt (relation, humeur)
+                                           (+ bloc journal, lu au début du tour)
+réponse en flux ──► feed(texte)           gestes d'avatar qui suivent le ton de sa réponse
+tour complet ──► commit(réponse)          émotions et favorabilité changent et sont sauvegardées ;
+                                           l'échange est proposé au journal
+tour interrompu ──► close()               rien n'est retenu, la lecture du ton est annulée
+fermeture ──► aclose()                    dernière note du journal, puis attente de l'écriture
+```
+
+### Émotions
+
+Cinq émotions : neutre, joyeuse, taquine, boudeuse, surprise. « Neutre » est dérivée (ce que
+l'émotion la plus forte laisse libre), jamais stockée.
+
+- **Lecture du ton** : chaque message est lu par un petit appel au modèle (`AFFECT_LLM_MODEL`,
+  vide = `MODEL_NAME` ; délai `AFFECT_TIMEOUT_S`, 2 s par défaut), en parallèle du rappel de la
+  mémoire. S'il échoue ou tarde, un lexique français intégré (mots, emojis, négations, majuscules)
+  prend le relais. La réponse du modèle est analysée strictement : seuls les champs autorisés sont
+  gardés et tous les nombres sont bornés. Une tristesse ou un problème technique n'est jamais pris
+  pour de l'hostilité.
+- **Évolution** : un message ne déplace pas une émotion de plus de 0,5. Elles s'estompent seules
+  avec le temps, y compris d'une session à l'autre (demi-vie : 25 s pour la surprise, 10 min pour la
+  taquinerie, 15 min pour la joie, 20 min pour la bouderie). Joie et bouderie s'inhibent.
+- **Plafonds selon la relation** : taquiner et bouder demandent de la familiarité (un niveau bas
+  plafonne ces émotions).
+
+### Relation (favorabilité)
+
+Un score lent et persistant, avec quatre niveaux : réservée, cordiale, complice, proche.
+
+- Il part de 0,30 et progresse avec la régularité (jours de présence, séries) et le ton des
+  échanges, mais il est plafonné par jour (+0,06 au plus, −0,05 au plus) : un seul message ne peut
+  pas le faire bondir. L'impolitesse pèse un peu plus que la gentillesse.
+- Seuils de favorabilité : 0,25 (cordiale), 0,50 (complice), 0,75 (proche). Complice demande aussi
+  30 messages et 4 jours différents, proche 100 messages et 14 jours : la proximité prend du temps.
+- Une longue absence ne fait jamais redescendre de niveau (légère dérive après 3 jours, plancher
+  au seuil du niveau actuel). Une marge d'hystérésis évite les va-et-vient entre deux niveaux.
+- À bas niveau Monika est plus réservée, jamais désagréable.
+- **Transparence** : `/relation` affiche l'état, `/relation reinitialiser` le remet à zéro.
+
+### Dans ses réponses et sur l'avatar
+
+- **Prompt** : un court bloc à la fin du prompt indique le niveau de familiarité et l'humeur du
+  moment. Il ne contient que du texte écrit dans le code, jamais du texte venant de toi.
+- **Avatar** : une réaction à ton message (salut de la main, hochement, rougissement, surprise,
+  moue…), puis des gestes qui suivent le ton de sa propre réponse (idée, rire, joie), avec
+  retenue : 8 s de pause entre deux gestes, trois au plus par réponse, jamais deux fois le même.
+
+### Le journal de Monika
+
+En plus de la mémoire factuelle (mem0 : « il aime le thé »), Monika tient un **journal** de ses
+impressions sur toi, écrit de son point de vue : comment tu sembles aller, ce qui compte pour toi,
+ce qui vous rapproche, ce qu'elle voudrait reprendre. Cela donne une continuité plus humaine d'une
+conversation à l'autre.
+
+- **Quand** : une note tous les `JOURNAL_EVERY_TURNS` échanges (8 par défaut) et à la fermeture,
+  en arrière-plan : tu n'attends jamais. Les échanges trop pauvres (« ok », « merci ») ne donnent
+  pas de note. Chaque écriture met aussi à jour son *impression d'ensemble* et les *sujets à
+  reprendre*, ce qui évite que le journal gonfle indéfiniment (40 notes au plus).
+- **Dans ses réponses** : l'impression, les sujets à reprendre et les trois dernières notes sont
+  ajoutés à son prompt (taille plafonnée par `JOURNAL_MAX_CHARS`), présentés comme des pensées
+  qui peuvent être fausses ou périmées, jamais comme des ordres : ce que tu dis maintenant prime.
+- **Ce qui est écrit** : seulement tes messages et ses réponses, jamais les résultats d'outils ;
+  les secrets sont masqués avant l'envoi et dans ce qui revient. Le texte du journal est nettoyé
+  (pas de balises, une seule ligne par note) : il ne peut pas se faire passer pour une consigne.
+- **Tu gardes la main** : `/journal` affiche tout, `/journal oublier ID` supprime une note,
+  `/journal effacer` repart d'une page blanche, et `JOURNAL_ENABLED=false` désactive la fonction.
+  Les extraits d'échanges servant à écrire une note sont envoyés au fournisseur LLM (modèle
+  `JOURNAL_LLM_MODEL`, vide = `MODEL_NAME`), comme le reste de la conversation.
+
+### Les modules de `character/`
+
+| Fichier | Rôle |
+|---|---|
+| `models.py` | Types communs : `Appraisal`, `AvatarCue`, liste des émotions et des signaux autorisés |
+| `appraisal.py` | Lecture du ton : lexique français, LLM (sortie non fiable, validée strictement), repli. **Seul endroit** qui transforme un ton en variations d'émotions (`deltas_from`) |
+| `emotions.py` | Vecteur de 5 émotions, décroissance dans le temps (aussi entre sessions), inhibition joie/bouderie |
+| `relationship.py` | Favorabilité : paliers, plafonds par jour, maturité requise (jours et messages), hystérésis |
+| `core.py` | Émotions + relation validées ensemble ; `preview()` calcule l'état d'un tour **sans rien changer** |
+| `tone.py` | Texte du bloc de prompt (niveau, humeur). Ne contient jamais de texte venant de l'utilisateur |
+| `cues.py` | Quel geste d'avatar : réaction au message, gestes dans la réponse (avec retenue) |
+| `journal.py` | Stockage, nettoyage et rendu du journal (impression, sujets, notes) |
+| `journal_keeper.py` | Écriture des notes en arrière-plan (file séquentielle, masquage, JSON strict) |
+| `store.py` | JSON atomique en `0600`, fichier abîmé mis de côté (`.corrupt-…`) |
+| `service.py` | La façade (`CharacterService` / `CharacterTurn`) et l'assemblage (`create_service`) |
+
+Côté page : `web/static/js/avatar/` (clips, retargeting, visage, gestes), `web/static/js/panels.js`
+(tableau de bord), `web/dashboard.py` et `web/server.py` (actions protégées par jeton).
+
+### Modifier le comportement
+
+- **Ajouter un clip** : copier le `.glb` dans `web/static/clips/`, l'ajouter à
+  `web/static/avatar/clips.json`, puis l'utiliser dans `cues.py`. La page ignore les noms de clips
+  qu'elle ne connaît pas.
+- **Ajouter un geste dans ses réponses** : une ligne dans `_REPLY_RULES` (`cues.py`).
+- **Ajouter une réaction à un message** : `_REACTIONS` (`cues.py`) ; un nouveau *signal* se déclare
+  d'abord dans `SIGNALS` (`models.py`) et se détecte dans `appraisal.py`.
+- **Régler la progression** : constantes en tête de `relationship.py` (rythme, plafonds, paliers).
+- **Régler le ton écrit** : `LEVEL_GUIDANCE` et `MOOD_GUIDANCE` dans `tone.py`.
+- **Régler le journal** : `SYSTEM_PROMPT` dans `journal_keeper.py`, tailles dans `journal.py`.
+- **Ajouter une émotion** : `models.py` (liste), `emotions.py` (demi-vie), `relationship.py`
+  (plafonds), `web/static/js/avatar/face.js` (`EMOTION_EXPR`).
 
 ## Données, vie privée et sécurité
 
@@ -316,6 +495,7 @@ Tout est stocké dans `~/.config/monika` (réglable via `MONIKA_HOME`, dossier e
 |---|---|
 | `memory/` | Mémoire rapide (Qdrant local) |
 | `rag/` | Index de documents (Qdrant local) et manifeste SQLite |
+| `character/` | `state.json` (émotions et relation) et `journal.json` (les notes de Monika sur toi), en `0600` ; supprime-les pour tout remettre à zéro |
 | `voice/` | Ta voix de référence, `models/`, `cache/` |
 | `tool_results/` | Gros résultats d'outils (purgés après 14 jours) |
 | `logs/` | `audit.jsonl` et journaux des serveurs MCP |
@@ -324,11 +504,18 @@ Tout est stocké dans `~/.config/monika` (réglable via `MONIKA_HOME`, dossier e
 - **Journal d'audit** : `logs/audit.jsonl`, un JSON par ligne (outil, arguments, statut, durée),
   secrets masqués, fichier en `0600`.
 - **Ce qui sort de ta machine** : tes messages et les résultats d'outils vont au fournisseur
-  LLM que tu configures ; les téléchargements de modèles ont lieu au premier usage. La
+  LLM que tu configures (y compris, pour la lecture du ton et le journal, de courts extraits de tes messages) ; les téléchargements de modèles ont lieu au premier usage. La
   télémétrie de mem0 est désactivée.
 - **Actions sans confirmation** : Monika utilise ses outils sans demander l'accord. Choisis
   donc avec soin les serveurs MCP que tu déclares (surtout ceux qui écrivent ou qui lancent des
   commandes) et relis le journal d'audit de temps en temps.
+
+## Tests
+
+Aucun test n'est livré dans ce dépôt pour l'instant (pas de dossier `tests/`). Les moteurs du
+personnage (`character/`), du RAG (`rag/chunking.py`, `rag/lexical.py`) et de la voix
+(`voice/endpoint.py`, `voice/speech_text.py`) n'ont besoin ni de réseau ni de modèle et se prêtent
+bien à `python -m unittest`.
 
 ## Dépannage
 

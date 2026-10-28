@@ -16,6 +16,8 @@ from fastapi import FastAPI, Header, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from character.journal import MAX_IMPRESSION_CHARS, MAX_NOTE_CHARS
+from web.csp import inline_script_hashes
 from web.hub import Hub
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -45,11 +47,12 @@ def allowed_hosts(port: int) -> frozenset[str]:
 class LocalOnly:
     """ASGI guard: refuses requests whose Host or Origin is not this computer (DNS rebinding, hostile pages)."""
 
-    def __init__(self, app: Any, port: int) -> None:
+    def __init__(self, app: Any, port: int, script_hashes: list[str] | None = None) -> None:
         self._app = app
         self._hosts = allowed_hosts(port)
+        script_src = " ".join(["'self'", *(script_hashes or [])])
         self._csp = (
-            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+            f"default-src 'self'; script-src {script_src}; style-src 'self' 'unsafe-inline'; "
             "img-src 'self' data: blob:; connect-src 'self' blob: data: "
             + " ".join(f"ws://{h}" for h in sorted(self._hosts) if not h.startswith("["))  # IPv6 literals are invalid in a CSP source list
             + "; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
@@ -128,6 +131,43 @@ def create_app(hub: Hub, snapshot: Snapshot, port: int, static_dir: Path = STATI
     async def memory_delete(memory_id: str, x_monika_token: str | None = Header(None)) -> JSONResponse:
         return await act("memory_delete", x_monika_token, memory_id)
 
+    async def read_text(request: Request) -> str | None:
+        try:
+            body = await request.json()
+        except ValueError:
+            return None
+        text = body.get("text") if isinstance(body, dict) else None
+        return text if isinstance(text, str) else None
+
+    @app.put("/api/journal/{note_id}")
+    async def journal_update(note_id: str, request: Request,
+                             x_monika_token: str | None = Header(None)) -> JSONResponse:
+        text = await read_text(request)
+        if text is None or not text.strip() or len(text) > MAX_NOTE_CHARS:
+            return JSONResponse({"error": f"La note doit faire entre 1 et {MAX_NOTE_CHARS} caractères."},
+                                status_code=400)
+        return await act("journal_update", x_monika_token, note_id, text.strip())
+
+    @app.delete("/api/journal/{note_id}")
+    async def journal_delete(note_id: str, x_monika_token: str | None = Header(None)) -> JSONResponse:
+        return await act("journal_delete", x_monika_token, note_id)
+
+    @app.delete("/api/journal")
+    async def journal_clear(x_monika_token: str | None = Header(None)) -> JSONResponse:
+        return await act("journal_clear", x_monika_token)
+
+    @app.put("/api/impression")
+    async def impression_update(request: Request, x_monika_token: str | None = Header(None)) -> JSONResponse:
+        text = await read_text(request)   # An empty text is allowed: it clears the impression
+        if text is None or len(text) > MAX_IMPRESSION_CHARS:
+            return JSONResponse({"error": f"L'impression doit faire au plus {MAX_IMPRESSION_CHARS} caractères."},
+                                status_code=400)
+        return await act("impression_update", x_monika_token, text.strip())
+
+    @app.post("/api/relation/reset")
+    async def relation_reset(x_monika_token: str | None = Header(None)) -> JSONResponse:
+        return await act("relation_reset", x_monika_token)
+
     @app.websocket("/ws")
     async def live(ws: WebSocket) -> None:
         await ws.accept()
@@ -156,7 +196,9 @@ def create_app(hub: Hub, snapshot: Snapshot, port: int, static_dir: Path = STATI
             hub.unsubscribe(queue)
 
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
-    return LocalOnly(app, port)
+    index_file = static_dir / "index.html"
+    hashes = inline_script_hashes(index_file.read_text(encoding="utf-8")) if index_file.exists() else []
+    return LocalOnly(app, port, hashes)
 
 
 class _Server(uvicorn.Server):

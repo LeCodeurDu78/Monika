@@ -9,13 +9,15 @@ from pathlib import Path
 from collections.abc import Awaitable, Callable
 
 from agent.llm import LLMError, TextDelta
-from agent.loop import Agent, Filler, Notice, ToolEnd, ToolStart, TurnEnd
+from agent.loop import Agent, AvatarCue, Filler, Notice, ToolEnd, ToolStart, TurnEnd
 from security.masking import Masker
 from voice.speech_text import SentenceSplitter
 
 HELP = (
     "Commandes : /aide, /outils (liste des outils), /contexte (taille de la conversation), "
     "/memoire (ce que je sais de toi), /oublier ID (supprime un souvenir), "
+    "/relation (où nous en sommes ; « /relation reinitialiser » repart de zéro), "
+    "/journal (mes notes sur toi ; « /journal oublier ID », « /journal effacer »), "
     "/indexer [dossier] (indexe tes documents), /documents (état de l'index), "
     "/effacer (oublie la conversation en cours), /quitter (ou Ctrl+D). "
     "Ctrl+C interrompt une réponse en cours."
@@ -67,6 +69,10 @@ class TextSession:
                 self._show_context()
             elif line == "/memoire":
                 await self._show_memory()
+            elif line.startswith("/journal"):
+                self._journal(line[len("/journal"):].strip())
+            elif line.startswith("/relation"):
+                self._relation(line[len("/relation"):].strip())
             elif line.startswith("/indexer"):
                 self._start_indexing(line[len("/indexer"):].strip())
             elif line == "/documents":
@@ -78,7 +84,10 @@ class TextSession:
             else:
                 await self.reply(line)
         capture = self._agent.capture
-        if capture is not None and capture.pending:
+        character = self._agent.character
+        if character is not None:
+            character.journal_flush()
+        if (capture is not None and capture.pending) or (character is not None and character.journal_writing):
             self._write("Je termine d'enregistrer mes souvenirs…\n")
         farewell = await self._start_farewell()
         left = await self._agent.aclose()
@@ -166,6 +175,57 @@ class TextSession:
                 return
             self._write(f"Oublié : {text}\n" if text is not None else "Aucun souvenir avec cet id.\n")
 
+    def _journal(self, argument: str) -> None:
+        character = self._agent.character
+        entries = character.journal_entries() if character is not None else None
+        if entries is None:
+            self._write("Le journal est désactivé.\n")
+            return
+        command, _, rest = argument.partition(" ")
+        rest = rest.strip()
+        if command == "effacer":
+            character.journal_clear()
+            self._write("Journal effacé : je repars d'une page blanche.\n")
+        elif command == "oublier":
+            if not rest:
+                self._write("Usage : /journal oublier ID (les ids s'affichent avec /journal).\n")
+            elif character.journal_delete(rest):
+                self._write(f"Note {rest} supprimée.\n")
+            else:
+                self._write(f"Aucune note avec l'id {rest}.\n")
+        elif command:
+            self._write("Usage : /journal, /journal oublier ID ou /journal effacer.\n")
+        elif not (entries["impression"] or entries["threads"] or entries["notes"]):
+            self._write("Mon journal est encore vide : j'écris une note tous les quelques échanges.\n")
+        else:
+            if entries["impression"]:
+                self._write(f"Impression d'ensemble : {entries['impression']}\n")
+            if entries["threads"]:
+                self._write("À reprendre : " + " · ".join(entries["threads"]) + "\n")
+            for note in entries["notes"]:
+                self._write(f"[{note['id']}] ({note['at'][:16].replace('T', ' ')}) {note['text']}\n")
+
+    def _relation(self, argument: str) -> None:
+        character = self._agent.character
+        if character is None:
+            self._write("Le personnage (émotions et relation) est désactivé.\n")
+            return
+        if argument in ("reinitialiser", "réinitialiser"):
+            character.reset_relationship()
+            self._write("Relation réinitialisée : on repart de zéro.\n")
+            return
+        if argument:
+            self._write("Usage : /relation, ou /relation reinitialiser.\n")
+            return
+        snap = character.snapshot()
+        if not snap:
+            self._write("État indisponible pour le moment.\n")
+            return
+        mood = snap["dominant"] if snap["dominant"] != "neutre" else "égale"
+        self._write(f"Relation : {snap['level_label']} (favorabilité {snap['favorability']:.2f}) · humeur : {mood} · "
+                    f"{snap['messages']} messages, {snap['active_days']} jour(s) de présence, "
+                    f"série en cours : {snap['streak']}.\n")
+
     def _show_context(self) -> None:
         def fmt(n: int) -> str:
             return f"{n:,}".replace(",", " ")
@@ -175,6 +235,22 @@ class TextSession:
         self._write(f"Contexte : environ {fmt(st['tokens'])} tokens sur un budget de {fmt(st['budget'])} "
                     f"(fenêtre du modèle : {fmt(st['window'])}), {st['messages']} messages. "
                     f"Résumé des anciens échanges : {summary}.\n")
+        self._write(f"Répartition : prompt système ≈ {fmt(st['prompt_tokens'])}, "
+                    f"outils ≈ {fmt(st['tools_tokens'])} ({st['tools_count']} outil(s)), "
+                    f"historique ≈ {fmt(st['history_tokens'])} tokens.\n")
+        costs = self._agent.tool_costs()
+        if costs:
+            by_source: dict[str, list[int]] = {}
+            for _name, source, tokens in costs:
+                by_source.setdefault(source, []).append(tokens)
+            parts = [f"{src} : {len(v)} outil(s), ≈ {fmt(sum(v))}"
+                     for src, v in sorted(by_source.items(), key=lambda kv: -sum(kv[1]))]
+            self._write("Outils par source : " + " ; ".join(parts) + ".\n")
+            self._write("Les plus lourds : " + ", ".join(f"{n} ({fmt(t)})" for n, _s, t in costs[:5])
+                        + ".\n")
+            if st["tools_tokens"] > 0.25 * st["budget"]:
+                self._write("Les outils pèsent lourd à chaque message : limite-les avec « enabled_tools » "
+                            "ou « disabled_tools » dans mcp_servers.json.\n")
 
     def _show_tools(self) -> None:
         tools = self._agent.registry.tools()
@@ -203,7 +279,7 @@ class TextSession:
             self._hub.set_state("thinking")
         try:
             async for event in self._agent.run_turn(user_text):
-                if splitter is not None and not isinstance(event, TextDelta):
+                if splitter is not None and not isinstance(event, (TextDelta, AvatarCue)):
                     self._speak(splitter.flush())  # Text before a tool call or the end is said now
                 if isinstance(event, TextDelta):
                     if need_prefix:
@@ -229,6 +305,10 @@ class TextSession:
                     need_prefix = True
                     if self._speaker is not None:
                         self._speaker.say(event.text, filler=True)
+                elif isinstance(event, AvatarCue):
+                    # A gesture for the avatar only: it must not interrupt the sentence being read aloud
+                    if self._hub is not None:
+                        self._hub.publish("avatar", **event.payload())
                 elif isinstance(event, Notice):
                     self._newline()
                     self._write(f"  [{event.text}]\n")

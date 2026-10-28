@@ -6,7 +6,16 @@
   <title>Monika</title>
   <meta name="monika-token" content="__MONIKA_TOKEN__">
   <link rel="icon" href="data:,">
-  <link rel="stylesheet" href="/static/app.css">
+  <link rel="stylesheet" href="/static/css/app.css">
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "/static/vendor/three/three.module.js",
+      "three/addons/": "/static/vendor/three/addons/",
+      "@pixiv/three-vrm": "/static/vendor/three-vrm.module.js"
+    }
+  }
+  </script>
 </head>
 <body>
   <header class="top">
@@ -24,10 +33,11 @@
 
     <section class="panels" aria-label="Tableau de bord">
       <article class="panel" id="p-context"><h2>Contexte</h2><div class="body"></div></article>
+      <article class="panel" id="p-relation"><h2>Relation</h2><div class="body"></div></article>
       <article class="panel" id="p-memory"><h2>Mémoire</h2><div class="body"></div></article>
     </section>
   </main>
 
-  <script type="module" src="/static/dashboard.js"></script>
+  <script type="module" src="/static/js/dashboard.js"></script>
 </body>
 </html>

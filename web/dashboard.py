@@ -49,6 +49,7 @@ class Dashboard:
                     "state": self._hub.state, "ready": agent is not None},
             "context": await self._section(lambda: agent.stats() if agent else None),
             "memory": await self._section(self._memory),
+            "character": await self._section(self._character_section),
         }
 
     async def _memory(self) -> dict[str, Any]:
@@ -59,10 +60,59 @@ class Dashboard:
         items.sort(key=lambda i: i.created_at or "", reverse=True)
         return {"enabled": True, "facts": [{"id": i.id, "text": i.text} for i in items]}
 
+    def _character_section(self) -> dict[str, Any]:
+        character = getattr(self.agent, "character", None)
+        if character is None:
+            return {"enabled": False}
+        return {"enabled": True, "state": character.snapshot() or None, "journal": character.journal_entries()}
+
     # --- edits requested from the page ---------------------------------------------------------
 
     def actions(self) -> dict[str, Callable[..., Any]]:
-        return {"memory_update": self._memory_update, "memory_delete": self._memory_delete}
+        return {"memory_update": self._memory_update, "memory_delete": self._memory_delete,
+                "journal_update": self._journal_update, "journal_delete": self._journal_delete,
+                "journal_clear": self._journal_clear, "impression_update": self._impression_update,
+                "relation_reset": self._relation_reset}
+
+    def _character(self) -> Any:
+        character = getattr(self.agent, "character", None)
+        if character is None:
+            raise ActionError("Le personnage est désactivé ou indisponible.", 503)
+        return character
+
+    def _journal_owner(self) -> Any:
+        character = self._character()
+        if character.journal_entries() is None:
+            raise ActionError("Le journal est désactivé.", 503)
+        return character
+
+    async def _journal_update(self, note_id: str, text: str) -> None:
+        if not self._journal_owner().journal_edit(note_id, text):
+            raise ActionError("Cette note n'existe plus.", 404)
+        log.info("Note de journal %s modifiée depuis la page", note_id)
+        self._hub.activity("journal")
+
+    async def _journal_delete(self, note_id: str) -> None:
+        if not self._journal_owner().journal_delete(note_id):
+            raise ActionError("Cette note n'existe plus.", 404)
+        log.info("Note de journal %s supprimée depuis la page", note_id)
+        self._hub.activity("journal")
+
+    async def _journal_clear(self) -> None:
+        self._journal_owner().journal_clear()
+        log.info("Journal effacé depuis la page")
+        self._hub.activity("journal")
+
+    async def _impression_update(self, text: str) -> None:
+        if not self._journal_owner().journal_edit_impression(text):
+            raise ActionError("Le journal est désactivé.", 503)
+        log.info("Impression d'ensemble modifiée depuis la page")
+        self._hub.activity("journal")
+
+    async def _relation_reset(self) -> None:
+        self._character().reset_relationship()
+        log.info("Relation réinitialisée depuis la page")
+        self._hub.activity("character")
 
     def _fast_memory(self) -> Any:
         memory = getattr(self.agent, "memory", None)

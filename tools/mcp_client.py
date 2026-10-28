@@ -41,6 +41,9 @@ class McpServerConfig(BaseModel):
     start_timeout_s: float | None = None  # Overrides MCP_START_TIMEOUT_S for this server
     slow: bool = False
     slow_tools: list[str] | dict[str, list[str]] = []
+    # Every tool schema is sent to the model with each request: keep only what is useful.
+    enabled_tools: list[str] = []   # Non-empty: only these tools (names as the server gives them)
+    disabled_tools: list[str] = []  # These tools are never exposed (wins over enabled_tools)
 
     @model_validator(mode="after")
     def _one_transport(self) -> McpServerConfig:
@@ -50,6 +53,12 @@ class McpServerConfig(BaseModel):
 
     def is_slow(self, tool: str) -> bool:
         return self.slow or tool in self.slow_tools
+
+    def keeps(self, tool: str) -> bool:
+        """Whether the tool is exposed to the model."""
+        if tool in self.disabled_tools:
+            return False
+        return not self.enabled_tools or tool in self.enabled_tools
 
     def fillers(self, tool: str) -> list[str]:
         if isinstance(self.slow_tools, dict):
@@ -162,16 +171,21 @@ class McpManager:
                 self.statuses.append(ServerStatus(name, False, "désactivé dans la configuration"))
                 continue
             try:
-                tool_names = await self._connect(name, cfg)
+                tool_names, skipped, unknown = await self._connect(name, cfg)
             except TimeoutError:
                 limit = cfg.start_timeout_s or self._start_timeout
                 self.statuses.append(ServerStatus(name, False, f"pas de réponse après {limit:g} s"))
             except Exception as exc:  # Report in French and continue with the next server
                 self.statuses.append(ServerStatus(name, False, describe(exc)))
             else:
-                self.statuses.append(ServerStatus(name, True, f"{len(tool_names)} outil(s)", tool_names))
+                detail = f"{len(tool_names)} outil(s)"
+                if skipped:
+                    detail += f", {skipped} écarté(s) par la configuration"
+                if unknown:
+                    detail += f" (noms inconnus dans la configuration : {', '.join(unknown)})"
+                self.statuses.append(ServerStatus(name, True, detail, tool_names))
 
-    async def _connect(self, name: str, cfg: McpServerConfig) -> list[str]:
+    async def _connect(self, name: str, cfg: McpServerConfig) -> tuple[list[str], int, list[str]]:
         local = AsyncExitStack()
         try:
             async with asyncio.timeout(cfg.start_timeout_s or self._start_timeout):
@@ -184,7 +198,11 @@ class McpManager:
             raise
         self._stack.push_async_exit(local)
         names = []
+        skipped = 0
         for t in tools:
+            if not cfg.keeps(t.name):
+                skipped += 1
+                continue
             registered = self._registry.unique_name(f"{safe_name(name)}__{t.name}")
             self._registry.register(Tool(
                 name=registered,
@@ -196,7 +214,9 @@ class McpManager:
                 source=f"MCP:{name}",
             ))
             names.append(registered)
-        return names
+        available = {t.name for t in tools}
+        unknown = [n for n in [*cfg.enabled_tools, *cfg.disabled_tools] if n not in available]
+        return names, skipped, unknown
 
     async def _open_transport(self, name: str, cfg: McpServerConfig, stack: AsyncExitStack) -> Any:
         if cfg.command:

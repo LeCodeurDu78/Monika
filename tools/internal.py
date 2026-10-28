@@ -137,6 +137,9 @@ def register_document_tools(registry: ToolRegistry, rag: RagService) -> None:
                 return f"Aucun document n'est encore indexé, mais l'indexation est en cours. {rag.progress.summary()}"
             return "Aucun document n'est indexé. Lance documents_indexer (ou la commande /indexer) d'abord."
         if not outcome.hits:
+            if outcome.filtered:
+                return (f"Aucun passage assez pertinent : {outcome.filtered} passage(s) écarté(s) sous le "
+                        f"seuil de score ({outcome.min_score:g}, réglage RAG_MIN_SCORE).")
             return "Aucun passage trouvé."
         how = "recherche hybride + reranking" if outcome.reranked else "recherche hybride"
         lines = [f"{len(outcome.hits)} passage(s) trouvé(s) ({how}). Cite le chemin et la position :"]
@@ -144,6 +147,8 @@ def register_document_tools(registry: ToolRegistry, rag: RagService) -> None:
             lines.append(f"\n[{i}] {hit.citation()} (score {hit.score:.2f})\n{hit.text}")
         if outcome.warning:
             lines.append(f"\n[Note : {outcome.warning}]")
+        if outcome.filtered:
+            lines.append(f"\n[{outcome.filtered} passage(s) moins pertinent(s) écarté(s) par le filtre de score.]")
         if rag.running:
             lines.append(f"\n[L'indexation est en cours ({rag.progress.processed}/{rag.progress.total} "
                          "fichiers) : les résultats peuvent être incomplets.]")

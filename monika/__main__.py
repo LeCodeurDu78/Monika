@@ -12,12 +12,12 @@ from pathlib import Path
 
 from rich.console import Console
 from rich.table import Table
-from __init__ import __version__
+from monika.__init__ import __version__
 from agent.context import ToolOutputStore
 from agent.llm import LLMClient
 from agent.loop import Agent
-from config import ENV_FILE, Settings, get_settings
-from paths import Paths
+from monika.config import ENV_FILE, Settings, get_settings
+from monika.paths import Paths
 from security.audit import AuditLog
 from security.masking import Masker, MaskingFilter
 from tools.mcp_client import McpConfigError, McpManager, load_mcp_config
@@ -144,6 +144,9 @@ async def _rag_search(rag: RagService, query: str) -> int:
     console.print(f"{len(outcome.hits)} passage(s) en {time.perf_counter() - start:.1f} s (recherche {how})")
     if outcome.warning:
         console.print(f"[yellow]{outcome.warning}[/yellow]")
+    if outcome.filtered:
+        console.print(f"[dim]{outcome.filtered} passage(s) écarté(s) sous le seuil RAG_MIN_SCORE="
+                      f"{outcome.min_score:g} (pour tout voir : RAG_MIN_SCORE=-100).[/dim]")
     for i, hit in enumerate(outcome.hits, start=1):
         console.print(f"\n[bold][{i}] {hit.citation()}[/bold]  (score {hit.score:.2f})")
         console.out(hit.text[:600], highlight=False)
@@ -252,6 +255,30 @@ async def start_speech(settings: Settings, paths: Paths, voice: bool, on_level=N
     return Speaker(engine, PacatSink(engine.sample_rate, settings.audio_output_device, on_level=on_level))
 
 
+def load_character(settings: Settings, paths: Paths, llm, hub, masker):
+    """Emotions and relationship (optional): a problem here must never prevent Monika from starting."""
+    if not settings.character_enabled:
+        return None
+    try:
+        from character.service import create_service, llm_complete
+
+        complete = llm_complete(llm, settings.affect_llm_model) if settings.affect_llm_enabled else None
+        journal_on = settings.journal_enabled
+        service = create_service(
+            paths.character_state, complete, settings.affect_timeout_s,
+            journal_path=paths.character_journal if journal_on else None,
+            journal_complete=llm_complete(llm, settings.journal_llm_model, 0.7) if journal_on else None,
+            journal_every=settings.journal_every_turns, journal_max_chars=settings.journal_max_chars,
+            mask=masker.mask_text)
+        if hub is not None:
+            service.on_change = hub.set_character
+            hub.set_character(service.snapshot())
+        return service
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"[yellow]Personnage indisponible ({type(exc).__name__}: {exc}) : je continue sans.[/yellow]")
+        return None
+
+
 async def start_web(settings: Settings, paths: Paths, voice: bool):
     """Start the local page (avatar and dashboard); returns (hub, dashboard, server) or None with a message."""
     if not settings.web_enabled:
@@ -304,8 +331,9 @@ async def run_chat(settings: Settings, paths: Paths, masker: Masker, voice: bool
             if registry.tools():  # Without other tools no result is ever truncated
                 register_result_reader(registry, store)
             llm = LLMClient(settings)
+            character = load_character(settings, paths, llm, hub, masker)
             agent = Agent(settings, llm, registry, store, memory=memory,
-                          capture=capture, rag=rag, voice=voice)
+                          capture=capture, rag=rag, voice=voice, character=character)
             if web:
                 web[1].agent = agent
             if listener is not None:

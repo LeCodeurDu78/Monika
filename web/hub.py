@@ -16,6 +16,7 @@ class Hub:
         self._queues: set[asyncio.Queue[dict[str, Any]]] = set()
         self.state = "idle"
         self.level = 0.0
+        self.character: dict[str, Any] | None = None  # Latest emotions / relationship snapshot
 
     def subscribe(self) -> asyncio.Queue[dict[str, Any]]:
         queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue(QUEUE_SIZE)
@@ -31,7 +32,10 @@ class Hub:
 
     def hello(self) -> dict[str, Any]:
         """What a page needs on connection to show the current situation."""
-        return {"type": "hello", "state": self.state, "level": self.level}
+        message: dict[str, Any] = {"type": "hello", "state": self.state, "level": self.level}
+        if self.character is not None:
+            message["character"] = self.character
+        return message
 
     def publish(self, kind: str, /, **data: Any) -> None:
         message = {"type": kind, **data}
@@ -52,6 +56,11 @@ class Hub:
         """Loudness (0..1) of the sound being heard right now; plugs into PacatSink(on_level=...)."""
         self.level = round(min(max(float(level), 0.0), 1.0), 3)
         self.publish("level", value=self.level)
+
+    def set_character(self, snapshot: dict[str, Any]) -> None:
+        """Remember and broadcast Monika's current emotions and relationship level."""
+        self.character = snapshot
+        self.publish("character", **snapshot)
 
     def activity(self, kind: str, **data: Any) -> None:
         """Something happened that the dashboard may want to refresh (tool call, end of turn...)."""

@@ -18,6 +18,8 @@ class SearchOutcome:
     reranked: bool = False
     warning: str = ""
     index_empty: bool = False
+    filtered: int = 0  # Passages dropped for scoring below RAG_MIN_SCORE
+    min_score: float | None = None  # Threshold actually applied (None: no filter was applied)
 
 
 class RagService:
@@ -79,16 +81,21 @@ class RagService:
         hits = await self._store.query(query, vector, max(self._s.rag_candidates, top_k),
                                        self._s.rag_hybrid_alpha)
         outcome = SearchOutcome(hits=hits)
-        if self._s.rag_rerank_enabled and len(hits) > 1:
+        if self._s.rag_rerank_enabled and hits:
             try:
                 scores = await self._store.rerank(query, [h.text for h in hits])
                 for hit, score in zip(hits, scores):
                     hit.score = score
                 outcome.hits = sorted(hits, key=lambda h: h.score, reverse=True)
                 outcome.reranked = True
+                # The cut-off is in the reranker's own scale, so it only applies when reranking worked
+                outcome.min_score = self._s.rag_min_score
+                kept = [h for h in outcome.hits if h.score >= outcome.min_score]
+                outcome.filtered = len(outcome.hits) - len(kept)
+                outcome.hits = kept
             except Exception as exc:  # Offline or model missing: fall back to the hybrid order
                 outcome.warning = (f"reranking indisponible ({type(exc).__name__}: {str(exc)[:120]}) : "
-                                   "classement par la recherche hybride seule")
+                                   "classement par la recherche hybride seule, sans filtre de score")
         outcome.hits = outcome.hits[:top_k]
         return outcome
 

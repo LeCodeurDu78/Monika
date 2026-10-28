@@ -62,6 +62,17 @@ class Settings(BaseSettings):
     memory_capture_enabled: bool = True
     memory_capture_min_chars: int = Field(20, ge=1)
 
+    # Character: emotions and relationship (favorability) that shape Monika's tone and her 3D avatar
+    character_enabled: bool = True
+    affect_llm_enabled: bool = True  # A small model call reads the tone of each message; the lexicon is the fallback
+    affect_llm_model: str = ""  # Empty means MODEL_NAME
+    affect_timeout_s: float = Field(2.0, gt=0)
+    # Journal: Monika's own notes about you, written in the background and added to her prompt
+    journal_enabled: bool = True
+    journal_every_turns: int = Field(8, ge=2, le=100)
+    journal_llm_model: str = ""  # Empty means MODEL_NAME
+    journal_max_chars: int = Field(1800, ge=300, le=8000)  # Size of the journal section in her prompt
+
     # Document index (RAG): llama-index + local Qdrant, fastembed on CPU
     rag_enabled: bool = True
     rag_roots: str = "~"  # Comma-separated folders to index
@@ -79,6 +90,9 @@ class Settings(BaseSettings):
     rag_top_k: int = Field(5, ge=1, le=30)
     rag_hybrid_alpha: float = Field(0.5, ge=0.0, le=1.0)  # 1 = meaning only, 0 = keywords only
     rag_rerank_enabled: bool = True
+    # Passages whose reranker score is below this are dropped (only when reranking worked: the hybrid
+    # score has another scale). Raise it to be stricter; -100 keeps everything (useful to see scores).
+    rag_min_score: float = Field(0.0, ge=-100.0, le=100.0)
     rag_reranker_model: str = "jinaai/jina-reranker-v2-base-multilingual"
 
     # Speech recognition: faster-whisper (CPU by default) + Silero voice activity detection

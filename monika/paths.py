@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
-from config import Settings
+from monika.config import Settings
 
 
 @dataclass(frozen=True)
@@ -16,6 +16,7 @@ class Paths:
     memory: Path
     voice: Path
     rag: Path
+    character: Path
     logs: Path
     tool_results: Path
     sessions: Path
@@ -29,11 +30,20 @@ class Paths:
             memory=home / "memory",
             voice=home / "voice",
             rag=home / "rag",
+            character=home / "character",
             logs=home / "logs",
             tool_results=home / "tool_results",
             sessions=home / "sessions",
             mcp_config=settings.mcp_servers_file or home / "mcp_servers.json",
         )
+
+    @property
+    def character_state(self) -> Path:
+        return self.character / "state.json"
+
+    @property
+    def character_journal(self) -> Path:
+        return self.character / "journal.json"
 
     @property
     def rag_qdrant(self) -> Path:
@@ -51,6 +61,6 @@ class Paths:
         """Create all directories; the home itself is private to the user."""
         self.home.mkdir(parents=True, exist_ok=True)
         self.home.chmod(0o700)
-        for path in (self.memory, self.voice, self.rag, self.logs,
+        for path in (self.memory, self.voice, self.rag, self.character, self.logs,
                      self.tool_results, self.sessions):
             path.mkdir(parents=True, exist_ok=True)

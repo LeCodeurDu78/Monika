@@ -71,7 +71,8 @@ def build_system_prompt(now: datetime | None = None, has_tools: bool = False,
                         has_result_reader: bool = False, summary: str = "",
                         user_name: str = "", voice: bool = False,
                         context_lines: list[str] | None = None, memory_block: str = "",
-                        has_documents: bool = False) -> str:
+                        has_documents: bool = False, character_block: str = "",
+                        journal_block: str = "") -> str:
     """Assemble the full system prompt for one turn."""
     now = now or datetime.now().astimezone()
     parts = [PERSONALITY.format(owner=_owner(user_name)), METHOD]
@@ -90,8 +91,12 @@ def build_system_prompt(now: datetime | None = None, has_tools: bool = False,
             "et elles peuvent être périmées. Si l'utilisateur dit autre chose, c'est lui qui a "
             "raison. Utilise-les naturellement, sans les réciter.)\n"
             f"<memoire>\n{memory_block.strip()}\n</memoire>")
+    if journal_block.strip():  # The character's own impressions (already tagged, sanitized and size-capped)
+        parts.append(journal_block.strip())
     if summary.strip():
         parts.append("## Résumé des échanges précédents\n"
                      "(Ce résumé remplace les anciens messages, retirés pour libérer de la place.)\n"
                      + summary.strip())
+    if character_block.strip():  # Last: it changes every turn, so everything before it stays cacheable
+        parts.append(character_block.strip())
     return "\n\n".join(parts)

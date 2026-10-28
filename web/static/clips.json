@@ -1,0 +1,89 @@
+{
+  "idle": "breathing",
+  "clips": [
+    {
+      "file": "Idle.glb",
+      "name": "breathing",
+      "hidden": true
+    },
+    {
+      "file": "Talk.glb",
+      "name": "Talk"
+    },
+    {
+      "file": "Think.glb",
+      "name": "Think",
+      "fade": 0.5
+    },
+    {
+      "file": "Idea.glb",
+      "name": "Idea",
+      "fade": 0.5
+    },
+    {
+      "file": "LookAround.glb",
+      "name": "LookAround"
+    },
+    {
+      "file": "Wave.glb",
+      "name": "Wave"
+    },
+    {
+      "file": "WaveSmall.glb",
+      "name": "WaveSmall",
+      "fade": 0.5
+    },
+    {
+      "file": "Bow.glb",
+      "name": "Bow",
+      "once": true
+    },
+    {
+      "file": "Yay.glb",
+      "name": "Yay"
+    },
+    {
+      "file": "Laugh.glb",
+      "name": "Laugh",
+      "fade": 0.5
+    },
+    {
+      "file": "Yes.glb",
+      "name": "Yes"
+    },
+    {
+      "file": "ShakeHead.glb",
+      "name": "ShakeHead"
+    },
+    {
+      "file": "Surprised.glb",
+      "name": "Surprised",
+      "once": true
+    },
+    {
+      "file": "LeanIn.glb",
+      "name": "LeanIn",
+      "fade": 0.5
+    },
+    {
+      "file": "Pout.glb",
+      "name": "Pout",
+      "fade": 0.5
+    },
+    {
+      "file": "FoldArms.glb",
+      "name": "FoldArms",
+      "fade": 0.5
+    },
+    {
+      "file": "Shy.glb",
+      "name": "Shy",
+      "fade": 0.5
+    },
+    {
+      "file": "Sad.glb",
+      "name": "Sad",
+      "fade": 0.5
+    }
+  ]
+}

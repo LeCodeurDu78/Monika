@@ -8,18 +8,22 @@ import random
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Literal, Protocol
+from typing import TYPE_CHECKING, Any, Literal, Protocol
 
-from agent.context import ContextManager, ToolOutputStore, estimate_tokens
+from agent.context import ContextManager, ToolOutputStore, estimate_tokens, message_tokens
 from agent.filler import FillerState
 from agent.llm import Completion, LLMError, TextDelta
 from agent.loop_detect import LoopDetector
 from agent.prompt import build_system_prompt
+from character.models import AvatarCue
 from monika.config import Settings
 from memory.capture import MemoryCapture
 from memory.fast import FastMemory, format_for_prompt
 from security.untrusted import wrap_tool_output
 from tools.registry import ToolRegistry
+
+if TYPE_CHECKING:
+    from character.service import CharacterService
 
 LOOP_WARNING = (
     "[Avertissement système : tu as déjà fait exactement cet appel avec le même résultat. "
@@ -83,7 +87,7 @@ class TurnEnd:
     steps: int
 
 
-AgentEvent = TextDelta | ToolStart | ToolEnd | Filler | Notice | TurnEnd
+AgentEvent = TextDelta | ToolStart | ToolEnd | Filler | Notice | AvatarCue | TurnEnd
 
 
 class Agent:
@@ -92,7 +96,8 @@ class Agent:
     def __init__(self, settings: Settings, llm: _LLM, registry: ToolRegistry,
                  store: ToolOutputStore | None = None, rng: random.Random | None = None,
                  voice: bool = False, memory: FastMemory | None = None,
-                 capture: MemoryCapture | None = None, rag: Any | None = None) -> None:
+                 capture: MemoryCapture | None = None, rag: Any | None = None,
+                 character: CharacterService | None = None) -> None:
         self._s = settings
         self._llm = llm
         self.registry = registry
@@ -103,7 +108,10 @@ class Agent:
         self.memory = memory
         self.capture = capture
         self.rag = rag
+        self.character = character
         self._memory_block = ""
+        self._character_block = ""
+        self._journal_block = ""
         self._memory_warned = False
         self.history: list[dict[str, Any]] = []
 
@@ -117,7 +125,8 @@ class Agent:
             has_result_reader=self.registry.get("lire_resultat") is not None,
             summary=self.context.summary if with_summary else "",
             user_name=self._s.user_name, voice=self._voice, memory_block=self._memory_block,
-            has_documents=self.registry.get("documents_chercher") is not None)
+            has_documents=self.registry.get("documents_chercher") is not None,
+            character_block=self._character_block, journal_block=self._journal_block)
 
     def _base_tokens(self, now: datetime) -> int:
         """Tokens that every request pays: system prompt (without summary) and tool schemas."""
@@ -125,15 +134,26 @@ class Agent:
         return estimate_tokens(self._system_text(now, with_summary=False)) + (
             estimate_tokens(json.dumps(schemas, ensure_ascii=False)) if schemas else 0)
 
+    def tool_costs(self) -> list[tuple[str, str, int]]:
+        """(name, source, estimated tokens) of every tool schema, heaviest first."""
+        costs = [(t.name, t.source, estimate_tokens(json.dumps(t.schema(), ensure_ascii=False)))
+                 for t in self.registry.tools()]
+        return sorted(costs, key=lambda c: c[2], reverse=True)
+
     def stats(self) -> dict[str, int]:
         """Estimated context usage, for /contexte."""
         now = datetime.now().astimezone()
+        tools = self.tool_costs()
         return {
             "tokens": self.context.total(self._base_tokens(now), self.history),
             "budget": self._s.context_budget_tokens,
             "window": self._s.context_window_tokens,
             "messages": len(self.history),
             "summary_tokens": estimate_tokens(self.context.summary),
+            "prompt_tokens": estimate_tokens(self._system_text(now, with_summary=False)),
+            "tools_tokens": sum(c[2] for c in tools),
+            "tools_count": len(tools),
+            "history_tokens": sum(message_tokens(m) for m in self.history),
         }
 
     async def run_turn(self, user_text: str) -> AsyncIterator[AgentEvent]:
@@ -143,6 +163,11 @@ class Agent:
         now = datetime.now().astimezone()
         self.context.new_turn()
         self._memory_block = ""
+        self._character_block = ""
+        self._journal_block = self.character.journal_block() if self.character is not None else ""
+        turn = self.character.start_turn(user_text) if self.character is not None else None
+        if turn is not None:
+            turn.begin()  # Reads the tone while the memory recall runs
         fillers = FillerState(self._s.filler_max_per_turn, self._rng)
         detector = LoopDetector(self._s.loop_warn_after, self._s.loop_stop_after)
         actions: list[str] = []
@@ -152,6 +177,10 @@ class Agent:
             self._memory_block, warning = await self._recall(user_text)
             if warning:
                 yield Notice(warning)
+            if turn is not None:
+                for cue in await turn.ready():
+                    yield cue
+                self._character_block = turn.prompt_block()
             while steps < self._s.max_steps:
                 steps += 1
                 fit = await self.context.fit(self.history, start, self._base_tokens(now))
@@ -164,6 +193,9 @@ class Agent:
                                                    self.registry.schemas() or None):
                     if isinstance(item, TextDelta):
                         yield item
+                        if turn is not None:
+                            for cue in turn.feed(item.text):
+                                yield cue
                     else:
                         completion = item
                 assert completion is not None
@@ -172,6 +204,10 @@ class Agent:
                         self.history.append(completion.as_message())
                         self._submit_capture(user_text, completion.content)
                         finished = True
+                        if turn is not None:
+                            turn.commit(completion.content)
+                            for cue in turn.flush():
+                                yield cue
                         yield TurnEnd("done", steps)
                     else:
                         if not actions:
@@ -243,11 +279,16 @@ class Agent:
                                  "content": (final.content if final else "") or "(bilan vide)"})
             self._submit_capture(user_text, self.history[-1]["content"])
             finished = True
+            if turn is not None:
+                turn.commit(self.history[-1]["content"])
             yield TurnEnd(reason, steps)
         except (LLMError, asyncio.CancelledError, GeneratorExit) as exc:
             if not finished:
                 self._rollback(start, user_text, actions, exc)
             raise
+        finally:
+            if turn is not None:
+                turn.close()  # An aborted turn leaves no trace: the background tone reading is cancelled
 
     async def _recall(self, query: str) -> tuple[str, str | None]:
         """Fetch relevant memories for this message; a failure never blocks the turn."""
@@ -273,8 +314,11 @@ class Agent:
             self.capture.submit(user_text, reply)
 
     async def aclose(self) -> int:
-        """Finish pending background captures; return how many could not be saved."""
-        return await self.capture.drain() if self.capture is not None else 0
+        """Finish pending background captures and journal notes; return how many could not be saved."""
+        left = await self.capture.drain() if self.capture is not None else 0
+        if self.character is not None:
+            left += await self.character.aclose()
+        return left
 
     def _rollback(self, start: int, user_text: str, actions: list[str], exc: BaseException) -> None:
         """Drop the unfinished turn but remember what was already done."""
