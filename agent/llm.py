@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any
@@ -67,6 +68,7 @@ class LLMClient:
             max_retries=settings.llm_max_retries,
             http_client=http_client,
         )
+        self.last_call: dict[str, Any] | None = None  # "Last request worked / failed", for the health grid
 
     async def stream(self, messages: list[dict[str, Any]],
                      tools: list[dict[str, Any]] | None = None,
@@ -102,7 +104,10 @@ class LLMClient:
                     if choice.finish_reason:
                         finish = choice.finish_reason
         except openai.OpenAIError as exc:
-            raise self._translate(exc) from exc
+            error = self._translate(exc)
+            self.last_call = {"ok": False, "detail": str(error)}
+            raise error from exc
+        self.last_call = {"ok": True, "detail": f"{len(parts)} caractère(s) reçus"}
 
         tool_calls = [
             ToolCall(id=c["id"] or f"call_{i}", name=c["name"], arguments=c["arguments"] or "{}")
@@ -120,6 +125,14 @@ class LLMClient:
                 final = item
         assert final is not None
         return final
+
+    async def ping(self, timeout_s: float = 1.5) -> str:
+        """Cheap connectivity probe for the health grid: ask the provider for its model list.
+
+        It never sends a completion (that would cost money and change nothing a turn needs).
+        """
+        models = await asyncio.wait_for(self._client.models.list(), timeout_s)
+        return f"{len(models.data)} modèle(s) annoncé(s)"
 
     @staticmethod
     def _merge_tool_call(calls: dict[int, dict[str, str]], tc: Any) -> None:

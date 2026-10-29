@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Monika — réglages</title>
+  <meta name="monika-token" content="__MONIKA_TOKEN__">
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body>
+  <header class="top">
+    <h1>Réglages</h1>
+    <a class="chip chip-quiet" href="/">← Retour à Monika</a>
+    <span id="save-state" class="meta" role="status" aria-live="polite"></span>
+  </header>
+
+  <main class="settings">
+    <section class="panel" aria-labelledby="h-health">
+      <h2 id="h-health">Santé</h2>
+      <div class="body">
+        <ul id="health" class="health-list"><li><span class="light"></span><span class="detail">Sondes en cours…</span></li></ul>
+        <p class="hint" id="health-note"></p>
+        <button id="health-refresh" type="button">Tester maintenant</button>
+      </div>
+    </section>
+
+    <section class="panel" aria-labelledby="h-settings">
+      <h2 id="h-settings">Réglages</h2>
+      <div class="body">
+        <p class="hint">Les réglages grisés sont figés par le fichier <code>.env</code> du projet : ils se modifient à la main. Les autres sont enregistrés dans <code id="settings-file">settings.json</code>.</p>
+        <div id="groups"></div>
+        <p id="restart" class="notice" hidden></p>
+        <div class="row">
+          <button id="save" type="button" class="primary">Enregistrer</button>
+          <button id="reload" type="button">Recharger</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="panel" aria-labelledby="h-words">
+      <h2 id="h-words">Mots sensibles</h2>
+      <div class="body">
+        <p class="hint">Un mot par ligne. <strong>mild</strong> : rien (au plus une moue). <strong>bad</strong> : ton posé et moue. <strong>severe</strong> : ton posé, désengagement et une ligne d'audit. Aucun mot n'est livré avec le projet ; accents, majuscules et leetspeak sont normalisés.</p>
+        <div class="fields words">
+          <div class="field"><label for="words-mild">mild</label><textarea id="words-mild" rows="4"></textarea></div>
+          <div class="field"><label for="words-bad">bad</label><textarea id="words-bad" rows="4"></textarea></div>
+          <div class="field"><label for="words-severe">severe</label><textarea id="words-severe" rows="4"></textarea></div>
+        </div>
+        <div class="row">
+          <button id="words-save" type="button" class="primary">Enregistrer la liste</button>
+        </div>
+        <p class="hint" id="words-state"></p>
+      </div>
+    </section>
+
+    <section class="panel" aria-labelledby="h-secret">
+      <h2 id="h-secret">Clé API</h2>
+      <div class="body">
+        <p class="hint" id="secret-state"></p>
+        <div class="field">
+          <label for="secret">Nouvelle clé OpenAI (une seule ligne)</label>
+          <input id="secret" type="password" autocomplete="off">
+        </div>
+        <div class="row">
+          <button id="secret-save" type="button">Enregistrer la clé</button>
+        </div>
+        <p class="hint">La valeur n'est jamais renvoyée par la page. Elle remplace la ligne <code>OPENAI_API_KEY</code> du <code>.env</code> : redémarrage requis.</p>
+      </div>
+    </section>
+  </main>
+
+  <script type="module" src="/static/js/settings.js"></script>
+</body>
+</html>

@@ -17,8 +17,9 @@ export const EXPRESSION_ALIASES = {
   blink: ['blink', 'Blink'],
 };
 
-// Monika's five emotions -> expression weights (before intensity scaling).
-export const EMOTION_EXPR = {
+// Built-in fallback: expression weights of the original moods, used until (or unless) the table served by
+// /api/emotions arrives. The full table lives in character/emotion_spec.py, never in this file.
+export const DEFAULT_EMOTION_EXPR = {
   neutre: {},
   joyeuse: { happy: 0.45, relaxed: 0.75 },
   taquine: { happy: 0.35, relaxed: 0.5 },
@@ -47,6 +48,7 @@ export function resolveExpressions(em) {
 export class FaceController {
   constructor() {
     this.resolved = {};
+    this.emotionExpr = DEFAULT_EMOTION_EXPR;
     this.speaking = false;
     this._mood = {};
     this._pulse = {};
@@ -65,9 +67,18 @@ export class FaceController {
     return this.resolved;
   }
 
+  /** Emotion table from /api/emotions: name -> expression weights. An unusable payload changes nothing. */
+  setSpecs(specs) {
+    const emotions = specs && specs.emotions;
+    if (!emotions || typeof emotions !== 'object') return;
+    const table = { neutre: {} };
+    for (const [name, entry] of Object.entries(emotions)) table[name] = (entry && entry.expr) || {};
+    this.emotionExpr = table;
+  }
+
   /** The slow mood keeps a soft baseline; a full-strength pulse fires now and holds while she speaks. */
   setEmotion(emotion, intensity = 0.5, { pulse = true } = {}) {
-    const base = EMOTION_EXPR[emotion] || {};
+    const base = this.emotionExpr[emotion] || {};
     const k = clamp(0.35 + Number(intensity) * 0.75, 0.25, 1);
     const t = {};
     for (const n of EXPR_NAMES) t[n] = (base[n] || 0) * k;

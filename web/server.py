@@ -16,6 +16,7 @@ from fastapi import FastAPI, Header, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from character import emotion_spec
 from character.journal import MAX_IMPRESSION_CHARS, MAX_NOTE_CHARS
 from web.csp import inline_script_hashes
 from web.hub import Hub
@@ -86,10 +87,12 @@ class LocalOnly:
 
 
 def create_app(hub: Hub, snapshot: Snapshot, port: int, static_dir: Path = STATIC_DIR,
-               actions: Actions | None = None) -> Any:
+               actions: Actions | None = None, settings_api: Any | None = None) -> Any:
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     token = secrets.token_urlsafe(24)  # Fresh at each launch, only given to the page we serve
     actions = actions or {}
+    if settings_api is not None:
+        actions = {**actions, **settings_api.actions()}  # Same token, same act(), same ActionError
 
     @app.get("/")
     async def index() -> HTMLResponse:
@@ -100,19 +103,28 @@ def create_app(hub: Hub, snapshot: Snapshot, port: int, static_dir: Path = STATI
     async def status() -> JSONResponse:
         return JSONResponse(await snapshot(), headers={"Cache-Control": "no-store"})
 
+    @app.get("/api/emotions")
+    async def emotions() -> JSONResponse:
+        """The emotion table (labels, expression weights, fallback clips): static, no secrets."""
+        return JSONResponse(emotion_spec.payload(), headers={"Cache-Control": "no-store"})
+
+    def token_ok(given: str | None) -> bool:
+        return given is not None and hmac.compare_digest(given.encode(), token.encode())
+
     async def act(name: str, given: str | None, *args: Any) -> JSONResponse:
-        if given is None or not hmac.compare_digest(given.encode(), token.encode()):
+        if not token_ok(given):
             return JSONResponse({"error": "Action refusée : recharge la page."}, status_code=403)
         action = actions.get(name)
         if action is None:
             return JSONResponse({"error": "Cette action n'est pas disponible."}, status_code=404)
         try:
-            await action(*args)
+            result = await action(*args)
         except ActionError as exc:
             return JSONResponse({"error": str(exc)}, status_code=exc.status)
         except Exception as exc:
             return JSONResponse({"error": f"L'action a échoué : {type(exc).__name__}"}, status_code=500)
-        return JSONResponse({"ok": True})
+        # Actions may describe what changed (e.g. the keys that need a restart); None means just "ok"
+        return JSONResponse({"ok": True, **(result if isinstance(result, dict) else {})})
 
     @app.put("/api/memory/{memory_id}")
     async def memory_update(memory_id: str, request: Request,
@@ -168,6 +180,59 @@ def create_app(hub: Hub, snapshot: Snapshot, port: int, static_dir: Path = STATI
     async def relation_reset(x_monika_token: str | None = Header(None)) -> JSONResponse:
         return await act("relation_reset", x_monika_token)
 
+    if settings_api is not None:
+        @app.get("/settings")
+        async def settings_page() -> HTMLResponse:
+            html = (static_dir / "settings.html").read_text(encoding="utf-8").replace(TOKEN_PLACEHOLDER, token)
+            return HTMLResponse(html, headers={"Cache-Control": "no-store"})
+
+        @app.get("/api/settings")
+        async def settings_read(x_monika_token: str | None = Header(None)) -> JSONResponse:
+            if not token_ok(x_monika_token):  # It holds the persona and the model names: token required
+                return JSONResponse({"error": "Jeton absent ou invalide : recharge la page."}, status_code=403)
+            return JSONResponse(settings_api.read(), headers={"Cache-Control": "no-store"})
+
+        @app.get("/api/health")
+        async def health_grid(x_monika_token: str | None = Header(None)) -> JSONResponse:
+            if not token_ok(x_monika_token):
+                return JSONResponse({"error": "Jeton absent ou invalide : recharge la page."}, status_code=403)
+            return JSONResponse(await settings_api.health(), headers={"Cache-Control": "no-store"})
+
+        @app.post("/api/settings")
+        async def settings_write(request: Request,
+                                 x_monika_token: str | None = Header(None)) -> JSONResponse:
+            try:
+                body = await request.json()
+            except ValueError:
+                body = None
+            if not isinstance(body, dict):
+                return JSONResponse({"error": "Réglages attendus sous forme d'objet JSON."}, status_code=400)
+            return await act("settings_update", x_monika_token, body)
+
+        @app.post("/api/settings/words")
+        async def settings_words(request: Request,
+                                 x_monika_token: str | None = Header(None)) -> JSONResponse:
+            try:
+                body = await request.json()
+            except ValueError:
+                body = None
+            if not isinstance(body, dict):
+                return JSONResponse({"error": "Liste de mots attendue sous forme d'objet JSON."}, status_code=400)
+            return await act("settings_words", x_monika_token, body)
+
+        @app.post("/api/settings/secret")
+        async def settings_secret(request: Request,
+                                  x_monika_token: str | None = Header(None)) -> JSONResponse:
+            try:
+                body = await request.json()
+            except ValueError:
+                body = None
+            name = body.get("name") if isinstance(body, dict) else None
+            value = body.get("value") if isinstance(body, dict) else None
+            if not isinstance(name, str) or not isinstance(value, str):
+                return JSONResponse({"error": "Nom et valeur du secret attendus."}, status_code=400)
+            return await act("settings_secret", x_monika_token, name, value)
+
     @app.websocket("/ws")
     async def live(ws: WebSocket) -> None:
         await ws.accept()
@@ -216,8 +281,9 @@ class WebServer:
     """Runs the app inside the current event loop, next to the chat."""
 
     def __init__(self, hub: Hub, snapshot: Snapshot, port: int, static_dir: Path = STATIC_DIR,
-                 actions: Actions | None = None) -> None:
+                 actions: Actions | None = None, settings_api: Any | None = None) -> None:
         self._actions = actions
+        self._settings_api = settings_api
         self._hub = hub
         self._snapshot = snapshot
         self.port = port
@@ -239,7 +305,8 @@ class WebServer:
                            "tourne peut-être ; change WEB_PORT ou ferme-la.") from exc
         finally:
             probe.close()
-        app = create_app(self._hub, self._snapshot, self.port, self._static, self._actions)
+        app = create_app(self._hub, self._snapshot, self.port, self._static, self._actions,
+                         self._settings_api)
         config = uvicorn.Config(app, host=HOST, port=self.port, log_level="warning", access_log=False,
                                 lifespan="off", timeout_graceful_shutdown=2)
         self._server = _Server(config)

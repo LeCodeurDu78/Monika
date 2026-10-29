@@ -11,15 +11,18 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from agent.context import ContextManager, ToolOutputStore, estimate_tokens, message_tokens
+from agent.director import TurnPlan, plan as plan_turn
 from agent.filler import FillerState
 from agent.llm import Completion, LLMError, TextDelta
 from agent.loop_detect import LoopDetector
-from agent.prompt import build_system_prompt
+from agent.prompt import build_system_prompt, sensitive_block
+from character.cues import sensitive_cue
 from character.models import AvatarCue
 from monika.config import Settings
 from memory.capture import MemoryCapture
 from memory.fast import FastMemory, format_for_prompt
 from security.untrusted import wrap_tool_output
+from security.words import WordBank
 from tools.registry import ToolRegistry
 
 if TYPE_CHECKING:
@@ -97,7 +100,7 @@ class Agent:
                  store: ToolOutputStore | None = None, rng: random.Random | None = None,
                  voice: bool = False, memory: FastMemory | None = None,
                  capture: MemoryCapture | None = None, rag: Any | None = None,
-                 character: CharacterService | None = None) -> None:
+                 character: CharacterService | None = None, words: WordBank | None = None) -> None:
         self._s = settings
         self._llm = llm
         self.registry = registry
@@ -112,8 +115,13 @@ class Agent:
         self._memory_block = ""
         self._character_block = ""
         self._journal_block = ""
+        self._hint_block = ""  # The director's note, this turn only (never kept in the history)
+        self._tone_block = ""  # Sensitive-word tone for this message, this turn only
+        self.words = words  # The user's word bank; the settings page swaps it (hot reload)
         self._memory_warned = False
         self.history: list[dict[str, Any]] = []
+        self.last_plan: TurnPlan | None = None  # What the director decided for the last turn (/contexte)
+        self.memory_ok: bool | None = None  # Last memory recall: True, False, or None when memory is off
 
     def clear(self) -> None:
         self.history.clear()
@@ -125,12 +133,14 @@ class Agent:
             has_result_reader=self.registry.get("lire_resultat") is not None,
             summary=self.context.summary if with_summary else "",
             user_name=self._s.user_name, voice=self._voice, memory_block=self._memory_block,
+            persona_block=self._s.persona_text,
             has_documents=self.registry.get("documents_chercher") is not None,
-            character_block=self._character_block, journal_block=self._journal_block)
+            character_block=self._character_block, journal_block=self._journal_block,
+            hint_block=self._hint_block, tone_block=self._tone_block)
 
-    def _base_tokens(self, now: datetime) -> int:
-        """Tokens that every request pays: system prompt (without summary) and tool schemas."""
-        schemas = self.registry.schemas()
+    def _base_tokens(self, now: datetime, tools: set[str] | None = None) -> int:
+        """Tokens that every request pays: system prompt (without summary) and the tool schemas sent."""
+        schemas = self.registry.schemas(tools)
         return estimate_tokens(self._system_text(now, with_summary=False)) + (
             estimate_tokens(json.dumps(schemas, ensure_ascii=False)) if schemas else 0)
 
@@ -165,15 +175,29 @@ class Agent:
         self._memory_block = ""
         self._character_block = ""
         self._journal_block = self.character.journal_block() if self.character is not None else ""
+        self._hint_block = ""
+        self._tone_block = ""
+        self.last_plan = None
         turn = self.character.start_turn(user_text) if self.character is not None else None
         if turn is not None:
             turn.begin()  # Reads the tone while the memory recall runs
+        tools = None  # Subset of tool schemas for this turn (director); None = every tool
+        plan_task = self._start_plan(user_text)
         fillers = FillerState(self._s.filler_max_per_turn, self._rng)
         detector = LoopDetector(self._s.loop_warn_after, self._s.loop_stop_after)
         actions: list[str] = []
         steps, reason = 0, "limit"
         finished = False  # Once the turn is complete, closing the generator must not roll back
         try:
+            tier = self._sensitive_tier(user_text)
+            if tier is not None:
+                self._tone_block = sensitive_block(tier)
+                if tier in ("bad", "severe"):
+                    # Level only: the word itself never reaches the trail, nor the page
+                    self.registry.audit_event("sensitive", {"tier": tier})
+                cue = sensitive_cue(tier)
+                if cue is not None:
+                    yield cue  # Before anything else: the reaction is immediate
             self._memory_block, warning = await self._recall(user_text)
             if warning:
                 yield Notice(warning)
@@ -181,16 +205,21 @@ class Agent:
                 for cue in await turn.ready():
                     yield cue
                 self._character_block = turn.prompt_block()
+            if plan_task is not None:
+                self.last_plan = await plan_task  # Runs in parallel with the memory recall and the tone reading
+                if self.last_plan is not None:
+                    tools = self.last_plan.tools
+                    self._hint_block = self.last_plan.hint
             while steps < self._s.max_steps:
                 steps += 1
-                fit = await self.context.fit(self.history, start, self._base_tokens(now))
+                fit = await self.context.fit(self.history, start, self._base_tokens(now, tools))
                 start -= fit.removed
                 for text in fit.notices:
                     yield Notice(text)
                 system = {"role": "system", "content": self._system_text(now)}
                 completion: Completion | None = None
                 async for item in self._llm.stream([system, *self.history],
-                                                   self.registry.schemas() or None):
+                                                   self.registry.schemas(tools) or None):
                     if isinstance(item, TextDelta):
                         yield item
                         if turn is not None:
@@ -287,8 +316,31 @@ class Agent:
                 self._rollback(start, user_text, actions, exc)
             raise
         finally:
+            self._hint_block = ""
+            self._tone_block = ""
+            if plan_task is not None and not plan_task.done():
+                plan_task.cancel()
             if turn is not None:
                 turn.close()  # An aborted turn leaves no trace: the background tone reading is cancelled
+
+    def _sensitive_tier(self, text: str) -> str | None:
+        """The level this message hits (or None). Deterministic, no model call, never buys a turn."""
+        if self.words is None or not self._s.sensitive_words_enabled:
+            return None
+        try:
+            return self.words.match(text)
+        except Exception:  # noqa: BLE001 - a broken bank must never break a turn
+            return None
+
+    def _start_plan(self, user_text: str) -> asyncio.Task[TurnPlan | None] | None:
+        """Start the director in the background: None when the role is off or there is nothing to plan."""
+        if not self._s.director_enabled:
+            return None
+        known = {tool.name for tool in self.registry.tools()}
+        if not known:
+            return None
+        return asyncio.get_running_loop().create_task(
+            plan_turn(user_text, known, self._llm, self._s.director_timeout_s, self._s.director_llm_model))
 
     async def _recall(self, query: str) -> tuple[str, str | None]:
         """Fetch relevant memories for this message; a failure never blocks the turn."""
@@ -298,11 +350,13 @@ class Agent:
         try:
             async with asyncio.timeout(self._s.memory_recall_timeout_s):
                 items = await self.memory.recall(query)
+            self.memory_ok = True
             return format_for_prompt(items), None
         except TimeoutError:
             reason = f"délai de {self._s.memory_recall_timeout_s:g} s dépassé"
         except Exception as exc:  # Any backend failure: continue without memory
             reason = f"{type(exc).__name__}: {exc}"[:200]
+        self.memory_ok = False
         if self._memory_warned:
             return "", None
         self._memory_warned = True

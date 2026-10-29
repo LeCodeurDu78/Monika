@@ -7,14 +7,18 @@ import unicodedata
 from dataclasses import dataclass, field
 from typing import Any
 
+from character.emotion_spec import ALL_NAMES, NAMES
+
 # The emotion vector. "neutre" is the calm baseline: it is derived (1 - strongest active emotion), never stored.
-EMOTIONS: tuple[str, ...] = ("neutre", "joyeuse", "taquine", "boudeuse", "surprise")
-ACTIVE_EMOTIONS: tuple[str, ...] = EMOTIONS[1:]
+# The names themselves live in emotion_spec.py, the single place where an emotion is declared.
+EMOTIONS: tuple[str, ...] = ALL_NAMES
+ACTIVE_EMOTIONS: tuple[str, ...] = NAMES
 
 # What an appraisal may report about a user message. Anything else coming from a model is dropped.
 SIGNALS: frozenset[str] = frozenset({
     "greeting", "farewell", "thanks", "compliment", "affection", "tease", "surprise",
     "insult", "hostility", "disappointment", "shouting", "user_distress", "task_issue",
+    "jealousy", "shyness", "worry", "pride",
 })
 
 

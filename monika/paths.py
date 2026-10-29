@@ -38,6 +38,16 @@ class Paths:
         )
 
     @property
+    def settings_file(self) -> Path:
+        """Written by the settings page; the .env keeps priority over it."""
+        return self.home / "settings.json"
+
+    @property
+    def words_file(self) -> Path:
+        """The user's own sensitive-word bank (empty at first; edited from the settings page)."""
+        return self.home / "words.json"
+
+    @property
     def character_state(self) -> Path:
         return self.character / "state.json"
 

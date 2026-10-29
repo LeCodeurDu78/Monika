@@ -16,7 +16,7 @@ from monika.__init__ import __version__
 from agent.context import ToolOutputStore
 from agent.llm import LLMClient
 from agent.loop import Agent
-from monika.config import ENV_FILE, Settings, get_settings
+from monika.config import ENV_FILE, Settings, get_settings, settings_load_problems
 from monika.paths import Paths
 from security.audit import AuditLog
 from security.masking import Masker, MaskingFilter
@@ -154,8 +154,11 @@ async def _rag_search(rag: RagService, query: str) -> int:
 
 
 @asynccontextmanager
-async def open_tools(settings: Settings, paths: Paths, masker: Masker):
-    """Connect the MCP servers (if any) and yield the audited tool registry."""
+async def open_tools(settings: Settings, paths: Paths, masker: Masker, on_manager=None):
+    """Connect the MCP servers (if any) and yield the audited tool registry.
+
+    `on_manager` receives the live McpManager (health grid); nothing else is kept from it.
+    """
     registry = ToolRegistry(
         AuditLog(paths.audit_log, masker, settings.audit_enabled, settings.audit_max_chars))
     try:
@@ -171,8 +174,10 @@ async def open_tools(settings: Settings, paths: Paths, masker: Masker):
     async with McpManager(servers, registry, paths.logs, settings.mcp_start_timeout_s,
                           settings.mcp_call_timeout_s, extra_env=dotenv_for_mcp()) as manager:
         for st in manager.statuses:
-            mark = "[green]✓[/green]" if st.ok else "[red]✗[/red]"
-            console.print(f"{mark} MCP {st.name} : {st.detail}")
+            if not st.ok:
+                console.print(f"[red]✗[/red] MCP {st.name} : {st.detail}")
+        if on_manager is not None:
+            on_manager(manager)
         yield registry
 
 
@@ -212,13 +217,13 @@ async def start_voice(settings: Settings, paths: Paths):
 
 
 async def start_speech(settings: Settings, paths: Paths, voice: bool, on_level=None):
-    """Load the voice (XTTS v2); returns a Speaker, or None with a clear message (answers stay on screen)."""
+    """Connect the voice (GPT-SoVITS over its own HTTP API); returns a Speaker, or None with a message."""
     import shutil
 
     from voice.errors import VoiceError
+    from voice.gptsovits import GptSovitsEngine
     from voice.playback import PacatSink
     from voice.speaker import Speaker
-    from voice.tts import XttsEngine
 
     if not settings.tts_enabled:
         if voice:
@@ -226,13 +231,13 @@ async def start_speech(settings: Settings, paths: Paths, voice: bool, on_level=N
         return None
     if not voice and not settings.tts_text_mode:
         return None
-    if shutil.which("pacat") is None:  # Checked first: the model download is long
+    if shutil.which("pacat") is None:  # Checked first: nothing else is worth doing without a sound output
         console.print("[red]pacat est introuvable[/red] : installe libpulse (sudo pacman -S libpulse). "
                       "[yellow]Je continue sans voix : mes réponses s'afficheront à l'écran seulement.[/yellow]")
         return None
-    console.print(f"[dim]Chargement de la voix (XTTS v2, d'après tes enregistrements dans {paths.voice} ; "
-                  "le premier lancement télécharge environ 1,9 Go)…[/dim]")
-    engine = XttsEngine(settings, paths)
+    console.print(f"[dim]Connexion au serveur GPT-SoVITS ({settings.tts_url}) et chargement de la voix… "
+                  "au tout premier appel, le modèle met une dizaine de secondes.[/dim]")
+    engine = GptSovitsEngine(settings, paths)
     try:
         seconds = await engine.load()
     except VoiceError as exc:
@@ -240,19 +245,36 @@ async def start_speech(settings: Settings, paths: Paths, voice: bool, on_level=N
         console.print("[yellow]Je continue sans voix : mes réponses s'afficheront à l'écran seulement.[/yellow]")
         engine.close()
         return None
-    except Exception as exc:  # e.g. a broken PyTorch install
+    except Exception as exc:  # e.g. an unexpected api_v2 response
         console.print(f"[red]Synthèse vocale indisponible : {type(exc).__name__}: {exc}[/red]")
         console.print("[yellow]Je continue sans voix : mes réponses s'afficheront à l'écran seulement.[/yellow]")
         engine.close()
         return None
-    cached = ", voix analysée en cache" if engine.latents_cached else ""
-    console.print(f"[green]✓[/green] Voix prête sur {engine.device.upper()} (chargée en {seconds:.1f} s{cached}).")
-    if engine.fallback_reason:
-        console.print(f"[yellow]⚠ {engine.fallback_reason} : la voix tourne sur le CPU, c'est plus lent. "
-                      "Libère de la mémoire GPU pour laisser plus de place au modèle.[/yellow]")
+    tags = len(engine.available_tags or ())
+    console.print(f"[green]✓[/green] Voix prête : « {engine.character_name} », {engine.sample_rate} Hz, "
+                  f"{tags} tag(s) d'émotion, préchauffée en {seconds:.1f} s.")
     for warning in engine.warnings:
         console.print(f"[yellow]⚠ {warning}[/yellow]")
-    return Speaker(engine, PacatSink(engine.sample_rate, settings.audio_output_device, on_level=on_level))
+    tagger = _emotion_tagger(settings, engine)
+    block_chars = settings.tts_block_max_chars if settings.tts_render_mode() == "block" else 0
+    return Speaker(engine, PacatSink(engine.sample_rate, settings.audio_output_device, on_level=on_level),
+                   tagger=tagger, block_chars=block_chars)
+
+
+def _emotion_tagger(settings: Settings, engine):
+    """Text + mood -> text tagged for the emotion references, or None when the voice must get plain text."""
+    if settings.tts_emotion_tags == "off":
+        return None
+    from character.tts_emotion import TtsEmotionMapper
+
+    mapper = TtsEmotionMapper()
+    if settings.tts_emotion_tags == "on":  # Trust the voice pack: emit every tag of the emotion
+        return lambda text, emotion, intensity: mapper.tagged(text, emotion, intensity)
+    available = engine.available_tags or frozenset()  # auto: only what the voice pack really has
+    if not available:
+        console.print("[yellow]⚠ Ce pack de voix n'a aucun enregistrement de référence : "
+                      "je parle d'une voix neutre (TTS_EMOTION_TAGS=on pour forcer).[/yellow]")
+    return lambda text, emotion, intensity: mapper.tagged(text, emotion, intensity, available=available)
 
 
 def load_character(settings: Settings, paths: Paths, llm, hub, masker):
@@ -279,17 +301,50 @@ def load_character(settings: Settings, paths: Paths, llm, hub, masker):
         return None
 
 
-async def start_web(settings: Settings, paths: Paths, voice: bool):
+def load_words(settings: Settings, paths: Paths):
+    """The user's own sensitive-word bank (empty at first). A broken file disables the filter, never a turn."""
+    try:
+        from security.words import WordBank
+
+        bank = WordBank.load(paths.words_file)
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"[yellow]Mots sensibles ignorés ({type(exc).__name__}: {exc}) : je continue sans.[/yellow]")
+        return None
+    if bank.empty:
+        console.print(f"[dim]Aucun mot sensible déclaré ({paths.words_file}) : le filtre ne fait rien "
+                      "tant que la liste est vide.[/dim]")
+    return bank
+
+
+def load_action_director(settings: Settings, llm, hub):
+    """The action role (a short avatar chain after each reply), or None when it is off."""
+    if not settings.action_llm_enabled:
+        return None
+    try:
+        from character.action_director import ActionDirector
+        from character.service import llm_complete
+
+        return ActionDirector(llm_complete(llm, settings.action_llm_model, 0.7), hub)
+    except Exception as exc:  # noqa: BLE001
+        console.print(f"[yellow]Rôle action indisponible ({type(exc).__name__}: {exc}) : je continue sans.[/yellow]")
+        return None
+
+
+async def start_web(settings: Settings, paths: Paths, voice: bool, health=None):
     """Start the local page (avatar and dashboard); returns (hub, dashboard, server) or None with a message."""
     if not settings.web_enabled:
         return None
     from web.dashboard import Dashboard
     from web.hub import Hub
     from web.server import WebError, WebServer
+    from web.settings import Health, SettingsApi
 
     hub = Hub()
+    health = health if health is not None else Health()
+    health.hub = hub
     dashboard = Dashboard(settings, paths, hub, mode="voix" if voice else "texte")
-    server = WebServer(hub, dashboard.snapshot, settings.web_port, actions=dashboard.actions())
+    server = WebServer(hub, dashboard.snapshot, settings.web_port, actions=dashboard.actions(),
+                       settings_api=SettingsApi(settings, paths, health))
     try:
         await server.start()
     except WebError as exc:
@@ -303,7 +358,9 @@ async def start_web(settings: Settings, paths: Paths, voice: bool):
 async def run_chat(settings: Settings, paths: Paths, masker: Masker, voice: bool = False) -> int:
     """Start the chat: keyboard (text mode) or microphone (voice mode), with tools, memory and documents."""
     from modes.text import TextSession
+    from web.settings import Health
 
+    health = Health()
     listener = None
     if voice:
         listener = await start_voice(settings, paths)
@@ -317,11 +374,14 @@ async def run_chat(settings: Settings, paths: Paths, masker: Masker, voice: bool
     if memory and settings.memory_capture_enabled:
         capture = MemoryCapture([memory.capture], settings.memory_capture_min_chars)
     rag = load_rag(settings, paths)
-    web = await start_web(settings, paths, voice)
+    web = await start_web(settings, paths, voice, health)
     hub = web[0] if web else None
     speaker = await start_speech(settings, paths, voice, on_level=hub.on_level if hub else None)
+    health.listener = listener
+    health.speaker = speaker
     try:
-        async with open_tools(settings, paths, masker) as registry:
+        async with open_tools(settings, paths, masker, lambda manager: setattr(health, "mcp", manager)) \
+                as registry:
             if memory:
                 register_memory_tools(registry, memory)
             if rag:
@@ -331,9 +391,13 @@ async def run_chat(settings: Settings, paths: Paths, masker: Masker, voice: bool
             if registry.tools():  # Without other tools no result is ever truncated
                 register_result_reader(registry, store)
             llm = LLMClient(settings)
+            health.llm = llm
             character = load_character(settings, paths, llm, hub, masker)
+            action_director = load_action_director(settings, llm, hub)
+            words = load_words(settings, paths)
             agent = Agent(settings, llm, registry, store, memory=memory,
-                          capture=capture, rag=rag, voice=voice, character=character)
+                          capture=capture, rag=rag, voice=voice, character=character, words=words)
+            health.agent = agent
             if web:
                 web[1].agent = agent
             if listener is not None:
@@ -343,7 +407,8 @@ async def run_chat(settings: Settings, paths: Paths, masker: Masker, voice: bool
                                      hub=hub)
                 await TextSession(agent, reader, masker=masker, speaker=speaker,
                                   banner=BANNER_SPOKEN if speaker else BANNER,
-                                  speech_max_chars=settings.tts_max_sentence_chars, hub=hub).run()
+                                  speech_max_chars=settings.tts_max_sentence_chars, hub=hub,
+                                  action_director=action_director).run()
             else:
                 from prompt_toolkit import PromptSession
                 from prompt_toolkit.patch_stdout import patch_stdout
@@ -355,7 +420,8 @@ async def run_chat(settings: Settings, paths: Paths, masker: Masker, voice: bool
 
                 with patch_stdout():
                     await TextSession(agent, read_line, masker=masker, speaker=speaker,
-                                      speech_max_chars=settings.tts_max_sentence_chars, hub=hub).run()
+                                      speech_max_chars=settings.tts_max_sentence_chars, hub=hub,
+                                      action_director=action_director).run()
     finally:
         if web:
             await web[2].stop()
@@ -445,6 +511,8 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:  # Invalid .env values: report them in French and stop
         console.print(f"[red]Configuration invalide :[/red] {exc}")
         return 1
+    for problem in settings_load_problems():  # A settings.json the page wrote (or a hand edit) was unusable
+        console.print(f"[yellow]⚠ {problem}[/yellow]")
     paths = Paths.from_settings(settings)
     paths.ensure()
     masker = setup_logging(settings)

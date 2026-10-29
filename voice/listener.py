@@ -35,6 +35,11 @@ class VoiceListener:
         self._error: AudioError | None = None
         self.dropped: list[str] = []  # Reasons of transcripts rejected as noise or hallucinations
 
+    @property
+    def transcriber(self) -> Transcriber:
+        """The speech recogniser, for read-only status (health grid)."""
+        return self._transcriber
+
     def _new_endpointer(self) -> Endpointer:
         s = self._s
         return Endpointer(s.vad_speech_threshold, None, s.vad_min_speech_ms, s.vad_end_silence_ms,

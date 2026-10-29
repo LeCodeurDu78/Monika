@@ -19,6 +19,7 @@ import unicodedata
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from character.emotion_spec import NEGATIVE_DELTAS, POSITIVE_DELTAS, SIGNAL_DELTAS
 from character.models import SIGNALS, Appraisal, clamp, finite, fold_text as _fold
 
 log = logging.getLogger(__name__)
@@ -32,25 +33,25 @@ class AppraisalError(Exception):
 
 
 def deltas_from(valence: float, signals: tuple[str, ...] | frozenset[str]) -> dict[str, float]:
-    """The single place that maps a tone to emotion changes (so the LLM can never choose them)."""
+    """The single place that maps a tone to emotion changes (so the LLM can never choose them).
+
+    The amounts come from emotion_spec.py (POSITIVE_DELTAS, NEGATIVE_DELTAS, SIGNAL_DELTAS): this function
+    only applies them, sums them and bounds the result. A signal nobody declared is ignored.
+    """
     deltas: dict[str, float] = {}
 
     def add(name: str, amount: float) -> None:
         deltas[name] = deltas.get(name, 0.0) + amount
 
     if valence > 0:
-        add("joyeuse", 0.40 * valence)
-        add("boudeuse", -0.30 * valence)
+        for name, amount in POSITIVE_DELTAS:
+            add(name, amount * valence)
     elif valence < 0:
-        add("boudeuse", 0.45 * -valence)
-        add("joyeuse", -0.35 * -valence)
-    if "tease" in signals:
-        add("taquine", 0.30)
-        add("joyeuse", 0.10)
-    if "surprise" in signals:
-        add("surprise", 0.40)
-    if "greeting" in signals:
-        add("joyeuse", 0.10)
+        for name, amount in NEGATIVE_DELTAS:
+            add(name, amount * -valence)
+    for signal in signals:
+        for name, amount in SIGNAL_DELTAS.get(signal, ()):
+            add(name, amount)
     return {name: round(clamp(value, -0.5, 0.5), 3) for name, value in deltas.items() if abs(value) > 1e-9}
 
 
@@ -83,6 +84,11 @@ _WORDS: list[tuple[str, float, str | None]] = [
     (r"\b(waouh|wow|ah bon|oh la la|serieux\s*\?)", 0.0, "surprise"),
     (r"\bje suis (triste|fatigue|fatiguee|stresse|stressee|angoisse|angoissee|deprime|deprimee|mal)\b", 0.0, "user_distress"),
     (r"\b(ca (ne )?marche pas|ca plante|erreur|bug)\b", 0.0, "task_issue"),
+    # Finer signals, all about the SITUATION rather than a self-description ('je suis jalouse' is the user's
+    # feeling, not something that makes Monika jealous). They shade her mood, they never judge the user.
+    (r"\b(tu preferes (elle|lui)|elle est mieux que moi)\b", 0.0, "jealousy"),
+    (r"\b(tu me fais rougir|je rougis)\b", 0.2, "shyness"),
+    (r"\b(je m'inquiete|tu m'inquietes|tu vas bien|prends soin de toi)\b", 0.1, "worry"),
 ]
 _EMOJI: list[tuple[str, float, str | None]] = [
     ("😊😄😁🥰😍❤💕😘🙂👍🎉✨", 0.4, None),

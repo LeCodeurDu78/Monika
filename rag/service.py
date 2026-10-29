@@ -99,6 +99,10 @@ class RagService:
         outcome.hits = outcome.hits[:top_k]
         return outcome
 
+    def counts(self) -> dict[str, int]:
+        """Index size and last errors, for the health grid."""
+        return self._store.manifest.counts()
+
     async def status_text(self) -> str:
         counts = self._store.manifest.counts()
         lines = [f"Documents indexés : {counts['indexed']} fichier(s), {counts['chunks']} passages ; "

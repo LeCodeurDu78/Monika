@@ -29,9 +29,12 @@ class TextSession:
 
     def __init__(self, agent: Agent, read_line: Callable[[], Awaitable[str]],
                  out=None, masker: Masker | None = None, banner: str | None = None,
-                 speaker=None, speech_max_chars: int = 200, hub=None) -> None:
+                 speaker=None, speech_max_chars: int = 200, hub=None,
+                 action_director=None) -> None:
         self._agent = agent
         self._hub = hub  # Live state for the web page (optional)
+        self._action_director = action_director  # Post-turn avatar chain (optional, cosmetic)
+        self._action_tasks: set[asyncio.Task] = set()
         self._speaker = speaker
         self._speech_max_chars = speech_max_chars
         if speaker is not None and speaker.on_error is None:
@@ -251,6 +254,11 @@ class TextSession:
             if st["tools_tokens"] > 0.25 * st["budget"]:
                 self._write("Les outils pèsent lourd à chaque message : limite-les avec « enabled_tools » "
                             "ou « disabled_tools » dans mcp_servers.json.\n")
+        plan = self._agent.last_plan
+        if plan is not None:  # What the director kept for the last turn (it runs before every turn)
+            kept = "tous" if plan.tools is None else f"{len(plan.tools)} sur {st['tools_count']}"
+            hint = f" · piste : {plan.hint}" if plan.hint else ""
+            self._write(f"Dernier tour planifié : {kept} outil(s) envoyé(s) au modèle{hint}.\n")
 
     def _show_tools(self) -> None:
         tools = self._agent.registry.tools()
@@ -270,23 +278,28 @@ class TextSession:
 
     async def reply(self, user_text: str) -> None:
         """Run one turn; on failure or Ctrl+C the agent has already tidied its history."""
+        self._cancel_action_tasks()  # A chain decided for the previous answer must not land in this one
         self._write("\n")
         need_prefix = True  # The "Monika ›" prefix is written only when text actually arrives
         if self._speaker is not None:
             await self._speaker.cancel()  # A new message cuts whatever was still being said
+            self._speaker.start_block()  # Grouping stays for this whole answer (TTS_RENDER=block)
         splitter = SentenceSplitter(max_chars=self._speech_max_chars) if self._speaker else None
+        reply_parts: list[str] = []  # Monika's own text, for the action role
         if self._hub is not None:
             self._hub.set_state("thinking")
         try:
             async for event in self._agent.run_turn(user_text):
                 if splitter is not None and not isinstance(event, (TextDelta, AvatarCue)):
                     self._speak(splitter.flush())  # Text before a tool call or the end is said now
+                    self._speaker.flush_block()
                 if isinstance(event, TextDelta):
                     if need_prefix:
                         self._newline()
                         self._write("Monika › ")
                         need_prefix = False
                     self._write(event.text)
+                    reply_parts.append(event.text)
                     if splitter is not None:
                         self._speak(splitter.feed(event.text))
                 elif isinstance(event, ToolStart):
@@ -307,6 +320,8 @@ class TextSession:
                         self._speaker.say(event.text, filler=True)
                 elif isinstance(event, AvatarCue):
                     # A gesture for the avatar only: it must not interrupt the sentence being read aloud
+                    if self._speaker is not None and event.emotion:
+                        self._speaker.set_emotion(event.emotion, event.intensity)  # Tone of the voice
                     if self._hub is not None:
                         self._hub.publish("avatar", **event.payload())
                 elif isinstance(event, Notice):
@@ -317,6 +332,7 @@ class TextSession:
                     self._write("\n\n")
                     if self._hub is not None:
                         self._hub.activity("turn")
+                    self._spawn_action_chain(user_text, "".join(reply_parts))
         except LLMError as exc:
             self._newline()
             self._write(f"[erreur] {exc}\n\n")
@@ -330,9 +346,31 @@ class TextSession:
             if self._speaker is not None:
                 await self._speaker.cancel()  # Ctrl+C also cuts the voice
         finally:
+            if self._speaker is not None:
+                self._speaker.end_block()  # Speak what is still buffered, then back to sentence mode
             if self._hub is not None:
                 self._hub.set_state("idle")
                 self._hub.activity("turn")
+
+    def _cancel_action_tasks(self) -> None:
+        """Drop the gestures still being decided: they belong to the previous answer, not this one."""
+        for task in list(self._action_tasks):
+            task.cancel()
+        self._action_tasks.clear()
+
+    def _spawn_action_chain(self, user_text: str, reply: str) -> None:
+        """Let the action role pick a gesture chain for the finished reply, in the background."""
+        if self._action_director is None or not reply.strip():
+            return
+        character = self._agent.character
+        snapshot = character.snapshot() if character is not None else {}
+        try:
+            task = asyncio.get_running_loop().create_task(
+                self._action_director.suggest(user_text, reply, snapshot))
+        except Exception:  # noqa: BLE001 - cosmetic role: never break the session
+            return
+        self._action_tasks.add(task)
+        task.add_done_callback(self._action_tasks.discard)
 
     def _speak(self, sentences: list[str]) -> None:
         for sentence in sentences:

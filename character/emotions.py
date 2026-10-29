@@ -5,14 +5,14 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
+from character.emotion_spec import HALF_LIFE_S, INHIBITS
 from character.models import ACTIVE_EMOTIONS, EMOTIONS, clamp, finite
 
-# Time for an emotion to halve on its own (seconds). A surprise passes quickly; a sulk lingers a little longer.
-HALF_LIFE_S: dict[str, float] = {"joyeuse": 900.0, "taquine": 600.0, "boudeuse": 1200.0, "surprise": 25.0}
 MAX_STEP = 0.5               # no single message moves an emotion by more than this
 DOMINANT_THRESHOLD = 0.15    # below this, Monika is simply "neutre"
-# When an emotion rises, these fall by this fraction of the rise (feeling cheerful soothes a sulk, and vice versa).
-INHIBITS: dict[str, dict[str, float]] = {"joyeuse": {"boudeuse": 0.5}, "boudeuse": {"joyeuse": 0.5}}
+MAX_NOTABLE = 3              # at most this many emotions above the threshold: a readable mood, not a mush
+# HALF_LIFE_S (time for an emotion to halve on its own) and INHIBITS (a rising emotion soothes these)
+# are derived from the emotion table in emotion_spec.py.
 
 
 class EmotionState:
@@ -23,6 +23,7 @@ class EmotionState:
         for name, value in (values or {}).items():
             if name in self.values and finite(value):
                 self.values[name] = clamp(float(value), 0.0, 1.0)
+        self._limit_notable()
         self.updated_at = updated_at
 
     def decay(self, now: datetime) -> None:
@@ -51,12 +52,29 @@ class EmotionState:
             for other, factor in INHIBITS.get(name, {}).items():
                 if other not in rises:
                     self.values[other] = clamp(self.values[other] - rise * factor, 0.0, 1.0)
+        self._limit_notable()
+
+    def _limit_notable(self) -> None:
+        """Keep the mood readable: at most MAX_NOTABLE emotions above the threshold.
+
+        The weakest ones settle AT the threshold instead of being erased, so nothing is lost when the
+        mood moves on, and they no longer count as a mood of their own.
+        """
+        notable = sorted((value, name) for name, value in self.values.items() if value > DOMINANT_THRESHOLD)
+        for _value, name in notable[:-MAX_NOTABLE]:
+            self.values[name] = DOMINANT_THRESHOLD
 
     def vector(self) -> dict[str, float]:
         """All five emotions; "neutre" is whatever the strongest active emotion leaves free."""
         out = {"neutre": round(1.0 - max(self.values.values(), default=0.0), 3)}
         out.update({name: round(self.values[name], 3) for name in ACTIVE_EMOTIONS})
         return {name: out[name] for name in EMOTIONS}
+
+    def top(self, limit: int = MAX_NOTABLE) -> list[tuple[str, float]]:
+        """The strongest emotions above the threshold, heaviest first (what colours the tone right now)."""
+        notable = sorted(((value, name) for name, value in self.values.items() if value > DOMINANT_THRESHOLD),
+                         reverse=True)
+        return [(name, round(value, 3)) for value, name in notable[:limit]]
 
     def dominant(self) -> tuple[str, float]:
         name, value = max(self.values.items(), key=lambda item: item[1])

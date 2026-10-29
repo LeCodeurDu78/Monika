@@ -6,6 +6,8 @@ import { VRMLoaderPlugin, VRMUtils } from '@pixiv/three-vrm';
 import { ClipLibrary } from './avatar/clip_library.js';
 import { FaceController } from './avatar/face.js';
 import { CueController } from './avatar/cues.js';
+import { Environment } from './avatar/environment.js';
+import { Orbit } from './avatar/orbit.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const FOV = 28;
@@ -32,6 +34,7 @@ export class Avatar extends ClipLibrary {
     this.onSettle = null;
     this.face = new FaceController();
     this.cues = new CueController({ player: this, face: this.face });
+    this.env = null;
     this._tmpA = new THREE.Vector3();
     this._tmpB = new THREE.Vector3();
   }
@@ -48,10 +51,18 @@ export class Avatar extends ClipLibrary {
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(FOV, 1, 0.1, 50);
+    // left-drag orbits, the wheel zooms, right-drag slides the focus along her body
+    this.orbit = new Orbit(this.camera, this.canvas, (out, focusT) => this._focusPoint(out, focusT));
     this.scene.add(new THREE.HemisphereLight(0xffffff, 0x5a4a6a, 1.35));
     const key = new THREE.DirectionalLight(0xffffff, 1.7);
     key.position.set(1.2, 2.4, 2.2);
     this.scene.add(key);
+    try {
+      this.env = new Environment(this.scene);
+    } catch (err) {
+      this.env = null;  // the stage stays usable without the room
+      console.warn('[avatar] décor indisponible :', err);
+    }
     this.clock = new THREE.Clock();
     this._resize();
     if ('ResizeObserver' in window) new ResizeObserver(() => this._resize()).observe(this.canvas);
@@ -69,23 +80,36 @@ export class Avatar extends ClipLibrary {
     this._frame();
   }
 
-  /** Camera framing from the model's own proportions (head and feet bones), whatever its scale. */
-  _frame() {
+  /** The model's own proportions (head and feet bones), whatever its scale. */
+  _metrics() {
     const humanoid = this.vrm?.humanoid;
     const head = humanoid?.getRawBoneNode('head');
-    if (!head) return;
+    if (!head) return null;
     head.getWorldPosition(this._tmpA);
     const lf = humanoid.getRawBoneNode('leftFoot'), rf = humanoid.getRawBoneNode('rightFoot');
     let feetY = 0;
     if (lf && rf) { lf.getWorldPosition(this._tmpB); const ly = this._tmpB.y; rf.getWorldPosition(this._tmpB); feetY = (ly + this._tmpB.y) / 2; }
     const headY = this._tmpA.y;
-    const H = Math.max(0.5, headY - feetY);
+    return { x: this._tmpA.x, z: this._tmpA.z, headY, feetY, H: Math.max(0.5, headY - feetY) };
+  }
+
+  /** Initial framing from the model's proportions; the user's own orbit survives a resize. */
+  _frame() {
+    const m = this._metrics();
+    if (!m || !this.orbit) return;
     const f = FRAMING[this.view] || FRAMING.bust;
     const half = Math.tan(THREE.MathUtils.degToRad(FOV / 2));
-    const dist = Math.max((f.height * H) / 2 / half, (f.width * H) / 2 / (half * this.camera.aspect));
-    const cy = f.centre(headY, feetY, H);
-    this.camera.position.set(this._tmpA.x, cy + 0.02 * H, this._tmpA.z + dist);
-    this.camera.lookAt(this._tmpA.x, cy, this._tmpA.z);
+    const dist = Math.max((f.height * m.H) / 2 / half, (f.width * m.H) / 2 / (half * this.camera.aspect));
+    const cy = f.centre(m.headY, m.feetY, m.H);
+    if (!this.orbit.placed) this.orbit.place(new THREE.Vector3(m.x, cy, m.z), dist, (cy - m.feetY) / m.H);
+  }
+
+  /** The point the camera orbits around: 1 = her head, 0 = her shoes (see FRAMING and Orbit). */
+  _focusPoint(out, focusT) {
+    const m = this._metrics();
+    if (!m) return false;
+    out.set(m.x, m.feetY + (m.headY - m.feetY) * focusT, m.z);
+    return true;
   }
 
   // ---------- loading ----------
@@ -109,6 +133,7 @@ export class Avatar extends ClipLibrary {
     this._srcCache.clear();
     this._restInfo = this._computeVrmRest();
     this.face.attach(vrm.expressionManager);
+    if (this.orbit) this.orbit.placed = false;  // a new model gets its own initial framing
     this._frame();
     try {
       this.manifest = await (await fetch(manifestUrl, { cache: 'no-cache' })).json();
@@ -214,14 +239,20 @@ export class Avatar extends ClipLibrary {
   // ---------- public API used by the page ----------
   setState(state) { this.state = state; if (this.ready) this.cues.setState(state); }
   setSound(flag) { this.cues.setSound(flag); }
+  /** Emotion table from /api/emotions: expression weights and fallback gestures for every emotion. */
+  setSpecs(specs) { this.face.setSpecs(specs); this.cues.setSpecs(specs); }
   setMouth(level) { this.face.setMouth(level * MOUTH_GAIN); }
   cue(msg) { return this.cues.cue(msg); }
+  /** Deferred action chain from the action role ([{name, duration}]); see CueController.chain(). */
+  chain(actions) { return this.cues.chain(actions); }
 
   _tick() {
     const dt = Math.min(0.1, this.clock.getDelta());
+    this.env?.update(dt);
     this.mixer?.update(dt);
     this.face.update(dt, this.vrm?.expressionManager);
     this.vrm?.update(dt);
+    this.orbit?.follow(dt);
     this.renderer.render(this.scene, this.camera);
   }
 }

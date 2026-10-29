@@ -3,3 +3,10 @@ __pycache__/
 *.pyc
 .venv/
 *.egg-info/
+Monika.zip
+.idea/
+.agents/
+.claude/
+.freebuff/
+AGENTS.md
+skills-lock.json

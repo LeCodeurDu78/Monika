@@ -19,17 +19,38 @@ from character.relationship import LEVELS
 # signal -> options (minimum level index, clip, emotion), first that fits wins. Order = which signal wins.
 _REACTIONS: tuple[tuple[str, tuple[tuple[int, str, str], ...]], ...] = (
     ("surprise", ((0, "Surprised", "surprise"),)),
-    ("hostility", ((2, "Pout", "boudeuse"), (0, "ShakeHead", "boudeuse"))),
-    ("insult", ((2, "Pout", "boudeuse"), (0, "ShakeHead", "boudeuse"))),
+    # Visible anger is reserved for a close relationship: below that, the pout carries the same message.
+    ("hostility", ((3, "Angry", "colere"), (2, "Pout", "boudeuse"), (0, "ShakeHead", "boudeuse"))),
+    ("insult", ((3, "Angry", "colere"), (2, "Pout", "boudeuse"), (0, "ShakeHead", "boudeuse"))),
     ("disappointment", ((2, "Pout", "boudeuse"), (0, "ShakeHead", "boudeuse"))),
     ("shouting", ((2, "Pout", "boudeuse"), (0, "ShakeHead", "boudeuse"))),
+    ("user_distress", ((2, "OpenArms", "attentionnee"), (0, "Think", "inquiete"))),
     ("affection", ((1, "Shy", "joyeuse"), (0, "Yes", "joyeuse"))),
     ("compliment", ((1, "Shy", "joyeuse"), (0, "Yes", "joyeuse"))),
     ("thanks", ((0, "Yes", "joyeuse"),)),
     ("tease", ((1, "LeanIn", "taquine"),)),
     ("greeting", ((1, "Wave", "joyeuse"), (0, "WaveSmall", "joyeuse"))),
     ("farewell", ((0, "Wave", "joyeuse"),)),
+    # Finer signals, checked last so they never steal a reaction from the ones above.
+    ("jealousy", ((1, "Pout", "jalousie"), (0, "ShakeHead", "boudeuse"))),
+    ("shyness", ((0, "Shy", "timide"),)),
+    ("pride", ((0, "HandsOnHips", "fiere"),)),
+    ("worry", ((0, "Think", "inquiete"),)),
 )
+
+
+def sensitive_cue(tier: str | None) -> AvatarCue | None:
+    """Immediate reaction to a coarse or hurtful word: a face, never a wall. 'mild' gets nothing."""
+    if tier == "bad":
+        # Above the character's own reaction (priority 2): otherwise the mood cue, which arrives just after,
+        # replaces it on the page and the pout never shows.
+        return AvatarCue(emotion="boudeuse", intensity=0.55, clip="Pout",
+                         reason="user:sensitive:bad", priority=3)
+    if tier == "severe":
+        # Folded arms and a cool face: quieter than anger, and never hostile back.
+        return AvatarCue(emotion="froide", intensity=0.7, clip="FoldArms",
+                         reason="user:sensitive:severe", priority=4)
+    return None
 
 
 def level_index(snapshot: dict[str, Any]) -> int:
@@ -67,6 +88,12 @@ _REPLY_RULES: tuple[tuple[re.Pattern[str], str, str | None, int, bool], ...] = t
         (r"\b(haha+|ahah+|hihi+|mdr|ptdr)\b", "Laugh", "joyeuse", 0, False),
         (r"\b(bravo|felicitations|youpi|ravie|trop contente|je suis contente)\b", "Yay", "joyeuse", 0, False),
         (r"\b(tu me fais rougir|je rougis)\b", "Shy", "joyeuse", 1, False),
+        (r"\b(je vais pleurer|j'ai envie de pleurer|ca me rend triste|je suis triste)\b", "Cry", "tristesse", 0, False),
+        (r"\b(je m'ennuie|on s'ennuie|je baille|j'ai sommeil)\b", "Stretch", None, 0, False),
+        (r"\b(j'ai hate|trop hate|vivement)\b", "Hop", "excitee", 0, False),
+        (r"\b(on danse|je danse|c'est la fete)\b", "Dance", "excitee", 0, False),
+        (r"\b(toi aussi|a toi de|c'est toi qui)\b", "Point", None, 0, False),
+        (r"\b(je suis la pour toi|tu peux compter sur moi|viens la)\b", "OpenArms", "attentionnee", 1, False),
         (r"\b(petit malin|petit coquin|dis donc|tu fais expres)\b", "LeanIn", "taquine", 1, False),
         (r"^\W*(oh|waouh|wow|incroyable)\b[^.?]*!", "Surprised", "surprise", 0, False),
     ))

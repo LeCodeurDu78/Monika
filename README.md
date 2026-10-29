@@ -8,11 +8,6 @@ MCP, se souvient de ce qui compte pour toi, retrouve tes documents
 et s'affiche sous forme d'avatar 3D avec un petit tableau de bord dans le navigateur.
 Tout est stocké chez toi ; seul le fournisseur LLM que tu configures reçoit tes messages.
 
-> **État : toutes les fonctions décrites ici sont implémentées.** Socle et configuration, mode texte
-> en streaming, client MCP, registre d'outils audité, boucle ReAct, gestion du contexte, prompt
-> système, mémoire rapide, documents personnels (RAG), reconnaissance vocale, synthèse vocale,
-> avatar, tableau de bord, et personnage (émotions, relation, journal).
-
 ## Sommaire
 
 1. [Prérequis](#prérequis)
@@ -27,9 +22,10 @@ Tout est stocké chez toi ; seul le fournisseur LLM que tu configures reçoit te
 10. [Voix : écoute et parole](#voix--écoute-et-parole)
 11. [Avatar et tableau de bord](#avatar-et-tableau-de-bord)
 12. [Personnage : émotions, relation et journal](#personnage--émotions-relation-et-journal)
-13. [Données, vie privée et sécurité](#données-vie-privée-et-sécurité)
-14. [Tests](#tests)
-15. [Dépannage](#dépannage)
+13. [Mots sensibles](#mots-sensibles)
+14. [Données, vie privée et sécurité](#données-vie-privée-et-sécurité)
+15. [Tests](#tests)
+16. [Dépannage](#dépannage)
 
 ## Prérequis
 
@@ -69,7 +65,8 @@ security/      Masquage des secrets (masking.py), enveloppe « données, pas ord
 memory/        Mémoire rapide : mem0 + Qdrant (fast.py) et capture en arrière-plan (capture.py)
 rag/           Documents personnels : scan, lecture, découpage, index, recherche hybride, reranking
 character/     Émotions, relation (favorabilité), journal, gestes d'avatar
-voice/         Micro, détection de parole, Whisper, XTTS v2, lecture audio, nettoyage du texte parlé
+voice/         Micro, détection de parole, Whisper, GPT-SoVITS (client HTTP), lecture audio, nettoyage
+               du texte parlé
 modes/         Discussion dans le terminal (text.py) et lecteur vocal (voice.py)
 web/           Serveur local (server.py), tableau de bord (dashboard.py), diffusion en direct (hub.py),
                CSP (csp.py) et page (static/ : index.html, css/, js/, avatar/, clips/, vendor/)
@@ -83,6 +80,7 @@ Les paquets (`agent/`, `rag/`, `web/`…) sont à la racine du projet : lance to
 | Commande | Effet |
 |---|---|
 | `python -m monika` | Demande le mode au lancement (texte ou voix) |
+| `./lancer-monika.sh` | Démarre la voix GPT-SoVITS si besoin, vérifie qu'elle répond, puis lance Monika (mêmes options que ci-dessous) |
 | `python -m monika --mode texte` | Discussion dans le terminal, réponses en streaming |
 | `python -m monika --mode voix` | Conversation à voix haute (réponses aussi à l'écran) |
 | `python -m monika --config` | Affiche la configuration chargée (secrets masqués) |
@@ -117,12 +115,18 @@ valeurs par défaut du code). Les plus utiles :
 | `LLM_BASE_URL`, `OPENAI_API_KEY`, `MODEL_NAME` | Fournisseur et modèle (API compatible OpenAI) |
 | `MONIKA_HOME` | Dossier des données (défaut `~/.config/monika`) |
 | `USER_NAME` | Ton prénom, utilisé dans le prompt système |
+| `PERSONA_TEXT` | Consignes libres sur son comportement, ajoutées à son prompt (page de réglages) |
 | `MAX_STEPS` | Appels au modèle par tour (défaut 100) |
+| `DIRECTOR_ENABLED`, `DIRECTOR_LLM_MODEL`, `DIRECTOR_TIMEOUT_S` | Rôle directeur : outils utiles et piste du tour (désactivé par défaut) |
+| `ACTION_LLM_ENABLED`, `ACTION_LLM_MODEL` | Rôle action : chaîne de gestes de l'avatar après la réponse (désactivé par défaut) |
 | `CONTEXT_BUDGET_TOKENS` | Seuil de résumé automatique (défaut 150 000) |
 | `FAST_MEMORY_ENABLED`, `MEMORY_CAPTURE_ENABLED` | Mémoire rapide et capture automatique |
 | `RAG_ENABLED`, `RAG_ROOTS`, `RAG_EXCLUDE`, `RAG_MIN_SCORE` | Documents personnels (dont le seuil de pertinence) |
-| `STT_MODEL`, `TTS_ENABLED`, `TTS_ACCEPT_LICENSE` | Voix |
+| `STT_MODEL`, `TTS_ENABLED` | Voix |
+| `TTS_URL`, `TTS_SPEAKERS_DIR`, `TTS_CHARACTER_ID` | GPT-SoVITS : adresse de l'API et pack de voix |
+| `TTS_LANGUAGE`, `TTS_EMOTION_TAGS`, `TTS_RENDER` | Langue parlée, tags d'émotion, découpage des requêtes |
 | `WEB_ENABLED`, `WEB_PORT` | Page locale (défaut 8765) |
+| `SENSITIVE_WORDS_ENABLED` | Filtre de mots sensibles (la liste est dans `words.json`) |
 | `LOG_LEVEL`, `AUDIT_ENABLED` | Journaux |
 
 Une valeur invalide est refusée au lancement avec un message clair (par exemple
@@ -175,6 +179,18 @@ demander confirmation, et sans rien affirmer sans preuve.
 - **Phrases d'attente** : pour un outil lent, une phrase après `FILLER_DELAY_S` (1,5 s), puis
   toutes les `FILLER_REPEAT_S`, au plus `FILLER_MAX_PER_TURN` (2) par tour. Affichées, et dites à
   voix haute quand la voix est chargée.
+- **Rôles facultatifs** : deux appels au modèle, tous deux désactivés par défaut et hors du
+  chemin critique. Le **directeur** (avant le tour, en parallèle du rappel de mémoire) propose un
+  sous-ensemble des outils pour ce tour et une piste d'une phrase (300 caractères au plus),
+  injectée dans le prompt du tour seulement, jamais dans l'historique. Un échec, un délai dépassé
+  (`DIRECTOR_TIMEOUT_S`, 1,5 s) ou une réponse inutilisable laissent tous les outils et ne
+  changent rien ; un nom d'outil inconnu est ignoré, et une liste vide vaut « tous les outils ».
+  `/contexte` rappelle le dernier plan. Le rôle **action** (après le tour, en tâche de fond)
+  choisit une courte chaîne de gestes (2 à 8 s chacun, trois au plus) que la page joue si aucun
+  geste n'est en cours ; un message suivant **annule** la chaîne encore en attente, sur le fond
+  comme sur la page, pour qu'un geste décidé pour une réponse ne tombe jamais pendant la suivante.
+  En cas d'échec, les gestes déterministes de `character/cues.py` restent
+  seuls actifs. Ces deux rôles coûtent un appel de modèle par tour : à activer en mesurant.
 - **Ctrl+C** annule l'outil en cours. Si des actions avaient déjà été faites, une note les
   rappelle au modèle pour qu'il ne les croie pas annulées.
 - **Prompt** reconstruit à chaque tour : personnalité, méthode de travail, règle « données, pas
@@ -265,26 +281,18 @@ fastembed sur le CPU, recherche **hybride** (sens + mots-clés) puis **reranking
 
 ```bash
 # Arch Linux ; sur une autre distribution, installe les paquets équivalents
-sudo pacman -S libpulse ffmpeg   # parec/pacat (audio) et FFmpeg (requis par torchcodec)
-pip install torch torchaudio     # version CUDA par défaut sous Linux ; AVANT la ligne suivante
-pip install -r requirements.txt  # ajoute coqui-tts[codec] (et torchcodec si PyTorch >= 2.9)
+sudo pacman -S libpulse          # parec/pacat : le micro et les haut-parleurs
+pip install -r requirements.txt  # aucun modèle de voix ici (voir « La voix GPT-SoVITS »)
 ```
 
-1. Dépose ton enregistrement dans `~/.config/monika/voice/` (`.wav` conseillé ; `.flac .mp3 .ogg
-   .m4a` acceptés ; 6 à 30 secondes de voix claire, sans musique ni bruit ; plusieurs fichiers
-   sont combinés). Les sous-dossiers (`models/`, `cache/`) sont ignorés. Un `.wav` de moins de
-   3 s est refusé.
-2. Accepte la licence : XTTS v2 est publié sous la **CPML de Coqui** (usage non commercial,
-   https://coqui.ai/cpml). Monika ne télécharge le modèle (~1,9 Go, dans
-   `~/.config/monika/voice/models/xtts`) que si `.env` contient `TTS_ACCEPT_LICENSE=true`.
-3. Lance `python -m monika --mode voix` : au premier lancement, XTTS se charge et Monika annonce
-   l'appareil utilisé (GPU ou CPU) et le temps de chargement.
+Monika ne charge plus aucun modèle de voix elle-même : elle parle à **GPT-SoVITS**, lancé à part.
+S'il manque `pacat`, Monika le dit au démarrage et continue sans voix.
 
 ### Écoute (`--mode voix`)
 
 - **Micro** : `parec` lit la source par défaut de PipeWire/PulseAudio, déjà en 16 kHz mono. Une
   autre source : `pactl list short sources`, puis `AUDIO_INPUT_DEVICE=nom_de_la_source`. Un micro
-  absent ou refusé est signalé tout de suite, avant tout téléchargement de modèle.
+  absent ou refusé est signalé tout de suite, avant même de toucher à la voix.
 - **Fin de phrase (VAD)** : le modèle Silero embarqué dans faster-whisper analyse des images de
   32 ms ; la parole démarre après quelques images confiantes (les claquements sont ignorés) et
   la phrase se termine après `VAD_END_SILENCE_MS` (700 ms) de silence, avec un peu d'audio gardé
@@ -301,8 +309,9 @@ pip install -r requirements.txt  # ajoute coqui-tts[codec] (et torchcodec si PyT
 
 ### Parole
 
-XTTS v2 clone ta voix et parle **phrase par phrase pendant que le modèle écrit encore** ; le son
-sort par `pacat`.
+La voix est **GPT-SoVITS**, qui tourne dans son propre programme : Monika lui envoie du texte par
+son API HTTP (`api_v2.py`), reçoit un WAV et le joue par `pacat`. Monika parle **phrase par phrase
+pendant que le modèle écrit encore**.
 
 - **Modes** : Monika parle en mode voix et en mode texte (`TTS_TEXT_MODE=false` la rend muette
   en mode texte). L'écran garde le texte tel quel ; la voix reçoit une version nettoyée : plus de
@@ -312,30 +321,85 @@ sort par `pacat`.
   qu'elle le laisse à l'écran).
 - **Coupures** : Ctrl+C pendant qu'elle parle coupe la voix, la session continue ; en mode
   texte, envoyer un nouveau message coupe aussi ce qui se disait.
-- **Mémoire GPU (4 Go)** : avec `TTS_DEVICE=auto`, si la mémoire GPU manque au chargement, XTTS
-  passe sur le CPU (plus lent) et Monika le dit. Si la voix hache : `TTS_STREAM_CHUNK=40`
-  (lecture plus lisse, premier son un peu plus tardif).
-- **Panne de voix** (modèle absent, GPU saturé, sortie audio perdue) : le message est affiché en
-  français, les réponses restent à l'écran ; après trois échecs de suite Monika cesse de parler
-  jusqu'au prochain lancement.
-- **Cache** : l'analyse de ta voix est gardée dans `~/.config/monika/voice/cache` et refaite
-  automatiquement si tu changes d'enregistrement.
+- **Panne de voix** (serveur arrêté, référence illisible, sortie audio perdue) : le message est
+  affiché en français, les réponses restent à l'écran ; après trois échecs de suite Monika cesse
+  de parler jusqu'au prochain lancement.
 - **Sortie audio** : `AUDIO_OUTPUT_DEVICE` (liste : `pactl list short sinks`), vide = défaut.
+
+### La voix GPT-SoVITS
+
+1. **Lance le serveur** (dans ta copie de GPT-SoVITS, avec ses propres modèles) :
+
+   ```bash
+   python api_v2.py -a 127.0.0.1 -p 9880
+   ```
+
+   Plus simple : `./lancer-monika.sh` fait tout — il démarre `api_v2.py` en arrière-plan s'il ne
+   tourne pas déjà, attend qu'il écoute, passe une vraie phrase de synthèse avec ton pack de voix
+   pour vérifier (nom de la voix, fréquence, tags, durée), puis ouvre Monika ; en sortant, il arrête
+   le serveur qu'il a démarré. `GPT_SOVITS_DIR` dit où il se trouve (défaut
+   `~/Applications/GPT-SoVITS`), `GPT_SOVITS_LOG` où écrire son journal.
+
+   Monika s'y connecte au démarrage (`TTS_URL`, `http://127.0.0.1:9880` par défaut) et lui envoie
+   une phrase courte pour préchauffer le modèle : le premier appel peut prendre une dizaine de
+   secondes, les suivants beaucoup moins. `api_v2.py` **n'a pas d'authentification** : garde-le sur
+   `127.0.0.1`, ne l'expose jamais sur le réseau.
+2. **Dépose un pack de voix** dans `~/.config/monika/voice/` (`TTS_SPEAKERS_DIR` pour un autre
+   dossier), avec la structure de GPT-SoVITS :
+
+   ```
+   ~/.config/monika/voice/ma-voix/
+     character.json               optionnel : { "character_id": "ma-voix", "name": "…", "language": "Chinese" }
+     references/emotions.json     { "neutral1": { "audio": "neutral1.wav", "text": "transcript de référence" }, … }
+     references/neutral1.wav      un enregistrement par tag (happy1.wav, sad2.wav, angry3.wav…)
+   ```
+
+   Copie le dossier `references/` d'un pack d'un moteur GPT-SoVITS (les poids `.ckpt`/`.pth` ne
+   servent pas : seul le serveur les charge). Plusieurs dossiers dans la racine = il faut choisir
+   avec `TTS_CHARACTER_ID` (le nom du dossier ou le `character_id`). Les chemins envoyés au serveur
+   sont **locaux** : les deux programmes doivent tourner sur la même machine.
+3. **La langue** : GPT-SoVITS n'a pas de frontal français. `TTS_LANGUAGE=en` (défaut) fait lire le
+   texte latin par le frontal anglais ; `auto`, `zh`, `ja`, `ko` et `yue` sont aussi acceptés, et
+   `fr` est traité comme `en`. `TTS_PROMPT_LANG` (défaut `zh`) est la langue des transcripts de
+   référence, quand `character.json` n'en donne pas.
+
+- **Tags d'émotion** : l'émotion de Monika devient `【happy2】`-like dans le texte, avec au plus
+  deux tags par phrase (une transition commence neutre et arrive à l'émotion au milieu). Chaque run
+  de texte est synthétisé avec **sa** référence : un changement de tag au milieu d'un bloc ne coûte
+  qu'une requête de plus. `TTS_EMOTION_TAGS=auto` n'utilise **que** les tags qui ont un fichier
+  (`neutral1` sinon) : la voix ne prétend jamais ressentir une émotion dont elle n'a pas
+  l'enregistrement. `on` force tous les tags de la table, `off` parle toujours neutre.
+- **Fréquence** : celle annoncée par le WAV du préchauffage (32000 Hz chez GPT-SoVITS). Si le
+  serveur répond ensuite à une autre fréquence, Monika rééchantillonne : le son ne sort ni trop
+  vite ni trop lent.
+- **Latence** : `TTS_RENDER=sentence` (défaut) envoie une phrase par requête, donc le premier son
+  arrive vite. `TTS_RENDER=block` regroupe les phrases jusqu'à `TTS_BLOCK_MAX_CHARS` : meilleure
+  prosodie sur les longues réponses, premier son plus tardif. `TTS_TIMEOUT_S` borne l'attente.
+- **Panne** : serveur arrêté ou lent → message clair, réponses à l'écran, et la conversation
+  continue ; trois échecs de suite coupent la voix.
 
 ## Avatar et tableau de bord
 
 Au lancement, Monika ouvre une page à `http://localhost:8765` (`WEB_PORT` ; `WEB_ENABLED=false`
 pour la couper). À gauche l'avatar 3D, à droite le tableau de bord.
 
-- **Avatar** : un modèle VRM (`web/static/avatar/avatar.vrm`) animé par des clips de mouvement
-  (`web/static/clips/`, manifeste `web/static/avatar/clips.json`) : repos, réflexion, parole, joie, surprise,
-  hochement, salut… Les expressions du visage (joie, colère, tristesse, détente, surprise),
+- **Avatar** : un modèle VRM (`web/static/avatar.vrm`) animé par des clips de mouvement
+  (`web/static/clips/`, manifeste `web/static/clips.json`, 26 gestes sous licence CC0 — voir
+  `web/static/clips/LICENSE.txt`) : repos, réflexion, parole, joie, surprise, hochement, salut,
+  colère, pleurs, danse, mains sur les hanches, bras ouverts, index pointé, étirement… Les expressions du visage (joie, colère, tristesse, détente, surprise),
   le clignement et la synchronisation labiale suivent l'état et le son réel. Un voyant indique
   « Au repos », « J'écoute », « Je réfléchis » ou « Je parle ».
+  Le décor est une salle de club littéraire au crépuscule, entièrement procédurale
+  (`web/static/js/avatar/environment.js`) : plancher en lattes, tableau noir, fenêtres à claies et
+  rideaux, pupitres, suspension qui oscille et poussière en suspension. Aucun fichier à télécharger ;
+  si le décor échoue à se construire, la scène reste utilisable sans lui.
+- **Caméra** : glisser avec le bouton gauche tourne autour d'elle, la molette rapproche ou éloigne,
+  et un glisser avec le bouton droit vers le haut ou le bas fait glisser le point de mire de sa tête
+  à ses chaussures (« `?view=full` » cadre le corps entier au départ). L'orbite ne passe jamais sous
+  le sol ; la caméra suit sa respiration sans tremblement.
   **Bibliothèques 3D** : three.js et three-vrm sont fournis dans `web/static/vendor/` et servis
-  localement ; si ce dossier manque, le tableau de bord marche mais l'avatar est remplacé par un
-  message. Ouvre la page avec `?debug` pour tester chaque clip et
-  chaque émotion ; `?view=full` cadre le corps entier au lieu du buste.
+  localement (aucune dépendance à télécharger : le dossier est versionné). Ouvre la page avec `?debug`
+  pour tester chaque clip et chaque émotion ; `?view=full` cadre le corps entier au lieu du buste.
 - **Tableau de bord**, volontairement réduit à trois blocs : *Contexte* (taille de la
   conversation), *Relation* (niveau, favorabilité et humeur de Monika ; son journal, dont tu peux
   modifier ou supprimer chaque note, corriger ou effacer l'impression d'ensemble, ou tout effacer ;
@@ -352,10 +416,40 @@ pour la couper). À gauche l'avatar 3D, à droite le tableau de bord.
   programme de cette machine peut donc la lire.
 - **WebGL** est nécessaire dans le navigateur ; sans lui, la page l'indique et le tableau de bord
   marche quand même.
-- **Crédits et licences** : modèle 3D de `tyler1234506` (VRM, crédit obligatoire, usage commercial
-  et contenu sexuel interdits, modification et redistribution autorisées) ; clips de mouvement
-  CC0 (licence indiquée dans `web/static/avatar/clips.json`) ; code de retargeting adapté d'OpenSakura (MIT, © 2026
-  MekaHime Inc.) ; three.js et three-vrm (MIT).
+
+### Page de réglages (`/settings`)
+
+Un lien « Réglages » dans l'en-tête ouvre cette page (même serveur, même jeton). Elle a trois blocs :
+
+- **Santé** : sept voyants — LLM, reconnaissance vocale, voix GPT-SoVITS, serveurs MCP, mémoire
+  rapide, documents, page locale. Chaque sonde est bornée à 1,5 s et lancée en parallèle ; le
+  rafraîchissement a lieu toutes les 5 s **uniquement si l'onglet est visible**, plus un bouton
+  « Tester maintenant ». Un composant **désactivé** est gris, pas rouge ; un composant en panne est
+  rouge avec le détail (par exemple « 127.0.0.1:9880 injoignable »). Le LLM est sondé par sa liste
+  de modèles, jamais par une complétion (cela coûterait un appel) ; la voix par une connexion TCP.
+- **Réglages** : une sélection lisible, groupée (modèle, comportement, personnage, rôles, mémoire,
+  documents, voix, page). Les clés définies dans le `.env` sont **grisées et marquées** : le `.env`
+  garde la priorité, la page ne fait pas semblant de les piloter, et l'API les **refuse** (400)
+  même appelée à la main. « Enregistrer » valide puis écrit
+  `<MONIKA_HOME>/settings.json` (en `0600`, écriture atomique) et **applique à chaud** ce qui peut
+  l'être (température, `MAX_STEPS`, seuils, rôles, `PERSONA_TEXT`…) ; un bandeau liste les clés qui
+  demandent un redémarrage (port, URL, modèles, appareils, index). **Tout ou rien** : une valeur hors
+  bornes est refusée avec un message et n'écrit rien.
+- **Clé API** : la page indique seulement « définie » ou « non définie » et n'affiche jamais la
+  valeur. Enregistrer remplace la seule ligne `OPENAI_API_KEY` du `.env` du projet (une ligne, sans
+  retour à la ligne, fichier en `0600`) ; redémarrage requis.
+
+Ce que la page **ne peut pas** changer : `MONIKA_HOME`, les dossiers indexés (`RAG_ROOTS`), le
+fichier des serveurs MCP et le dossier des voix — écrire un chemin depuis le navigateur ferait de la
+page un lanceur de fichiers arbitraires. Ces clés restent éditables à la main dans `.env`.
+
+Côté sécurité, les **lectures** de `/api/settings` et `/api/health` exigent le jeton (la première
+contient la persona et les noms de modèles), contrairement à `/api/status` ; les écritures passent par
+le même `act()` que le tableau de bord (même jeton, même contrôle d'origine). Si `settings.json` est
+abîmé à la main **pendant** que Monika tourne, l'écrire depuis la page échoue avec un message clair :
+corrige-le ou supprime-le. Au **démarrage**, un `settings.json` qui ne se charge pas (JSON cassé ou
+valeur hors bornes) n'empêche plus rien : il est renommé en `settings.json.corrupt-<date>`, un
+avertissement dit pourquoi, et Monika repart des valeurs par défaut.
 
 ## Personnage : émotions, relation et journal
 
@@ -395,8 +489,12 @@ fermeture ──► aclose()                    dernière note du journal, puis 
 
 ### Émotions
 
-Cinq émotions : neutre, joyeuse, taquine, boudeuse, surprise. « Neutre » est dérivée (ce que
-l'émotion la plus forte laisse libre), jamais stockée.
+26 émotions : six de base (`joyeuse`, `tristesse`, `colere`, `peur`, `surprise`, `degout`) et vingt
+nuances (`taquine`, `boudeuse`, `jalousie`, `timide`, `fiere`, `attentionnee`, `tsundere`…). Leur liste,
+leurs demi-vies, leurs plafonds, leurs tags de voix et leurs expressions du visage vivent dans **une
+seule table**, `character/emotion_spec.py`. « Neutre » est dérivée (ce que l'émotion la plus forte
+laisse libre), jamais stockée. Au plus trois émotions comptent à la fois : les plus faibles retombent
+au seuil, et la page ne dessine que celles qui vivent.
 
 - **Lecture du ton** : chaque message est lu par un petit appel au modèle (`AFFECT_LLM_MODEL`,
   vide = `MODEL_NAME` ; délai `AFFECT_TIMEOUT_S`, 2 s par défaut), en parallèle du rappel de la
@@ -458,9 +556,10 @@ conversation à l'autre.
 
 | Fichier | Rôle |
 |---|---|
-| `models.py` | Types communs : `Appraisal`, `AvatarCue`, liste des émotions et des signaux autorisés |
+| `emotion_spec.py` | La table des 26 émotions : la seule déclaration d'une émotion (demi-vie, plafonds par niveau, tags de voix, expressions, gestes) |
+| `models.py` | Types communs : `Appraisal`, `AvatarCue`, listes dérivées des émotions et signaux autorisés |
 | `appraisal.py` | Lecture du ton : lexique français, LLM (sortie non fiable, validée strictement), repli. **Seul endroit** qui transforme un ton en variations d'émotions (`deltas_from`) |
-| `emotions.py` | Vecteur de 5 émotions, décroissance dans le temps (aussi entre sessions), inhibition joie/bouderie |
+| `emotions.py` | Vecteur des 26 émotions, décroissance dans le temps (aussi entre sessions), inhibition joie/bouderie, au plus 3 émotions notables |
 | `relationship.py` | Favorabilité : paliers, plafonds par jour, maturité requise (jours et messages), hystérésis |
 | `core.py` | Émotions + relation validées ensemble ; `preview()` calcule l'état d'un tour **sans rien changer** |
 | `tone.py` | Texte du bloc de prompt (niveau, humeur). Ne contient jamais de texte venant de l'utilisateur |
@@ -476,7 +575,9 @@ Côté page : `web/static/js/avatar/` (clips, retargeting, visage, gestes), `web
 ### Modifier le comportement
 
 - **Ajouter un clip** : copier le `.glb` dans `web/static/clips/`, l'ajouter à
-  `web/static/avatar/clips.json`, puis l'utiliser dans `cues.py`. La page ignore les noms de clips
+  `web/static/clips.json`, puis l'utiliser dans `cues.py`. `tests/test_clips.py` refuse un nom
+  utilisé par le code mais absent du manifeste, et un fichier que rien ne joue. En `once: true` le
+  clip se joue une fois et tient sa dernière pose ; `fade` règle le fondu d'entrée (0 = coupure). La page ignore les noms de clips
   qu'elle ne connaît pas.
 - **Ajouter un geste dans ses réponses** : une ligne dans `_REPLY_RULES` (`cues.py`).
 - **Ajouter une réaction à un message** : `_REACTIONS` (`cues.py`) ; un nouveau *signal* se déclare
@@ -484,8 +585,33 @@ Côté page : `web/static/js/avatar/` (clips, retargeting, visage, gestes), `web
 - **Régler la progression** : constantes en tête de `relationship.py` (rythme, plafonds, paliers).
 - **Régler le ton écrit** : `LEVEL_GUIDANCE` et `MOOD_GUIDANCE` dans `tone.py`.
 - **Régler le journal** : `SYSTEM_PROMPT` dans `journal_keeper.py`, tailles dans `journal.py`.
-- **Ajouter une émotion** : `models.py` (liste), `emotions.py` (demi-vie), `relationship.py`
-  (plafonds), `web/static/js/avatar/face.js` (`EMOTION_EXPR`).
+- **Ajouter une émotion** : une ligne dans `SPECS` (`character/emotion_spec.py`). Le reste en découle :
+  listes et signaux (`models.py`), demi-vies et inhibition (`emotions.py`), plafonds (`relationship.py`),
+  `GET /api/emotions`, et côté page les expressions et gestes de repli (aucune table en dur à toucher).
+
+## Mots sensibles
+
+Un filtre déterministe (aucun appel au modèle) repère dans ton message un mot de **ta** liste et colore
+le ton de la réponse, sans jamais la bloquer ni la filtrer. Le dépôt ne livre **aucun** mot : la liste
+est la tienne et c'est elle qui décide de ce qui compte.
+
+- **Trois niveaux.** `mild` : rien de mécanique (au plus une moue). `bad` : un bloc de ton calme dans le
+  prompt et une moue. `severe` : un bloc de ton qui demande de ne pas s'engager sur ce terrain (sans
+  reproche ni représailles), les bras croisés, et une ligne dans le journal d'audit. Le niveau le plus
+  grave l'emporte quand plusieurs mots se croisent.
+- **La liste** : `~/.config/monika/words.json`, créée vide au premier lancement (avec une note), puis
+  modifiable depuis la page **Réglages** (un mot par ligne, 64 caractères et 500 mots par niveau au
+  maximum). Elle est rechargée **à chaud** : la sauvegarde reconstruit le filtre du tour suivant sans
+  redémarrer. `SENSITIVE_WORDS_ENABLED=false` coupe le filtre entièrement.
+- **Reconnaissance** : accents et majuscules, apostrophes et élisions (`l'idiot`, `t'es con`), leetspeak
+  (`cl@nker`, `cl4nker`, `1d10t`), caractères de collage (`- _ + .`), caractères de largeur nulle,
+  pluriels simples (`idiots`). Mots entiers seulement : `rigger` ne matche pas `trigger`.
+- **Ce qui est injecté** : un bloc écrit dans le code, jamais le mot détecté (pas de réinjection de
+  prompt), et seulement pour ce tour. Le journal d'audit ne contient que le niveau, jamais le mot ni la
+  phrase.
+- **Ce qui n'est pas fait** : la réponse du modèle n'est pas censurée et le tour n'est jamais bloqué ;
+  les faux positifs français (`merde` parfois affectueux) restent possibles, d'où le niveau `mild` sans
+  effet mécanique et l'interrupteur.
 
 ## Données, vie privée et sécurité
 
@@ -496,6 +622,8 @@ Tout est stocké dans `~/.config/monika` (réglable via `MONIKA_HOME`, dossier e
 | `memory/` | Mémoire rapide (Qdrant local) |
 | `rag/` | Index de documents (Qdrant local) et manifeste SQLite |
 | `character/` | `state.json` (émotions et relation) et `journal.json` (les notes de Monika sur toi), en `0600` ; supprime-les pour tout remettre à zéro |
+| `settings.json` | Les réglages modifiés depuis `/settings` (le `.env` garde la priorité), en `0600` |
+| `words.json` | Ta liste de mots sensibles (vide au départ, trois niveaux), en `0600` |
 | `voice/` | Ta voix de référence, `models/`, `cache/` |
 | `tool_results/` | Gros résultats d'outils (purgés après 14 jours) |
 | `logs/` | `audit.jsonl` et journaux des serveurs MCP |
@@ -512,10 +640,16 @@ Tout est stocké dans `~/.config/monika` (réglable via `MONIKA_HOME`, dossier e
 
 ## Tests
 
-Aucun test n'est livré dans ce dépôt pour l'instant (pas de dossier `tests/`). Les moteurs du
-personnage (`character/`), du RAG (`rag/chunking.py`, `rag/lexical.py`) et de la voix
-(`voice/endpoint.py`, `voice/speech_text.py`) n'ont besoin ni de réseau ni de modèle et se prêtent
-bien à `python -m unittest`.
+Les tests vivent dans `tests/` et tournent sans réseau, sans modèle et sans navigateur :
+
+```bash
+python -m unittest discover -s tests -t .
+```
+
+`tests/test_emotion_spec.py` couvre la table des émotions et tout ce qui en dérive (listes, plafonds,
+`deltas_from`, bloc de prompt, gestes). Les moteurs du personnage (`character/`), du RAG
+(`rag/chunking.py`, `rag/lexical.py`) et de la voix (`voice/endpoint.py`, `voice/speech_text.py`) n'ont
+besoin de rien non plus et se testent de la même façon.
 
 ## Dépannage
 
@@ -523,8 +657,11 @@ bien à `python -m unittest`.
 |---|---|
 | `Le port 8765 est déjà utilisé` | Une autre instance tourne : ferme-la ou change `WEB_PORT` |
 | Micro non trouvé | `pactl info` doit répondre ; `pactl list short sources` puis `AUDIO_INPUT_DEVICE` |
-| Pas de voix | Vérifie `TTS_ACCEPT_LICENSE=true`, ton enregistrement dans `voice/`, et le message affiché au lancement |
-| Voix qui hache | `TTS_STREAM_CHUNK=40`, ou `TTS_DEVICE=cpu` si le GPU est saturé |
+| Pas de voix | Le message du lancement ; `pacat --version` ; le pack de voix dans `~/.config/monika/voice` |
+| `Le serveur GPT-SoVITS (…) ne répond pas` | Lance `api_v2.py` sur `127.0.0.1:9880`, ou corrige `TTS_URL` |
+| Voix neutre | Le pack n'a pas d'enregistrement par tag : `TTS_EMOTION_TAGS=auto` n'utilise que ceux qui ont un fichier |
+| `Aucun pack de voix GPT-SoVITS dans …` | Il manque `references/emotions.json` (voir « La voix GPT-SoVITS ») |
+| Voix qui hache | `TTS_RENDER=block` pour des requêtes plus longues, ou ferme les programmes qui saturent le GPU du serveur |
 | Un serveur MCP n'apparaît pas | `python -m monika --tools` ; variable `${…}` absente ; voir `logs/mcp-<nom>.log` |
 | Index qui refuse de s'ouvrir | Modèle ou taille de passages changés : `python -m monika --rag-index --reset` |
 | Mémoire en erreur après changement de `EMBEDDING_MODEL` | Supprime `~/.config/monika/memory/qdrant` |

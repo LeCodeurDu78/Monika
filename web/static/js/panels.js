@@ -107,6 +107,17 @@ function noteDate(at) {
 }
 
 const EMOTION_LABELS = { neutre: 'neutre', joyeuse: 'joyeuse', taquine: 'taquine', boudeuse: 'boudeuse', surprise: 'surprise' };
+const EMOTION_MIN_BAR = 0.05;   // 26 emotions exist: the panel only shows the ones that are actually alive
+let emotionLabels = {};         // filled from /api/emotions (setEmotionLabels)
+
+/** Display names served by /api/emotions; the four built-in ones remain if it never arrives. */
+export function setEmotionLabels(specs) {
+  const emotions = specs && specs.emotions;
+  if (!emotions || typeof emotions !== 'object') return;
+  emotionLabels = Object.fromEntries(Object.entries(emotions)
+    .filter(([, entry]) => entry && typeof entry.label === 'string')
+    .map(([name, entry]) => [name, entry.label]));
+}
 
 function bar(fraction, className = 'bar') {
   const box = el('div', className);
@@ -124,8 +135,9 @@ function relationState(s, refresh) {
   ];
   const emotions = el('div', 'emotions');
   for (const [name, value] of Object.entries(s.emotions)) {
+    if (name !== s.dominant && value < EMOTION_MIN_BAR) continue;
     const line = el('div', `emotion${name === s.dominant ? ' dominant' : ''}`);
-    line.append(el('span', 'name', EMOTION_LABELS[name] || name), bar(value, 'bar mini'));
+    line.append(el('span', 'name', emotionLabels[name] || EMOTION_LABELS[name] || name), bar(value, 'bar mini'));
     emotions.append(line);
   }
   nodes.push(el('div', 'muted', s.dominant === 'neutre' ? 'Humeur : égale' : `Humeur : ${s.dominant}`), emotions,

@@ -78,8 +78,11 @@ class ToolRegistry:
     def tools(self) -> list[Tool]:
         return list(self._tools.values())
 
-    def schemas(self) -> list[dict[str, Any]]:
-        return [t.schema() for t in self._tools.values()]
+    def schemas(self, names: set[str] | None = None) -> list[dict[str, Any]]:
+        """Function-calling definitions, all of them or only `names` (the director's subset for one turn)."""
+        if names is None:
+            return [t.schema() for t in self._tools.values()]
+        return [t.schema() for name, t in self._tools.items() if name in names]
 
     async def call(self, name: str, raw_arguments: str | dict[str, Any] | None) -> ToolResult:
         """Run a tool and return its text result or a text error."""
@@ -106,6 +109,11 @@ class ToolRegistry:
         elapsed = (loop.time() - start) * 1000
         self._log(name, args, "error" if is_error else "ok", elapsed, text if is_error else None)
         return ToolResult(name, text, is_error, elapsed)
+
+    def audit_event(self, event: str, data: dict[str, Any] | None = None) -> None:
+        """Log a non-tool event (e.g. a sensitive-word level) in the same trail, secrets masked."""
+        if self._audit is not None:
+            self._audit.record(event, data or {}, "ok", 0.0)
 
     def _log(self, name: str, args: dict[str, Any], status: str, ms: float,
              detail: str | None) -> None:

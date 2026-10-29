@@ -13,6 +13,7 @@ from dataclasses import asdict, dataclass
 from datetime import date, datetime
 from typing import Any
 
+from character.emotion_spec import CEILINGS
 from character.models import Appraisal, clamp, finite
 
 LEVELS: tuple[str, ...] = ("reservee", "cordiale", "complice", "proche")
@@ -36,12 +37,7 @@ ABSENCE_RATE = 0.004         # per day beyond the grace period
 ABSENCE_MAX = 0.05
 
 # How freely each emotion may rise at each level (teasing and sulking need familiarity).
-CEILINGS: tuple[dict[str, float], ...] = (
-    {"joyeuse": 0.6, "taquine": 0.2, "boudeuse": 0.3, "surprise": 1.0},
-    {"joyeuse": 0.8, "taquine": 0.4, "boudeuse": 0.4, "surprise": 1.0},
-    {"joyeuse": 1.0, "taquine": 0.7, "boudeuse": 0.6, "surprise": 1.0},
-    {"joyeuse": 1.0, "taquine": 1.0, "boudeuse": 0.8, "surprise": 1.0},
-)
+# The caps live next to each emotion in emotion_spec.py; CEILINGS holds one dict per level.
 
 
 def day_of(now: datetime) -> date:

@@ -103,6 +103,18 @@ class Transcriber:
                     "vérifie ta connexion (ou le réglage STT_MODEL / STT_DEVICE).") from exc
             return time.perf_counter() - start
 
+    @property
+    def loaded(self) -> bool:
+        return self._model is not None
+
+    @property
+    def model_name(self) -> str:
+        return self._s.stt_model
+
+    @property
+    def device(self) -> str:
+        return self._s.stt_device
+
     async def transcribe(self, audio: np.ndarray) -> Transcript:
         await self.load()
         return await asyncio.get_running_loop().run_in_executor(self._pool, self._run, audio)

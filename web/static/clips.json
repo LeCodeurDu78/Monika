@@ -84,6 +84,46 @@
       "file": "Sad.glb",
       "name": "Sad",
       "fade": 0.5
+    },
+    {
+      "file": "Cry.glb",
+      "name": "Cry",
+      "fade": 0.5
+    },
+    {
+      "file": "Angry.glb",
+      "name": "Angry",
+      "fade": 0.5
+    },
+    {
+      "file": "HandsOnHips.glb",
+      "name": "HandsOnHips",
+      "fade": 0.5
+    },
+    {
+      "file": "OpenArms.glb",
+      "name": "OpenArms",
+      "fade": 0.5
+    },
+    {
+      "file": "Point.glb",
+      "name": "Point",
+      "fade": 0.5
+    },
+    {
+      "file": "Hop.glb",
+      "name": "Hop",
+      "fade": 0.5
+    },
+    {
+      "file": "Dance.glb",
+      "name": "Dance",
+      "fade": 0.5
+    },
+    {
+      "file": "Stretch.glb",
+      "name": "Stretch",
+      "once": true
     }
   ]
 }

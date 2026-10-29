@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
+from collections.abc import Iterable
 
 CODE_NOTICE = "Je te laisse le code à l'écran."  # Spoken once instead of reading a code block
 LINK_WORD = "un lien"  # Spoken instead of a bare URL
@@ -87,6 +88,30 @@ def _wrap(text: str, limit: int) -> list[str]:
         head, text = _cut(text, limit)
         pieces.append(head)
     return pieces + [text]
+
+
+def group_blocks(sentences: Iterable[str], max_chars: int) -> list[str]:
+    """Join sentences into blocks of at most `max_chars`: one block is one request to the voice.
+
+    A sentence is never split (a block containing a single long sentence simply exceeds the limit),
+    and the gaps between sentences are kept as single spaces.
+    """
+    blocks: list[str] = []
+    current = ""
+    for sentence in sentences:
+        text = " ".join(str(sentence).split())
+        if not text:
+            continue
+        if not current:
+            current = text
+        elif len(current) + 1 + len(text) <= max_chars:
+            current = f"{current} {text}"
+        else:
+            blocks.append(current)
+            current = text
+    if current:
+        blocks.append(current)
+    return blocks
 
 
 def _is_abbreviation(before: str, terminator: str) -> bool:

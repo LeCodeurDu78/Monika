@@ -10,12 +10,16 @@ from typing import Any, Protocol
 import numpy as np
 
 from voice.errors import PlaybackError, VoiceError
+from voice.speech_text import group_blocks
 
 log = logging.getLogger(__name__)
 
 _SENTENCE_DONE = object()  # Marks the end of a sentence that was spoken
 _SENTENCE_SKIPPED = object()  # Marks the end of a sentence that failed
 MAX_FAILURES = 3  # Consecutive failures after which the voice is switched off for the session
+
+# (text, emotion, intensity) -> text with emotion tags for the engine (see character/tts_emotion.py)
+Tagger = Callable[[str, str, float], str]
 
 
 class _Engine(Protocol):
@@ -36,11 +40,16 @@ class Speaker:
     """Turns queued sentences into sound, one burst at a time, without ever overlapping speech."""
 
     def __init__(self, engine: _Engine, sink: _Sink, on_error: Callable[[str], None] | None = None,
-                 lookahead_chunks: int = 6) -> None:
+                 lookahead_chunks: int = 6, tagger: Tagger | None = None, block_chars: int = 0) -> None:
         self._engine = engine
         self._sink = sink
         self.on_error = on_error  # May be set later, e.g. by the chat session
         self.engine = engine
+        self._tagger = tagger  # Emotion tags: None means the engine takes plain text, without tags
+        self._mood: tuple[str, float] = ("neutre", 0.0)
+        self._block_chars = max(0, block_chars)  # 0 = one sentence per request
+        self._block: list[str] = []  # Sentences waiting to be spoken as one block
+        self._blocking = False  # Only while a turn is being answered
         self._sentences: asyncio.Queue = asyncio.Queue()
         self._audio: asyncio.Queue = asyncio.Queue(maxsize=lookahead_chunks)
         self._pending = 0  # Sentences accepted but not completely played yet
@@ -58,8 +67,12 @@ class Speaker:
 
     @property
     def busy(self) -> bool:
-        """True while a sentence is queued, being made or being heard."""
-        return self._pending > 0 or self._sink.is_open
+        """True while a sentence is queued, buffered or being heard."""
+        return self._pending > 0 or self._sink.is_open or bool(self._block)
+
+    def set_emotion(self, emotion: str, intensity: float = 0.5) -> None:
+        """The mood the next phrases are spoken in; only used when a tagger was given."""
+        self._mood = (str(emotion or ""), float(intensity))
 
     def say(self, text: str, filler: bool = False) -> bool:
         """Queue one sentence; False when it was not accepted (voice off, empty, or a filler while busy)."""
@@ -68,14 +81,32 @@ class Speaker:
             return False
         if filler and self.busy:
             return False  # A waiting phrase never talks over, or right after, real speech
-        self._ensure_started()
-        self._idle.clear()
-        self._pending += 1
-        self._sentences.put_nowait((text, self._generation))
+        if self._blocking and self._block_chars > 0 and not filler:
+            self._block.append(text)
+            if sum(len(part) for part in self._block) + len(self._block) - 1 >= self._block_chars:
+                self._flush_block()  # Reaches the limit: speak what we have, it is one request
+            else:
+                self._idle.clear()  # Buffered text still counts as speech waiting to be heard
+            return True
+        self._enqueue(text)
         return True
+
+    def start_block(self) -> None:
+        """From now on, sentences are grouped (up to `block_chars`) into a single voice request."""
+        self._blocking = self._block_chars > 0
+
+    def flush_block(self) -> None:
+        """Speak the sentences buffered so far, without ending the block mode."""
+        self._flush_block()
+
+    def end_block(self) -> None:
+        """Speak what is buffered and go back to one sentence per request."""
+        self._flush_block()
+        self._blocking = False
 
     async def wait_idle(self, timeout: float | None = None) -> bool:
         """Wait until everything queued has been played; False if the timeout came first."""
+        self._flush_block()  # Buffered sentences would otherwise never be spoken
         try:
             await asyncio.wait_for(self._idle.wait(), timeout)
         except TimeoutError:
@@ -89,6 +120,8 @@ class Speaker:
             while not queue.empty():
                 queue.get_nowait()
         self._pending = 0
+        self._block.clear()
+        self._blocking = False
         await self._sink.stop()
         self._idle.set()
 
@@ -100,6 +133,27 @@ class Speaker:
         self._tasks.clear()
 
     # --- internals ----------------------------------------------------------------------------
+
+    def _enqueue(self, text: str) -> None:
+        self._ensure_started()
+        self._idle.clear()
+        self._pending += 1
+        self._sentences.put_nowait((text, self._generation))
+
+    def _flush_block(self) -> None:
+        sentences, self._block = self._block, []
+        for block in group_blocks(sentences, self._block_chars):
+            self._enqueue(block)
+
+    def _tag(self, text: str) -> str:
+        """Text with emotion tags; a broken tagger must never cost the sentence."""
+        if self._tagger is None:
+            return text
+        try:
+            return self._tagger(text, *self._mood)
+        except Exception:
+            log.exception("emotion tagging failed, speaking the sentence untagged")
+            return text
 
     def _ensure_started(self) -> None:
         if not self._tasks:
@@ -129,7 +183,7 @@ class Speaker:
             stream = None
             outcome = _SENTENCE_SKIPPED
             try:
-                stream = self._engine.synth(text)
+                stream = self._engine.synth(self._tag(text))
                 while True:
                     chunk = await self._engine.run(next, stream, end)
                     if chunk is end:

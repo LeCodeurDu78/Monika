@@ -1,5 +1,5 @@
 // The page: connects to Monika, drives the avatar and refreshes the dashboard panels (see panels.js).
-import { render } from './panels.js';
+import { render, setEmotionLabels } from './panels.js';
 
 const STATE_TEXT = { idle: 'Au repos', listening: 'J’écoute', thinking: 'Je réfléchis', speaking: 'Je parle' };
 const SPEAKING_LEVEL = 0.02;
@@ -37,6 +37,7 @@ class Page {
       this.avatar?.setMouth(msg.value);
       if (msg.value > SPEAKING_LEVEL) { this.lastSound = performance.now(); this.chip(); }
     } else if (msg.type === 'avatar') this.avatar?.cue(msg);
+    else if (msg.type === 'avatar_chain') this.avatar?.chain(msg.actions);
     else if (msg.type === 'activity') this.scheduleRefresh(400);
     else if (msg.type === 'character') this.scheduleRefresh(200);
   }
@@ -81,6 +82,7 @@ class Page {
     }
     if (!this.avatar.init()) { fail(this.avatar.error); return; }
     this.avatar.setState(this.state);
+    await this.loadEmotionSpecs();
     try {
       this.modelInfo = await this.avatar.load('/static/avatar.vrm', '/static/clips.json');
     } catch (err) {
@@ -89,6 +91,19 @@ class Page {
     }
     if (new URLSearchParams(location.search).has('debug')) {
       import('./debug.js').then((m) => m.mountDebugPanel(this.avatar)).catch((err) => console.error('[debug]', err));
+    }
+  }
+
+  /** The emotion table (labels, expressions, gestures) served by the backend; the page's own fallbacks cover a failure. */
+  async loadEmotionSpecs() {
+    try {
+      const response = await fetch('/api/emotions', { cache: 'no-store' });
+      if (!response.ok) return;
+      const specs = await response.json();
+      this.avatar?.setSpecs(specs);
+      setEmotionLabels(specs);
+    } catch (err) {
+      console.warn('[emotions] table indisponible, table interne utilisée', err);
     }
   }
 
