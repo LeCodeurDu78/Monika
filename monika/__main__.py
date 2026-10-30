@@ -518,7 +518,7 @@ async def _run_chat(settings: Settings, paths: Paths, masker: Masker, voice: boo
                         task = page_turn["task"]
                         if task is not None and not task.done():
                             return False
-                        page_turn["task"] = asyncio.create_task(session.reply(text))
+                        page_turn["task"] = asyncio.create_task(session.run_line(text))
                         await asyncio.sleep(0)
                         return True
 

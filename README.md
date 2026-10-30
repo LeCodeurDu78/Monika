@@ -74,7 +74,8 @@ voice/         Micro, détection de parole, Whisper, GPT-SoVITS (client HTTP), l
                du texte parlé
 modes/         Discussion dans le terminal (text.py) et lecteur vocal (voice.py)
 web/           Serveur local (server.py), tableau de bord (dashboard.py), diffusion en direct (hub.py),
-               CSP (csp.py) et page (static/ : index.html, css/, js/, avatar/, clips/, vendor/)
+               conversation de la page (chat.py) et page (static/ : index.html, css/, js/, avatar/,
+               clips/, vendor/)
 ```
 
 Les paquets (`agent/`, `rag/`, `web/`…) sont à la racine du projet : lance toujours Monika
@@ -542,7 +543,10 @@ pour la couper). À gauche l'avatar 3D, à droite le tableau de bord.
   la réponse s'écrit dans la page au fur et à mesure, comme au terminal. Vingt dernières lignes
   gardées en mémoire pour un rechargement (le durable, c'est le bloc *Sessions*) ; un tour déjà
   lancé au terminal s'affiche aussi ici, et réciproquement. Une seule conversation à la fois :
-  envoyer pendant une réponse est refusé (`409`) plutôt que mis en file.
+  envoyer pendant une réponse est refusé (`409`) plutôt que mis en file. Les **commandes**
+  (`/aide`, `/sessions`, `/reprendre ID`, `/rappel …`, `/stop`…) s'y tapent aussi : leur réponse
+  s'affiche dans la conversation (le terminal la garde) ; `/quitter` est la seule à ne rien
+  pouvoir faire d'ici, il n'y a pas de terminal à détacher.
 - **Tableau de bord**, désormais cinq blocs : *Conversation*, *Contexte* (taille de la
   conversation), *Relation* (niveau, favorabilité et humeur de Monika ; son journal, dont tu peux
   modifier ou supprimer chaque note, corriger ou effacer l'impression d'ensemble, ou tout effacer ;
@@ -551,23 +555,20 @@ pour la couper). À gauche l'avatar 3D, à droite le tableau de bord.
   conversations enregistrées, la session en cours signalée, avec **Reprendre** et **Supprimer**).
   Supprimer la session en cours repart sur une conversation neuve ; les deux actions sont refusées
   pendant une réponse, pour ne pas échanger l'historique sous les pieds d'un tour en cours.
-- **Sécurité** : le serveur n'écoute que sur `127.0.0.1` ; les requêtes dont l'en-tête `Host` ou
-  `Origin` n'est pas ton ordinateur sont refusées ; les bibliothèques 3D sont servies
-  localement (`web/static/vendor/`), la page ne charge rien depuis Internet (CSP stricte, seule
-  l'import map de la page est autorisée par son empreinte) ; tout
-  ce qui vient de la mémoire est affiché comme du texte, jamais comme du HTML. Les seules
-  actions possibles depuis la page (modifier ou supprimer un souvenir ou une note du journal, repartir de zéro, supprimer une session) exigent un jeton tiré au hasard à chaque lancement, fourni uniquement à la page servie,
-  et une origine valide. Depuis la page on peut **parler** à Monika (bloc *Conversation*) mais pas
-  lui envoyer de commande : une ligne qui commence par `/` reste un simple message, elle n'est
-  interprétée qu'au terminal. La lecture de l'état (`GET /api/status`, qui contient ta mémoire et ton journal) n'exige
-  pas de jeton : elle n'est protégée que par l'écoute sur `127.0.0.1` et le contrôle de `Host` ; tout
-  programme de cette machine peut donc la lire.
+- **Accès** : le serveur n'écoute que sur `127.0.0.1`, et **c'est sa seule protection**. Il n'y a
+  ni jeton, ni contrôle d'`Origin`, ni en-tête de sécurité (CSP comprise) : n'importe quel
+  programme de cette machine — et n'importe quelle page web ouverte dans ce navigateur — peut lire
+  et modifier ce que la page expose : souvenirs, journal, sessions, réglages, clé API, et lui
+  envoyer des messages comme des commandes. C'est un choix assumé, pour que la page (et tout ce
+  qui parle à Monika) ne demande jamais rien à copier. Pour la même raison, tout ce qui vient de la
+  mémoire reste affiché comme du texte, jamais comme du HTML : c'est le seul garde-fou conservé.
+  Si tu veux la refermer, il faut remettre un jeton (ou une phrase d'accès) devant les routes.
 - **WebGL** est nécessaire dans le navigateur ; sans lui, la page l'indique et le tableau de bord
   marche quand même.
 
 ### Page de réglages (`/settings`)
 
-Un lien « Réglages » dans l'en-tête ouvre cette page (même serveur, même jeton). Elle a trois blocs :
+Un lien « Réglages » dans l'en-tête ouvre cette page (même serveur). Elle a trois blocs :
 
 - **Santé** : sept voyants — LLM, reconnaissance vocale, voix GPT-SoVITS, serveurs MCP, mémoire
   rapide, documents, page locale. Chaque sonde est bornée à 1,5 s et lancée en parallèle ; le
@@ -591,9 +592,9 @@ Ce que la page **ne peut pas** changer : `MONIKA_HOME`, les dossiers indexés (`
 fichier des serveurs MCP et le dossier des voix — écrire un chemin depuis le navigateur ferait de la
 page un lanceur de fichiers arbitraires. Ces clés restent éditables à la main dans `.env`.
 
-Côté sécurité, les **lectures** de `/api/settings` et `/api/health` exigent le jeton (la première
-contient la persona et les noms de modèles), contrairement à `/api/status` ; les écritures passent par
-le même `act()` que le tableau de bord (même jeton, même contrôle d'origine). Si `settings.json` est
+Comme le reste de la page, `/api/settings` et `/api/health` s'ouvrent **sans jeton** (la première
+contient la persona et les noms de modèles) ; les écritures passent par le même `act()` que le
+tableau de bord. Si `settings.json` est
 abîmé à la main **pendant** que Monika tourne, l'écrire depuis la page échoue avec un message clair :
 corrige-le ou supprime-le. Au **démarrage**, un `settings.json` qui ne se charge pas (JSON cassé ou
 valeur hors bornes) n'empêche plus rien : il est renommé en `settings.json.corrupt-<date>`, un
@@ -718,7 +719,8 @@ conversation à l'autre.
 | `service.py` | La façade (`CharacterService` / `CharacterTurn`) et l'assemblage (`create_service`) |
 
 Côté page : `web/static/js/avatar/` (clips, retargeting, visage, gestes), `web/static/js/panels.js`
-(tableau de bord), `web/dashboard.py` et `web/server.py` (actions protégées par jeton).
+(tableau de bord), `web/dashboard.py` (actions), `web/chat.py` (conversation) et `web/server.py`
+(routes).
 
 ### Modifier le comportement
 

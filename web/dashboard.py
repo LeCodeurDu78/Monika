@@ -93,8 +93,6 @@ class Dashboard:
             raise ActionError("Le message est vide.", 400)
         if len(text) > MAX_CHAT_CHARS:
             raise ActionError(f"Message trop long ({MAX_CHAT_CHARS} caractères au plus).", 400)
-        if text.startswith("/"):  # A command's answer goes to the terminal: it would be lost here
-            raise ActionError("Les commandes (/…) ne s'envoient que depuis le terminal.", 400)
         if self.agent is None or self.chat_send is None:
             raise ActionError("La conversation n'est pas encore prête.", 503)
         if self._busy() or not await self.chat_send(text):

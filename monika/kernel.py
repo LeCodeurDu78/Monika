@@ -321,7 +321,24 @@ class KernelServer:
 
     async def submit(self, text: str) -> bool:
         """A message from the page: started here (so the terminal sees it too) or refused if busy."""
-        return self._start_turn(text) is not None
+        line = (text or "").strip()
+        if line.startswith("/"):  # A /command goes through the same code as the terminal's
+            if self._turn_task is not None and not self._turn_task.done():
+                return False
+            self._turn_task = asyncio.create_task(self._page_command(line))
+            return True
+        return self._start_turn(line) is not None
+
+    async def _page_command(self, line: str) -> None:
+        """A /command typed in the page: the session runs it, and the answer shows there too."""
+        try:
+            await self.session.run_line(line)
+        except asyncio.CancelledError:
+            pass  # cut on purpose (shutdown, or the task was stopped)
+        except Exception as exc:  # noqa: BLE001 - a command must never take the kernel down
+            log.warning("Commande depuis la page (%s) : %s", line.split()[0], exc)
+            self.broadcast({"type": "info",
+                            "text": f"La commande a échoué ({type(exc).__name__})."})
 
     async def stop_everything(self, writer: asyncio.StreamWriter | None = None) -> list[str]:
         """Ctrl+C, `cancel` and `/stop`: the turn, the voice, the indexing.

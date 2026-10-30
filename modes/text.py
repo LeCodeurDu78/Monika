@@ -31,6 +31,26 @@ HELP = (
 )
 
 
+class _ChatOut:
+    """What a /command displays: printed as usual, and shown in the page as a reply."""
+
+    def __init__(self, chat, echo=None) -> None:
+        self._chat = chat
+        self._echo = echo
+        self.parts: list[str] = []
+
+    def write(self, text: str) -> None:
+        self.parts.append(text)
+        if self._echo is not None:
+            self._echo.write(text)
+        if self._chat is not None:
+            self._chat.delta(text)
+
+    def flush(self) -> None:
+        if self._echo is not None:
+            self._echo.flush()
+
+
 class TextSession:
     """Interactive loop: read a line, run an agent turn, print its events."""
 
@@ -472,6 +492,45 @@ class TextSession:
         async with self._turn_lock:
             await self._reply(user_text, source=source)
 
+    async def run_line(self, line: str, *, source: str = "user") -> None:
+        """One line sent from the page: a /command runs here, a message is an ordinary turn.
+
+        The page sees the same thing as the terminal: a command's answer becomes a reply in the
+        conversation (the terminal keeps printing it), and a message is the usual streamed turn.
+        Only /quitter makes no sense there: there is no terminal to detach.
+        """
+        line = (line or "").strip()
+        if not line:
+            return
+        if not line.startswith("/"):
+            await self.reply(line, source=source)
+            return
+        if line in ("/quitter", "/q"):
+            if self._chat is not None:
+                self._chat.begin(line, source=source)
+                self._chat.end("Cette commande n'agit qu'au terminal.")
+            return
+        async with self._turn_lock:
+            previous = self._out
+            out = _ChatOut(self._chat, previous)
+            if self._chat is not None:
+                self._chat.begin(line, source=source)
+            self._out = out
+            try:
+                handled = await self.handle_command(line)
+            except asyncio.CancelledError:
+                self._out = previous
+                if self._chat is not None:
+                    self._chat.end("".join(out.parts).strip() or "Arrêté.")
+                raise
+            finally:
+                self._out = previous
+            if not handled:  # a line we do not know after all: treat it as a message
+                await self._reply(line, source=source, announce=self._chat is None)
+                return
+            if self._chat is not None:
+                self._chat.end("".join(out.parts).strip() or "Rien à afficher.")
+
     async def run_task(self, prompt: str) -> None:
         """Entry point of the scheduler in a local session: the reminder is an ordinary turn."""
         await self.reply(prompt, source="auto")
@@ -499,10 +558,10 @@ class TextSession:
     def _stops(stopped: list[str]) -> str:
         return "Arrêté : " + ", ".join(stopped) + "." if stopped else "Rien ne tournait."
 
-    async def _reply(self, user_text: str, *, source: str = "user") -> None:
+    async def _reply(self, user_text: str, *, source: str = "user", announce: bool = True) -> None:
         """Run one turn; on failure or Ctrl+C the agent has already tidied its history."""
         self._cancel_action_tasks()  # A chain decided for the previous answer must not land in this one
-        if self._chat is not None:
+        if self._chat is not None and announce:
             self._chat.begin(user_text, source=source)
         self._write("\n")
         need_prefix = True  # The "Monika ›" prefix is written only when text actually arrives

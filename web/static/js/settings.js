@@ -1,9 +1,7 @@
 // Settings page: builds every control with textContent (never innerHTML), reads and writes through the
-// token-protected API. Reads need the token too, unlike /api/status: the page holds the persona and the
-// model names. Requests are made here rather than with panels.apiRequest() because the write answer tells
-// which keys need a restart, and apiRequest() only returns an error string or null.
+// API. Requests are made here rather than with panels.apiRequest() because the write answer tells which
+// keys need a restart, and apiRequest() only returns an error string or null.
 
-const token = () => document.querySelector('meta[name="monika-token"]')?.content || '';
 const stateText = document.getElementById('save-state');
 const restartBox = document.getElementById('restart');
 const groupsBox = document.getElementById('groups');
@@ -21,7 +19,7 @@ async function request(url, method = 'GET', body) {
     const response = await fetch(url, {
       method,
       cache: 'no-store',
-      headers: { 'Content-Type': 'application/json', 'X-Monika-Token': token() },
+      headers: { 'Content-Type': 'application/json' },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
     const data = await response.json().catch(() => ({}));

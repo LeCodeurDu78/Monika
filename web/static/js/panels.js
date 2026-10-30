@@ -14,14 +14,12 @@ export function fill(id, ...children) {
   document.querySelector(`#${id} .body`).replaceChildren(...children);
 }
 
-const token = () => document.querySelector('meta[name="monika-token"]')?.content || '';
-
 // Ask the server to change something; returns { error, data } (error is null when it worked)
 export async function apiCall(url, method, body) {
   try {
     const response = await fetch(url, {
       method,
-      headers: { 'Content-Type': 'application/json', 'X-Monika-Token': token() },
+      headers: { 'Content-Type': 'application/json' },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
     const data = await response.json().catch(() => ({}));

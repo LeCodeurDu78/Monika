@@ -1,31 +1,31 @@
-"""Local web server: serves the avatar page and streams live events. Reachable from this computer only."""
+"""Local web server: serves the avatar page and streams live events. Reachable from this computer only.
+
+No access control: every route answers without a token and without an Origin check, and the page
+sends whatever it has to say (messages and /commands) to the agent.
+"""
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
-import hmac
-import secrets
 import socket
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
 import uvicorn
-from fastapi import FastAPI, Header, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from character import emotion_spec
 from character.journal import MAX_IMPRESSION_CHARS, MAX_NOTE_CHARS
-from web.csp import inline_script_hashes
 from web.hub import Hub
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 HOST = "127.0.0.1"
 Snapshot = Callable[[], Awaitable[dict[str, Any]]]
 Actions = dict[str, Callable[..., Awaitable[None]]]
-TOKEN_PLACEHOLDER = "__MONIKA_TOKEN__"
 MAX_TEXT_CHARS = 1000
 
 
@@ -41,64 +41,18 @@ class ActionError(Exception):
         self.status = status
 
 
-def allowed_hosts(port: int) -> frozenset[str]:
-    return frozenset({f"127.0.0.1:{port}", f"localhost:{port}", f"[::1]:{port}"})
-
-
-class LocalOnly:
-    """ASGI guard: refuses requests whose Host or Origin is not this computer (DNS rebinding, hostile pages)."""
-
-    def __init__(self, app: Any, port: int, script_hashes: list[str] | None = None) -> None:
-        self._app = app
-        self._hosts = allowed_hosts(port)
-        script_src = " ".join(["'self'", *(script_hashes or [])])
-        self._csp = (
-            f"default-src 'self'; script-src {script_src}; style-src 'self' 'unsafe-inline'; "
-            "img-src 'self' data: blob:; connect-src 'self' blob: data: "
-            + " ".join(f"ws://{h}" for h in sorted(self._hosts) if not h.startswith("["))  # IPv6 literals are invalid in a CSP source list
-            + "; object-src 'none'; base-uri 'none'; frame-ancestors 'none'")
-
-    async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
-        if scope["type"] not in ("http", "websocket"):
-            await self._app(scope, receive, send)
-            return
-        headers = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope["headers"]}
-        origin = headers.get("origin")
-        origin_ok = origin is None or origin.split("://", 1)[-1] in self._hosts
-        if scope["type"] == "http" and scope["method"] not in ("GET", "HEAD", "OPTIONS") and origin is None:
-            origin_ok = False  # A change must come from the page itself, which browsers mark with its Origin
-        if headers.get("host") not in self._hosts or not origin_ok:
-            if scope["type"] == "websocket":
-                await send({"type": "websocket.close", "code": 1008})
-            else:
-                await send({"type": "http.response.start", "status": 403,
-                            "headers": [(b"content-type", b"text/plain; charset=utf-8")]})
-                await send({"type": "http.response.body", "body": "Accès refusé : page locale.".encode()})
-            return
-
-        async def send_with_headers(message: dict[str, Any]) -> None:
-            if message["type"] == "http.response.start":
-                extra = [(b"content-security-policy", self._csp.encode()), (b"x-frame-options", b"DENY"),
-                         (b"x-content-type-options", b"nosniff"), (b"referrer-policy", b"no-referrer")]
-                message = {**message, "headers": [*message.get("headers", []), *extra]}
-            await send(message)
-
-        await self._app(scope, receive, send_with_headers)
-
-
-def create_app(hub: Hub, snapshot: Snapshot, port: int, static_dir: Path = STATIC_DIR,
+def create_app(hub: Hub, snapshot: Snapshot, static_dir: Path = STATIC_DIR,
                actions: Actions | None = None, settings_api: Any | None = None,
                chat: Any = None) -> Any:
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
-    token = secrets.token_urlsafe(24)  # Fresh at each launch, only given to the page we serve
     actions = actions or {}
     if settings_api is not None:
-        actions = {**actions, **settings_api.actions()}  # Same token, same act(), same ActionError
+        actions = {**actions, **settings_api.actions()}  # Same act(), same ActionError
 
     @app.get("/")
     async def index() -> HTMLResponse:
-        html = (static_dir / "index.html").read_text(encoding="utf-8").replace(TOKEN_PLACEHOLDER, token)
-        return HTMLResponse(html, headers={"Cache-Control": "no-store"})
+        return HTMLResponse((static_dir / "index.html").read_text(encoding="utf-8"),
+                            headers={"Cache-Control": "no-store"})
 
     @app.get("/api/status")
     async def status() -> JSONResponse:
@@ -109,12 +63,7 @@ def create_app(hub: Hub, snapshot: Snapshot, port: int, static_dir: Path = STATI
         """The emotion table (labels, expression weights, fallback clips): static, no secrets."""
         return JSONResponse(emotion_spec.payload(), headers={"Cache-Control": "no-store"})
 
-    def token_ok(given: str | None) -> bool:
-        return given is not None and hmac.compare_digest(given.encode(), token.encode())
-
-    async def act(name: str, given: str | None, *args: Any) -> JSONResponse:
-        if not token_ok(given):
-            return JSONResponse({"error": "Action refusée : recharge la page."}, status_code=403)
+    async def act(name: str, *args: Any) -> JSONResponse:
         action = actions.get(name)
         if action is None:
             return JSONResponse({"error": "Cette action n'est pas disponible."}, status_code=404)
@@ -128,8 +77,7 @@ def create_app(hub: Hub, snapshot: Snapshot, port: int, static_dir: Path = STATI
         return JSONResponse({"ok": True, **(result if isinstance(result, dict) else {})})
 
     @app.put("/api/memory/{memory_id}")
-    async def memory_update(memory_id: str, request: Request,
-                            x_monika_token: str | None = Header(None)) -> JSONResponse:
+    async def memory_update(memory_id: str, request: Request) -> JSONResponse:
         try:
             body = await request.json()
         except ValueError:
@@ -138,11 +86,11 @@ def create_app(hub: Hub, snapshot: Snapshot, port: int, static_dir: Path = STATI
         if not isinstance(text, str) or not text.strip() or len(text) > MAX_TEXT_CHARS:
             return JSONResponse({"error": f"Le souvenir doit faire entre 1 et {MAX_TEXT_CHARS} caractères."},
                                 status_code=400)
-        return await act("memory_update", x_monika_token, memory_id, text.strip())
+        return await act("memory_update", memory_id, text.strip())
 
     @app.delete("/api/memory/{memory_id}")
-    async def memory_delete(memory_id: str, x_monika_token: str | None = Header(None)) -> JSONResponse:
-        return await act("memory_delete", x_monika_token, memory_id)
+    async def memory_delete(memory_id: str) -> JSONResponse:
+        return await act("memory_delete", memory_id)
 
     async def read_text(request: Request) -> str | None:
         try:
@@ -153,106 +101,96 @@ def create_app(hub: Hub, snapshot: Snapshot, port: int, static_dir: Path = STATI
         return text if isinstance(text, str) else None
 
     @app.put("/api/journal/{note_id}")
-    async def journal_update(note_id: str, request: Request,
-                             x_monika_token: str | None = Header(None)) -> JSONResponse:
+    async def journal_update(note_id: str, request: Request) -> JSONResponse:
         text = await read_text(request)
         if text is None or not text.strip() or len(text) > MAX_NOTE_CHARS:
             return JSONResponse({"error": f"La note doit faire entre 1 et {MAX_NOTE_CHARS} caractères."},
                                 status_code=400)
-        return await act("journal_update", x_monika_token, note_id, text.strip())
+        return await act("journal_update", note_id, text.strip())
 
     @app.delete("/api/journal/{note_id}")
-    async def journal_delete(note_id: str, x_monika_token: str | None = Header(None)) -> JSONResponse:
-        return await act("journal_delete", x_monika_token, note_id)
+    async def journal_delete(note_id: str) -> JSONResponse:
+        return await act("journal_delete", note_id)
 
     @app.delete("/api/journal")
-    async def journal_clear(x_monika_token: str | None = Header(None)) -> JSONResponse:
-        return await act("journal_clear", x_monika_token)
+    async def journal_clear() -> JSONResponse:
+        return await act("journal_clear")
 
     @app.put("/api/impression")
-    async def impression_update(request: Request, x_monika_token: str | None = Header(None)) -> JSONResponse:
+    async def impression_update(request: Request) -> JSONResponse:
         text = await read_text(request)   # An empty text is allowed: it clears the impression
         if text is None or len(text) > MAX_IMPRESSION_CHARS:
             return JSONResponse({"error": f"L'impression doit faire au plus {MAX_IMPRESSION_CHARS} caractères."},
                                 status_code=400)
-        return await act("impression_update", x_monika_token, text.strip())
+        return await act("impression_update", text.strip())
 
     @app.post("/api/relation/reset")
-    async def relation_reset(x_monika_token: str | None = Header(None)) -> JSONResponse:
-        return await act("relation_reset", x_monika_token)
+    async def relation_reset() -> JSONResponse:
+        return await act("relation_reset")
 
     @app.delete("/api/session/{session_id}")
-    async def session_forget(session_id: str, x_monika_token: str | None = Header(None)) -> JSONResponse:
-        return await act("session_forget", x_monika_token, session_id)
+    async def session_forget(session_id: str) -> JSONResponse:
+        return await act("session_forget", session_id)
 
     @app.post("/api/session/{session_id}/resume")
-    async def session_resume(session_id: str, x_monika_token: str | None = Header(None)) -> JSONResponse:
-        return await act("session_resume", x_monika_token, session_id)
+    async def session_resume(session_id: str) -> JSONResponse:
+        return await act("session_resume", session_id)
 
     @app.get("/api/chat")
-    async def chat_read(x_monika_token: str | None = Header(None)) -> JSONResponse:
+    async def chat_read() -> JSONResponse:
         """The conversation so far, for a page that opens or reloads (then the WebSocket keeps it live)."""
-        if not token_ok(x_monika_token):  # It holds what was said: token required
-            return JSONResponse({"error": "Jeton absent ou invalide : recharge la page."}, status_code=403)
         if chat is None:
             return JSONResponse({"enabled": False, "busy": False, "items": []})
         return JSONResponse({"enabled": True, **chat.snapshot()},
                             headers={"Cache-Control": "no-store"})
 
     @app.post("/api/chat")
-    async def chat_send(request: Request, x_monika_token: str | None = Header(None)) -> JSONResponse:
+    async def chat_send(request: Request) -> JSONResponse:
         text = await read_text(request)
         if text is None:
             return JSONResponse({"error": "Message attendu (champ « text »)."}, status_code=400)
-        return await act("chat_send", x_monika_token, text)
+        return await act("chat_send", text)
 
     @app.post("/api/chat/stop")
-    async def chat_stop(x_monika_token: str | None = Header(None)) -> JSONResponse:
-        return await act("chat_stop", x_monika_token)
+    async def chat_stop() -> JSONResponse:
+        return await act("chat_stop")
 
     if settings_api is not None:
         @app.get("/settings")
         async def settings_page() -> HTMLResponse:
-            html = (static_dir / "settings.html").read_text(encoding="utf-8").replace(TOKEN_PLACEHOLDER, token)
-            return HTMLResponse(html, headers={"Cache-Control": "no-store"})
+            return HTMLResponse((static_dir / "settings.html").read_text(encoding="utf-8"),
+                                headers={"Cache-Control": "no-store"})
 
         @app.get("/api/settings")
-        async def settings_read(x_monika_token: str | None = Header(None)) -> JSONResponse:
-            if not token_ok(x_monika_token):  # It holds the persona and the model names: token required
-                return JSONResponse({"error": "Jeton absent ou invalide : recharge la page."}, status_code=403)
+        async def settings_read() -> JSONResponse:
             return JSONResponse(settings_api.read(), headers={"Cache-Control": "no-store"})
 
         @app.get("/api/health")
-        async def health_grid(x_monika_token: str | None = Header(None)) -> JSONResponse:
-            if not token_ok(x_monika_token):
-                return JSONResponse({"error": "Jeton absent ou invalide : recharge la page."}, status_code=403)
+        async def health_grid() -> JSONResponse:
             return JSONResponse(await settings_api.health(), headers={"Cache-Control": "no-store"})
 
         @app.post("/api/settings")
-        async def settings_write(request: Request,
-                                 x_monika_token: str | None = Header(None)) -> JSONResponse:
+        async def settings_write(request: Request) -> JSONResponse:
             try:
                 body = await request.json()
             except ValueError:
                 body = None
             if not isinstance(body, dict):
                 return JSONResponse({"error": "Réglages attendus sous forme d'objet JSON."}, status_code=400)
-            return await act("settings_update", x_monika_token, body)
+            return await act("settings_update", body)
 
         @app.post("/api/settings/words")
-        async def settings_words(request: Request,
-                                 x_monika_token: str | None = Header(None)) -> JSONResponse:
+        async def settings_words(request: Request) -> JSONResponse:
             try:
                 body = await request.json()
             except ValueError:
                 body = None
             if not isinstance(body, dict):
                 return JSONResponse({"error": "Liste de mots attendue sous forme d'objet JSON."}, status_code=400)
-            return await act("settings_words", x_monika_token, body)
+            return await act("settings_words", body)
 
         @app.post("/api/settings/secret")
-        async def settings_secret(request: Request,
-                                  x_monika_token: str | None = Header(None)) -> JSONResponse:
+        async def settings_secret(request: Request) -> JSONResponse:
             try:
                 body = await request.json()
             except ValueError:
@@ -261,7 +199,7 @@ def create_app(hub: Hub, snapshot: Snapshot, port: int, static_dir: Path = STATI
             value = body.get("value") if isinstance(body, dict) else None
             if not isinstance(name, str) or not isinstance(value, str):
                 return JSONResponse({"error": "Nom et valeur du secret attendus."}, status_code=400)
-            return await act("settings_secret", x_monika_token, name, value)
+            return await act("settings_secret", name, value)
 
     @app.websocket("/ws")
     async def live(ws: WebSocket) -> None:
@@ -275,7 +213,7 @@ def create_app(hub: Hub, snapshot: Snapshot, port: int, static_dir: Path = STATI
                     await ws.send_json(await queue.get())
 
             async def listen() -> None:
-                while True:  # The page never sends commands; reading detects the disconnection
+                while True:  # The page listens: reading only detects the disconnection
                     await ws.receive_text()
 
             tasks = [asyncio.create_task(pump()), asyncio.create_task(listen())]
@@ -291,13 +229,11 @@ def create_app(hub: Hub, snapshot: Snapshot, port: int, static_dir: Path = STATI
             hub.unsubscribe(queue)
 
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
-    index_file = static_dir / "index.html"
-    hashes = inline_script_hashes(index_file.read_text(encoding="utf-8")) if index_file.exists() else []
-    return LocalOnly(app, port, hashes)
+    return app
 
 
 class _Server(uvicorn.Server):
-    """uvicorn without its own signal handling: Ctrl+C stays under the control of """
+    """uvicorn without its own signal handling: Ctrl+C stays under the control of the session."""
 
     def install_signal_handlers(self) -> None:
         pass
@@ -337,7 +273,7 @@ class WebServer:
                            "tourne peut-être ; change WEB_PORT ou ferme-la.") from exc
         finally:
             probe.close()
-        app = create_app(self._hub, self._snapshot, self.port, self._static, self._actions,
+        app = create_app(self._hub, self._snapshot, self._static, self._actions,
                          self._settings_api, self._chat)
         config = uvicorn.Config(app, host=HOST, port=self.port, log_level="warning", access_log=False,
                                 lifespan="off", timeout_graceful_shutdown=2)
