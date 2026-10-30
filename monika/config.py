@@ -97,6 +97,10 @@ class Settings(BaseSettings):
     tool_result_max_chars: int = Field(20_000, ge=1_000)
     tool_results_keep_days: int = Field(14, ge=1)
 
+    # Sessions: the conversation log on disk (SQLite + FTS5), searchable and resumable (`/sessions`)
+    sessions_enabled: bool = False
+    sessions_keep_days: int = Field(30, ge=1)
+
     # Fast memory (mem0 + local Qdrant): facts and preferences about the user
     fast_memory_enabled: bool = True
     embedding_model: str = "sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
@@ -394,6 +398,7 @@ RESTART_REQUIRED = frozenset({
     "journal_enabled", "journal_every_turns", "journal_max_chars",
     "action_llm_enabled", "action_llm_model",
     "tool_result_max_chars", "tool_results_keep_days", "audit_enabled", "audit_max_chars",
+    "sessions_enabled", "sessions_keep_days",
     "log_level",
     "web_enabled", "web_port",
 })

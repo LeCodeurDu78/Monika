@@ -32,6 +32,7 @@ CATALOG: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("Rôles", ("director_enabled", "director_llm_model", "director_timeout_s", "action_llm_enabled",
                "action_llm_model")),
     ("Mémoire", ("memory_inject_all_max", "memory_recall_limit", "memory_recall_threshold")),
+    ("Sessions", ("sessions_enabled", "sessions_keep_days")),
     ("Documents", ("rag_top_k", "rag_min_score", "rag_rerank_enabled")),
     ("Voix", ("tts_enabled", "tts_text_mode", "tts_speed", "tts_emotion_tags", "tts_render")),
     ("Mots sensibles", ("sensitive_words_enabled",)),

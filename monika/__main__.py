@@ -316,6 +316,30 @@ def load_words(settings: Settings, paths: Paths):
     return bank
 
 
+def load_sessions(settings: Settings, paths: Paths, masker: Masker, voice: bool):
+    """Open the conversation log (SQLite + FTS5), or explain why it stays off. Never stops the chat."""
+    if not settings.sessions_enabled:
+        console.print("[dim]Sessions enregistrées désactivées (SESSIONS_ENABLED=false).[/dim]")
+        return None
+    from agent.sessions import SessionRecorder, SessionStore, SessionsError
+
+    try:
+        store = SessionStore(paths.sessions_db, masker, settings.sessions_keep_days)
+    except SessionsError as exc:
+        console.print(f"[yellow]{exc} Je continue sans sessions.[/yellow]")
+        return None
+    try:
+        removed = store.purge()
+    except Exception as exc:  # noqa: BLE001 - a purge problem must not prevent the chat
+        console.print(f"[yellow]Purge des sessions impossible ({type(exc).__name__}: {exc}).[/yellow]")
+        removed = 0
+    if removed:
+        console.print(f"[dim]{removed} session(s) de plus de {settings.sessions_keep_days} jour(s) "
+                      "supprimée(s).[/dim]")
+    console.print(f"[green]✓[/green] Sessions enregistrées : {paths.sessions_db}")
+    return SessionRecorder(store, mode="voix" if voice else "texte")
+
+
 def load_action_director(settings: Settings, llm, hub):
     """The action role (a short avatar chain after each reply), or None when it is off."""
     if not settings.action_llm_enabled:
@@ -369,6 +393,7 @@ async def run_chat(settings: Settings, paths: Paths, masker: Masker, voice: bool
     console.print(f"[dim]Modèle {settings.model_name} via {settings.llm_base_url}[/dim]")
     store = ToolOutputStore(paths.tool_results, settings.tool_result_max_chars)
     store.purge(settings.tool_results_keep_days)
+    sessions = load_sessions(settings, paths, masker, voice)
     memory = await load_fast_memory(settings, paths)
     capture = None
     if memory and settings.memory_capture_enabled:
@@ -396,7 +421,8 @@ async def run_chat(settings: Settings, paths: Paths, masker: Masker, voice: bool
             action_director = load_action_director(settings, llm, hub)
             words = load_words(settings, paths)
             agent = Agent(settings, llm, registry, store, memory=memory,
-                          capture=capture, rag=rag, voice=voice, character=character, words=words)
+                          capture=capture, rag=rag, voice=voice, character=character, words=words,
+                          sessions=sessions)
             health.agent = agent
             if web:
                 web[1].agent = agent
@@ -434,6 +460,8 @@ async def run_chat(settings: Settings, paths: Paths, masker: Masker, voice: bool
             await rag.close()
         if memory:
             await memory.close()
+        if sessions is not None:
+            sessions.close()
     return 0
 
 

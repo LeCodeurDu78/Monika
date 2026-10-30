@@ -17,15 +17,16 @@ Tout est stocké chez toi ; seul le fournisseur LLM que tu configures reçoit te
 5. [Configuration](#configuration)
 6. [Outils (serveurs MCP)](#outils-serveurs-mcp)
 7. [Agent, contexte et prompt](#agent-contexte-et-prompt)
-8. [Mémoire rapide](#mémoire-rapide)
-9. [Documents personnels (RAG)](#documents-personnels-rag)
-10. [Voix : écoute et parole](#voix--écoute-et-parole)
-11. [Avatar et tableau de bord](#avatar-et-tableau-de-bord)
-12. [Personnage : émotions, relation et journal](#personnage--émotions-relation-et-journal)
-13. [Mots sensibles](#mots-sensibles)
-14. [Données, vie privée et sécurité](#données-vie-privée-et-sécurité)
-15. [Tests](#tests)
-16. [Dépannage](#dépannage)
+8. [Sessions et reprise](#sessions-et-reprise)
+9. [Mémoire rapide](#mémoire-rapide)
+10. [Documents personnels (RAG)](#documents-personnels-rag)
+11. [Voix : écoute et parole](#voix--écoute-et-parole)
+12. [Avatar et tableau de bord](#avatar-et-tableau-de-bord)
+13. [Personnage : émotions, relation et journal](#personnage--émotions-relation-et-journal)
+14. [Mots sensibles](#mots-sensibles)
+15. [Données, vie privée et sécurité](#données-vie-privée-et-sécurité)
+16. [Tests](#tests)
+17. [Dépannage](#dépannage)
 
 ## Prérequis
 
@@ -59,7 +60,7 @@ Le mode voix demande une installation supplémentaire, décrite dans [Voix](#voi
 ```
 monika/        Point d'entrée (python -m monika), configuration (config.py), chemins (paths.py), embeddings.py
 agent/         Boucle ReAct (loop.py), client LLM (llm.py), contexte (context.py), prompt (prompt.py),
-               détection de boucle, phrases d'attente, infos système
+               sessions persistantes (sessions.py), détection de boucle, phrases d'attente, infos système
 tools/         Registre d'outils audité (registry.py), client MCP (mcp_client.py), outils internes (internal.py)
 security/      Masquage des secrets (masking.py), enveloppe « données, pas ordres » (untrusted.py), audit (audit.py)
 memory/        Mémoire rapide : mem0 + Qdrant (fast.py) et capture en arrière-plan (capture.py)
@@ -99,6 +100,10 @@ Les paquets (`agent/`, `rag/`, `web/`…) sont à la racine du projet : lance to
 | `/memoire`, `/oublier ID` | Ce que Monika sait de toi ; supprime un souvenir |
 | `/relation` | Où en est votre relation (niveau, favorabilité, humeur) ; `/relation reinitialiser` repart de zéro |
 | `/journal` | Les notes que Monika a écrites sur toi ; `/journal oublier ID` en supprime une, `/journal effacer` tout |
+| `/sessions` | Les sessions enregistrées, les plus récentes d'abord |
+| `/reprendre ID` | Reprend une session : son historique et son résumé sont rechargés |
+| `/chercher MOT …` | Cherche dans les tours enregistrés (plein texte) |
+| `/session oublier ID` | Supprime une session, ses tours et ses appels d'outils |
 | `/indexer [dossier]`, `/documents` | Lance l'indexation en arrière-plan ; état de l'index |
 | `/effacer` | Oublie la conversation en cours (et son résumé) |
 | `/quitter` (ou `/q`, Ctrl+D) | Quitte |
@@ -120,6 +125,7 @@ valeurs par défaut du code). Les plus utiles :
 | `DIRECTOR_ENABLED`, `DIRECTOR_LLM_MODEL`, `DIRECTOR_TIMEOUT_S` | Rôle directeur : outils utiles et piste du tour (désactivé par défaut) |
 | `ACTION_LLM_ENABLED`, `ACTION_LLM_MODEL` | Rôle action : chaîne de gestes de l'avatar après la réponse (désactivé par défaut) |
 | `CONTEXT_BUDGET_TOKENS` | Seuil de résumé automatique (défaut 150 000) |
+| `SESSIONS_ENABLED`, `SESSIONS_KEEP_DAYS` | Historique des conversations sur disque (désactivé par défaut ; rétention 30 jours) |
 | `FAST_MEMORY_ENABLED`, `MEMORY_CAPTURE_ENABLED` | Mémoire rapide et capture automatique |
 | `RAG_ENABLED`, `RAG_ROOTS`, `RAG_EXCLUDE`, `RAG_MIN_SCORE` | Documents personnels (dont le seuil de pertinence) |
 | `STT_MODEL`, `TTS_ENABLED` | Voix |
@@ -206,6 +212,27 @@ demander confirmation, et sans rien affirmer sans preuve.
   entre deux tours, jamais au milieu d'un appel d'outil. Si un seul tour est énorme, ses plus
   anciens résultats d'outils sont retirés (les 3 derniers restent). Si le résumé échoue, tu en
   es informé et la conversation continue sans compactage.
+
+## Sessions et reprise
+
+Avec `SESSIONS_ENABLED=true` (désactivé par défaut), chaque conversation est enregistrée dans
+`~/.config/monika/sessions/sessions.db` : SQLite avec **recherche plein texte FTS5**, fichier en
+`0600`. Une ligne par session, une par tour, une par appel d'outil, plus l'historique tel que le
+modèle l'a vu — c'est cet instantané qui rend `/reprendre` exact, appels d'outils compris.
+
+- **Secrets masqués** avant l'écriture, champ par champ (`security/masking.py`) : une clé collée
+dans un message ou un argument d'outil n'arrive jamais sur le disque.
+- **Tour interrompu** (Ctrl+C, erreur du modèle, fenêtre fermée) : écrit avec le statut
+  `interrupted` ; un tour resté ouvert par un arrêt brutal est marqué ainsi au lancement suivant.
+- **Budget de contexte** : `/reprendre` ne réinjecte pas tout. Au-delà du budget, les tours les plus
+  anciens sont écartés **entiers** (jamais au milieu d'un appel d'outil) et la reprise le dit.
+- **Rétention** : les sessions inutilisées depuis `SESSIONS_KEEP_DAYS` (30 jours) sont purgées au
+  lancement. `/effacer` repart sur une session neuve sans effacer l'ancienne.
+- **Recherche** : l'index porte sur ce qui a été dit (message et réponse), pas sur les résultats
+  d'outils : ceux-ci restent dans l'historique mais hors de l'index.
+- **Limite** : l'historique complet est réécrit à chaque tour (quelques centaines de kilo-octets sur
+  une très longue session) ; l'écriture est atomique par transaction, et un échec de la base est
+  journalisé sans jamais interrompre la conversation.
 
 ## Mémoire rapide
 
@@ -634,7 +661,7 @@ Tout est stocké dans `~/.config/monika` (réglable via `MONIKA_HOME`, dossier e
 | `voice/` | Ta voix de référence, `models/`, `cache/` |
 | `tool_results/` | Gros résultats d'outils (purgés après 14 jours) |
 | `logs/` | `audit.jsonl` et journaux des serveurs MCP |
-| `sessions/` | Réservé (vide pour l'instant) |
+| `sessions/` | Historique des conversations (`sessions.db`, SQLite + FTS5, en `0600`), résumable et supprimable |
 
 - **Journal d'audit** : `logs/audit.jsonl`, un JSON par ligne (outil, arguments, statut, durée),
   secrets masqués, fichier en `0600`.
@@ -674,4 +701,5 @@ testés ici : ils se voient au lancement, dans `--config` et dans la page de ré
 | Un serveur MCP n'apparaît pas | `python -m monika --tools` ; variable `${…}` absente ; voir `logs/mcp-<nom>.log` |
 | Index qui refuse de s'ouvrir | Modèle ou taille de passages changés : `python -m monika --rag-index --reset` |
 | Mémoire en erreur après changement de `EMBEDDING_MODEL` | Supprime `~/.config/monika/memory/qdrant` |
+| `/sessions` vide ou « sessions désactivées » | `SESSIONS_ENABLED=false` par défaut : l'activer dans `/settings` puis redémarrer |
 | Avatar absent | WebGL est requis dans le navigateur ; le tableau de bord marche sans |

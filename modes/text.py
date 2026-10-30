@@ -5,11 +5,13 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+from datetime import datetime
 from pathlib import Path
 from collections.abc import Awaitable, Callable
 
 from agent.llm import LLMError, TextDelta
 from agent.loop import Agent, AvatarCue, Filler, Notice, ToolEnd, ToolStart, TurnEnd
+from agent.sessions import SessionsError
 from security.masking import Masker
 from voice.speech_text import SentenceSplitter
 
@@ -18,6 +20,8 @@ HELP = (
     "/memoire (ce que je sais de toi), /oublier ID (supprime un souvenir), "
     "/relation (où nous en sommes ; « /relation reinitialiser » repart de zéro), "
     "/journal (mes notes sur toi ; « /journal oublier ID », « /journal effacer »), "
+    "/sessions (sessions enregistrées ; « /reprendre ID », « /chercher MOT », "
+    "« /session oublier ID »), "
     "/indexer [dossier] (indexe tes documents), /documents (état de l'index), "
     "/effacer (oublie la conversation en cours), /quitter (ou Ctrl+D). "
     "Ctrl+C interrompt une réponse en cours."
@@ -66,6 +70,14 @@ class TextSession:
             elif line == "/effacer":
                 self._agent.clear()
                 self._write("Conversation effacée.\n")
+            elif line == "/sessions":
+                self._sessions()
+            elif line.startswith("/reprendre"):
+                self._resume(line[len("/reprendre"):].strip())
+            elif line.startswith("/chercher"):
+                self._search(line[len("/chercher"):].strip())
+            elif line == "/session" or line.startswith("/session "):
+                self._forget_session(line[len("/session"):].strip())
             elif line == "/outils":
                 self._show_tools()
             elif line == "/contexte":
@@ -144,6 +156,95 @@ class TextSession:
             self._write("Index de documents désactivé ou indisponible.\n")
         else:
             self._write(await rag.status_text() + "\n")
+
+    @staticmethod
+    def _date(stamp: str) -> str:
+        try:
+            return datetime.fromisoformat(stamp).strftime("%d/%m/%Y %H:%M")
+        except (TypeError, ValueError):
+            return str(stamp)[:16]
+
+    def _sessions(self) -> None:
+        sessions = self._agent.sessions
+        if sessions is None:
+            self._write("Les sessions sont désactivées (SESSIONS_ENABLED=false).\n")
+            return
+        try:
+            rows = sessions.store.list(limit=15)
+        except Exception as exc:  # noqa: BLE001 - a broken log must not take the chat down
+            self._write(f"[sessions] {type(exc).__name__}: {exc}\n")
+            return
+        if not rows:
+            self._write("Aucune session enregistrée pour l'instant.\n")
+            return
+        self._write("Sessions enregistrées, les plus récentes d'abord :\n")
+        for row in rows:
+            mark = " ← en cours" if sessions.is_current(row.id) else ""
+            summary = ", résumé" if row.has_summary else ""
+            self._write(f"  [{row.id}] {self._date(row.started_at)} · {row.turns} tour(s)"
+                        f"{summary}{mark} · {row.title or '(sans titre)'}\n")
+        self._write("  /reprendre ID, /session oublier ID\n")
+
+    def _resume(self, session_id: str) -> None:
+        if self._agent.sessions is None:
+            self._write("Les sessions sont désactivées (SESSIONS_ENABLED=false).\n")
+            return
+        if not session_id:
+            self._write("Usage : /reprendre ID (les ids s'affichent avec /sessions).\n")
+            return
+        try:
+            message = self._agent.resume_session(session_id)
+        except SessionsError as exc:
+            self._write(f"[sessions] {exc}\n")
+            return
+        except Exception as exc:  # noqa: BLE001
+            self._write(f"[sessions] {type(exc).__name__}: {exc}\n")
+            return
+        self._write(message + "\n")
+
+    def _search(self, query: str) -> None:
+        sessions = self._agent.sessions
+        if sessions is None:
+            self._write("Les sessions sont désactivées (SESSIONS_ENABLED=false).\n")
+            return
+        if not query:
+            self._write("Usage : /chercher MOT (ou plusieurs mots).\n")
+            return
+        try:
+            hits = sessions.store.search(query, limit=10)
+        except Exception as exc:  # noqa: BLE001
+            self._write(f"[sessions] {type(exc).__name__}: {exc}\n")
+            return
+        if not hits:
+            self._write(f"Aucun tour ne contient « {query} ».\n")
+            return
+        self._write(f"{len(hits)} tour(s) trouvé(s) :\n")
+        for hit in hits:
+            self._write(f"  [{hit.session_id}] {self._date(hit.at)} · {hit.excerpt}\n")
+        self._write("  /reprendre ID pour reprendre la conversation.\n")
+
+    def _forget_session(self, argument: str) -> None:
+        sessions = self._agent.sessions
+        if sessions is None:
+            self._write("Les sessions sont désactivées (SESSIONS_ENABLED=false).\n")
+            return
+        command, _, rest = argument.partition(" ")
+        if command != "oublier" or not rest.strip():
+            self._write("Usage : /session oublier ID (les ids s'affichent avec /sessions).\n")
+            return
+        session_id = rest.strip()
+        try:
+            removed = sessions.store.forget(session_id)
+        except Exception as exc:  # noqa: BLE001
+            self._write(f"[sessions] {type(exc).__name__}: {exc}\n")
+            return
+        if not removed:
+            self._write(f"Aucune session avec l'id {session_id}.\n")
+            return
+        if sessions.is_current(session_id):
+            self._agent.clear()  # the conversation being continued cannot outlive its file
+        self._write(f"Session {session_id} supprimée.")
+        self._write("\n")
 
     async def _show_memory(self) -> None:
         memory = self._agent.memory

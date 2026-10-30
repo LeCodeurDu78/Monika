@@ -16,6 +16,7 @@ from agent.filler import FillerState
 from agent.llm import Completion, LLMError, TextDelta
 from agent.loop_detect import LoopDetector
 from agent.prompt import build_system_prompt, sensitive_block
+from agent.sessions import SessionsError, trim_history
 from character.cues import sensitive_cue
 from character.models import AvatarCue
 from monika.config import Settings
@@ -26,6 +27,7 @@ from security.words import WordBank
 from tools.registry import ToolRegistry
 
 if TYPE_CHECKING:
+    from agent.sessions import SessionRecorder
     from character.service import CharacterService
 
 LOOP_WARNING = (
@@ -100,7 +102,8 @@ class Agent:
                  store: ToolOutputStore | None = None, rng: random.Random | None = None,
                  voice: bool = False, memory: FastMemory | None = None,
                  capture: MemoryCapture | None = None, rag: Any | None = None,
-                 character: CharacterService | None = None, words: WordBank | None = None) -> None:
+                 character: CharacterService | None = None, words: WordBank | None = None,
+                 sessions: SessionRecorder | None = None) -> None:
         self._s = settings
         self._llm = llm
         self.registry = registry
@@ -118,6 +121,7 @@ class Agent:
         self._hint_block = ""  # The director's note, this turn only (never kept in the history)
         self._tone_block = ""  # Sensitive-word tone for this message, this turn only
         self.words = words  # The user's word bank; the settings page swaps it (hot reload)
+        self.sessions = sessions  # Persistent conversation log; None when SESSIONS_ENABLED is false
         self._memory_warned = False
         self.history: list[dict[str, Any]] = []
         self.last_plan: TurnPlan | None = None  # What the director decided for the last turn (/contexte)
@@ -126,6 +130,30 @@ class Agent:
     def clear(self) -> None:
         self.history.clear()
         self.context.clear()
+        if self.sessions is not None:
+            self.sessions.close_session()  # The next turn opens a new session on disk
+
+    def resume_session(self, session_id: str) -> str:
+        """Replace the conversation with a stored one; returns the line to show to the user."""
+        if self.sessions is None:
+            raise SessionsError("Les sessions sont désactivées (SESSIONS_ENABLED=false).")
+        loaded = self.sessions.store.load(session_id)
+        if loaded is None:
+            raise SessionsError(f"Aucune session avec l'id {session_id}.")
+        now = datetime.now().astimezone()
+        available = (self._s.context_budget_tokens - self._base_tokens(now)
+                     - estimate_tokens(loaded.summary))
+        history = list(loaded.history)
+        dropped = trim_history(history, max(4_000, available))
+        self.history = history
+        self.context.summary = loaded.summary
+        self.sessions.adopt(loaded.id)
+        parts = [f"Session {loaded.id} reprise : {loaded.turns} tour(s), {len(history)} message(s)"]
+        if loaded.summary:
+            parts.append("avec son résumé")
+        if dropped:
+            parts.append(f"{dropped} ancien(s) message(s) écarté(s) pour tenir dans le budget de contexte")
+        return " ; ".join(parts) + "."
 
     def _system_text(self, now: datetime, with_summary: bool = True) -> str:
         return build_system_prompt(
@@ -170,6 +198,8 @@ class Agent:
         """Stream events for one user message; the last one is always TurnEnd."""
         start = len(self.history)
         self.history.append({"role": "user", "content": user_text})
+        if self.sessions is not None:
+            self.sessions.begin(user_text)
         now = datetime.now().astimezone()
         self.context.new_turn()
         self._memory_block = ""
@@ -276,6 +306,9 @@ class Agent:
                     result = task.result()
                     preview = " ".join(result.text.split())[:200]
                     yield ToolEnd(call.name, not result.is_error, result.duration_ms, preview)
+                    if self.sessions is not None:
+                        self.sessions.tool(call.name, call.arguments, not result.is_error,
+                                           result.duration_ms, result.text)
                     actions.append(f"{call.name}({self._short(call.arguments)}) → "
                                    f"{'erreur' if result.is_error else 'ok'}")
                     shown = self._store.limit(call.name, result.text) if self._store else result.text
@@ -322,6 +355,8 @@ class Agent:
                 plan_task.cancel()
             if turn is not None:
                 turn.close()  # An aborted turn leaves no trace: the background tone reading is cancelled
+            if self.sessions is not None:  # Runs on every exit: done, step limit, error, Ctrl+C, close
+                self.sessions.finish(self.history, self.context.summary, start, complete=finished)
 
     def _sensitive_tier(self, text: str) -> str | None:
         """The level this message hits (or None). Deterministic, no model call, never buys a turn."""

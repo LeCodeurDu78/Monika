@@ -67,6 +67,11 @@ class Paths:
     def audit_log(self) -> Path:
         return self.logs / "audit.jsonl"
 
+    @property
+    def sessions_db(self) -> Path:
+        """The conversation log (SQLite + FTS5), in 0600."""
+        return self.sessions / "sessions.db"
+
     def ensure(self) -> None:
         """Create all directories; the home itself is private to the user."""
         self.home.mkdir(parents=True, exist_ok=True)
