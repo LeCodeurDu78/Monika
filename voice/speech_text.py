@@ -25,6 +25,56 @@ _PATH = re.compile(r"(?<![\w/:.])(~|\.{1,2})?((?:/[\w.\-@+%]+)+)/?")
 _HTML_TAG = re.compile(r"</?[A-Za-z][^>]*>")
 _TIME = re.compile(r"\b([01]?\d|2[0-3]):([0-5]\d)\b")
 
+# Units are spoken with their name: 32000 Hz is "trente-deux mille hertz", not "Hz". The case is
+# significant: "GB" is a gigabyte, "Gb" a gigabit (and "Mo" stays French).
+_OCTETS = ("octet", "octets")
+_BITS = ("bit", "bits")
+
+
+def _named(prefix: str, unit: tuple[str, str]) -> tuple[str, str]:
+    return (prefix + unit[0], prefix + unit[1])
+
+
+_UNIT_NAMES: dict[str, tuple[str, str]] = {
+    # Capacities: "o" is the French spelling, "B" the English one for the same byte
+    "Ko": _named("kilo", _OCTETS), "KB": _named("kilo", _OCTETS), "KiB": _named("kibi", _OCTETS),
+    "Mo": _named("méga", _OCTETS), "MB": _named("méga", _OCTETS), "MiB": _named("mibi", _OCTETS),
+    "Go": _named("giga", _OCTETS), "GB": _named("giga", _OCTETS), "GiB": _named("gibi", _OCTETS),
+    "To": _named("téra", _OCTETS), "TB": _named("téra", _OCTETS), "TiB": _named("tébi", _OCTETS),
+    "Po": _named("péta", _OCTETS), "PB": _named("péta", _OCTETS),
+    "Eo": _named("exa", _OCTETS), "EB": _named("exa", _OCTETS),
+    # Bits: the lowercase b is what keeps "1 Gb" a gigabit
+    "Kb": _named("kilo", _BITS), "Kbit": _named("kilo", _BITS),
+    "Mb": _named("méga", _BITS), "Mbit": _named("méga", _BITS),
+    "Gb": _named("giga", _BITS), "Gbit": _named("giga", _BITS),
+    "Tb": _named("téra", _BITS), "Tbit": _named("téra", _BITS),
+    # Frequencies: hertz is invariable in French, so singular and plural are the same word
+    "Hz": ("hertz", "hertz"), "kHz": ("kilohertz", "kilohertz"), "MHz": ("mégahertz", "mégahertz"),
+    "GHz": ("gigahertz", "gigahertz"), "THz": ("térahertz", "térahertz"),
+}
+
+_SYMBOLS = "|".join(sorted(_UNIT_NAMES, key=len, reverse=True))
+# A rate first: "10 Mb/s" would otherwise become "10 mégabit/s"
+_RATE = re.compile(rf"(?<![\w.,])(\d+(?:[.,]\d+)?)\s*({_SYMBOLS})\s*(?:/\s*s|ps)(?!\w)")
+# Only a symbol glued to a number is a unit, so "le Go" and "3 ans de Go" are left alone
+_QUANTITY = re.compile(rf"(?<![\w.,])(\d+(?:[.,]\d+)?)\s*({_SYMBOLS})(?!\w)")
+
+
+def _pick(count: str, names: tuple[str, str]) -> str:
+    """French takes the singular below two: "1 gigaoctet", "0,5 gigaoctet", "2 gigaoctets"."""
+    try:
+        plural = float(count.replace(",", ".")) >= 2
+    except ValueError:
+        plural = True
+    return names[1] if plural else names[0]
+
+
+def _spoken_units(text: str) -> str:
+    """Say "3 Go" as "3 gigaoctets": the name is used only when a number comes right before it."""
+    text = _RATE.sub(lambda m: f"{m.group(1)} {_pick(m.group(1), _UNIT_NAMES[m.group(2)])} par seconde",
+                     text)
+    return _QUANTITY.sub(lambda m: f"{m.group(1)} {_pick(m.group(1), _UNIT_NAMES[m.group(2)])}", text)
+
 
 def _path_name(match: re.Match[str]) -> str:
     """Keep only the last component of a path; leave short slash words ('/ou') untouched."""
@@ -57,6 +107,7 @@ def clean_for_speech(text: str) -> str:
     text = re.sub(r"(\d)\s*\$", r"\1 dollars", text)
     text = re.sub(r"(\d)\s*°(?:\s*[CcFf]\b)?", r"\1 degrés", text)
     text = _TIME.sub(_time_words, text)
+    text = _spoken_units(text)
     text = text.replace("&", " et ")
     text = re.sub(r"\s*(?:->|=>|→|⇒)\s*", ", ", text)
     text = text.replace("`", "").replace("*", "").replace("~", "").replace("|", ", ")

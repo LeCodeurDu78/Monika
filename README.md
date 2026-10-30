@@ -317,8 +317,14 @@ pendant que le modèle écrit encore**.
   en mode texte). L'écran garde le texte tel quel ; la voix reçoit une version nettoyée : plus de
   Markdown, de listes, de titres ni d'emojis ; les liens gardent leur texte, les URL deviennent
   « un lien », les chemins gardent leur nom de fichier ; `21°C`, `20 %`, `14:30` se disent « 21
-  degrés », « 20 pour cent », « 14 h 30 » ; un bloc de code n'est jamais lu (Monika dit une fois
-  qu'elle le laisse à l'écran).
+  degrés », « 20 pour cent », « 14 h 30 » ; `2 Go`, `512 Mo`, `3,4 GHz`, `25 Mb/s` se disent « 2
+  gigaoctets », « 512 mégaoctets », « 3,4 gigahertz », « 25 mégabits par seconde » ; un bloc de code
+  n'est jamais lu (Monika dit une fois qu'elle le laisse à l'écran).
+- **Abréviations** : seuls les symboles **collés à un nombre** sont prononcés en toutes lettres
+  (capacités, débits, fréquences : `Ko Mo Go To Po Eo`, `KiB MiB GiB TiB`, `KB MB GB TB`, les bits
+  `Kb Mb Gb Tb`, `Hz kHz MHz GHz THz`). « le Go », « 3 ans de Go » ou « Go 1.22 » restent tels quels,
+  et le pluriel suit la règle française : « 1 gigaoctet », « 0,5 gigaoctet », « 2 gigaoctets ».
+  Seule la voix est concernée : l'écran affiche toujours le texte d'origine.
 - **Coupures** : Ctrl+C pendant qu'elle parle coupe la voix, la session continue ; en mode
   texte, envoyer un nouveau message coupe aussi ce qui se disait.
 - **Panne de voix** (serveur arrêté, référence illisible, sortie audio perdue) : le message est
@@ -646,10 +652,12 @@ Les tests vivent dans `tests/` et tournent sans réseau, sans modèle et sans na
 python -m unittest discover -s tests -t .
 ```
 
-`tests/test_emotion_spec.py` couvre la table des émotions et tout ce qui en dérive (listes, plafonds,
-`deltas_from`, bloc de prompt, gestes). Les moteurs du personnage (`character/`), du RAG
-(`rag/chunking.py`, `rag/lexical.py`) et de la voix (`voice/endpoint.py`, `voice/speech_text.py`) n'ont
-besoin de rien non plus et se testent de la même façon.
+Le dossier n'est **pas versionné** (il est dans `.gitignore`) : c'est la vérification locale de chaque
+changement, pas une dépendance du projet. Ce qui s'y teste sans rien charger : le nettoyage et le
+découpage du texte parlé (`voice/speech_text.py`), la table des émotions et tout ce qui en dérive
+(`character/emotion_spec.py`), le découpage et la recherche par mots-clés du RAG (`rag/chunking.py`,
+`rag/lexical.py`). Les moteurs qui demandent un modèle (mémoire, Whisper, voix GPT-SoVITS) ne sont pas
+testés ici : ils se voient au lancement, dans `--config` et dans la page de réglages.
 
 ## Dépannage
 
