@@ -46,7 +46,8 @@ class Dashboard:
         agent = self.agent
         return {
             "app": {"version": __version__, "mode": self.mode, "model": self._s.model_name,
-                    "state": self._hub.state, "ready": agent is not None},
+                    "state": self._hub.state, "ready": agent is not None,
+                    "fx": self._s.scene_fx_enabled},  # the page decides whether to build the effects
             "context": await self._section(lambda: agent.stats() if agent else None),
             "memory": await self._section(self._memory),
             "character": await self._section(self._character_section),

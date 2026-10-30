@@ -7,6 +7,10 @@ const SPEAKING_LEVEL = 0.02;
 class Page {
   constructor() {
     this.avatar = null;  // loaded lazily: the dashboard must keep working even without the 3D files
+    // Post-processing: "?fx=low" turns it off, "?fx=on" forces it on, otherwise the setting decides
+    // (read from the first /api/status, so the page never guesses what the backend allows).
+    const fx = new URLSearchParams(location.search).get('fx');
+    this.fx = fx === null ? null : fx !== 'low';
     this.state = 'idle';
     this.lastSound = 0;
     this.refreshTimer = null;
@@ -50,7 +54,9 @@ class Page {
   async refresh() {
     try {
       const response = await fetch('/api/status', { cache: 'no-store' });
-      render(await response.json(), () => this.refresh());
+      const status = await response.json();
+      if (this.fx === null && typeof status?.app?.fx === 'boolean') this.fx = status.app.fx;
+      render(status, () => this.refresh());
     } catch (err) {
       /* The link chip already tells the connection is down */
     }
@@ -74,7 +80,13 @@ class Page {
     const fail = (text) => { note.hidden = false; note.textContent = text; };
     try {
       const { Avatar } = await import('./avatar.js');
-      this.avatar = new Avatar(document.getElementById('avatar'));
+      this.avatar = new Avatar(document.getElementById('avatar'), {
+        fx: this.fx === true,
+        onFxFallback: (reason) => {
+          note.hidden = false;
+          note.textContent = `Effets visuels désactivés : ${reason}.`;
+        },
+      });
     } catch (err) {
       console.error('[avatar]', err);
       fail('Avatar 3D indisponible : bibliothèques manquantes. Lance « python scripts/vendor_web.py » une fois.');
@@ -110,6 +122,7 @@ class Page {
   async start() {
     const note = document.getElementById('stage-note');
     window.monika = this;  // Handy in the browser console, and for the automated checks
+    await this.refresh();  // before the avatar: the status says whether the visual effects are allowed
     await this.loadAvatar(note);
     this.connect();
     this.refresh();
