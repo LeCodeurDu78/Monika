@@ -8,7 +8,6 @@ import { FaceController } from './avatar/face.js';
 import { CueController } from './avatar/cues.js';
 import { Environment } from './avatar/environment.js';
 import { Orbit } from './avatar/orbit.js';
-import { PostFX } from './avatar/post.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const FOV = 28;
@@ -25,8 +24,6 @@ export class Avatar extends ClipLibrary {
     super({ clipsBase: opts.clipsBase || '/static/clips/', onStatus: opts.onStatus });
     this.canvas = canvas;
     this.view = opts.view || new URLSearchParams(location.search).get('view') || 'bust';
-    this.fx = opts.fx === true;               // post-processing: depth of field, bloom, vignette
-    this.onFxFallback = opts.onFxFallback || null;
     this.error = null;
     this.ready = false;
     this.state = 'idle';
@@ -66,19 +63,6 @@ export class Avatar extends ClipLibrary {
       this.env = null;  // the stage stays usable without the room
       console.warn('[avatar] décor indisponible :', err);
     }
-    if (this.fx) {
-      try {
-        this.post = new PostFX(this.renderer, this.scene, this.camera,
-                               () => this.camera.position.distanceTo(this.orbit.target));
-        this.post.onFallback = (reason) => {
-          this.post = null;
-          this.onFxFallback?.(reason);
-        };
-      } catch (err) {  // no WebGL2, no float render target: the stage simply stays plain
-        this.post = null;
-        console.warn('[avatar] effets visuels indisponibles :', err);
-      }
-    }
     this.clock = new THREE.Clock();
     this._resize();
     if ('ResizeObserver' in window) new ResizeObserver(() => this._resize()).observe(this.canvas);
@@ -93,7 +77,6 @@ export class Avatar extends ClipLibrary {
     this.renderer.setSize(w, h, false);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
-    this.post?.resize(w, h);
     this._frame();
   }
 
@@ -270,6 +253,6 @@ export class Avatar extends ClipLibrary {
     this.face.update(dt, this.vrm?.expressionManager);
     this.vrm?.update(dt);
     this.orbit?.follow(dt);
-    if (!this.post || !this.post.render(dt)) this.renderer.render(this.scene, this.camera);
+    this.renderer.render(this.scene, this.camera);
   }
 }

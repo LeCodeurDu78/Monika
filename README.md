@@ -126,7 +126,6 @@ valeurs par défaut du code). Les plus utiles :
 | `TTS_URL`, `TTS_SPEAKERS_DIR`, `TTS_CHARACTER_ID` | GPT-SoVITS : adresse de l'API et pack de voix |
 | `TTS_LANGUAGE`, `TTS_EMOTION_TAGS`, `TTS_RENDER` | Langue parlée, tags d'émotion, découpage des requêtes |
 | `WEB_ENABLED`, `WEB_PORT` | Page locale (défaut 8765) |
-| `SCENE_FX_ENABLED` | Effets visuels de la scène (profondeur de champ, bloom, vignette), désactivés par défaut |
 | `SENSITIVE_WORDS_ENABLED` | Filtre de mots sensibles (la liste est dans `words.json`) |
 | `LOG_LEVEL`, `AUDIT_ENABLED` | Journaux |
 
@@ -400,21 +399,14 @@ pour la couper). À gauche l'avatar 3D, à droite le tableau de bord.
   (`web/static/js/avatar/environment.js`) : plancher en lattes, tableau noir, fenêtres à claies et
   rideaux, pupitres, suspension qui oscille et poussière en suspension. Aucun fichier à télécharger ;
   si le décor échoue à se construire, la scène reste utilisable sans lui.
-  Un **post-traitement** facultatif (`web/static/js/avatar/post.js`, réglage `SCENE_FX_ENABLED`,
-  désactivé par défaut) ajoute une profondeur de champ centrée sur Monika (le décor se fond derrière
-  elle), un bloom sur les seules sources lumineuses — fenêtres, ampoule — et une vignette légère.
-  « `?fx=low` » le coupe le temps d'une visite, « `?fx=on` » le force. Il se retire de lui-même si la
-  chaîne ne peut pas se construire, si une image échoue ou si le rendu tombe sous 24 images/s, et la
-  page l'indique sous l'avatar.
 - **Caméra** : glisser avec le bouton gauche tourne autour d'elle, la molette rapproche ou éloigne,
   et un glisser avec le bouton droit vers le haut ou le bas fait glisser le point de mire de sa tête  à ses chaussures (« `?view=full` » cadre le corps entier au départ). L'orbite ne passe jamais sous le
   sol, ni à travers le plafond ou les murs : en montant ou en dézoomant, la caméra s'arrête dans la
   pièce (l'angle le plus haut et la distance maximale dépendent alors de sa hauteur et du recul) ; elle
   suit sa respiration sans tremblement.
-  **Bibliothèques 3D** : three.js (avec les addons de post-traitement) et three-vrm sont fournis dans
-  `web/static/vendor/` et servis localement (aucune dépendance à télécharger : le dossier est versionné).
-  Ouvre la page avec `?debug` pour tester chaque clip et chaque émotion ; `?view=full` cadre le corps
-  entier au lieu du buste ; `?fx=low` coupe les effets visuels.
+  **Bibliothèques 3D** : three.js et three-vrm sont fournis dans `web/static/vendor/` et servis
+  localement (aucune dépendance à télécharger : le dossier est versionné). Ouvre la page avec `?debug`
+  pour tester chaque clip et chaque émotion ; `?view=full` cadre le corps entier au lieu du buste.
 - **Tableau de bord**, volontairement réduit à trois blocs : *Contexte* (taille de la
   conversation), *Relation* (niveau, favorabilité et humeur de Monika ; son journal, dont tu peux
   modifier ou supprimer chaque note, corriger ou effacer l'impression d'ensemble, ou tout effacer ;
@@ -443,7 +435,7 @@ Un lien « Réglages » dans l'en-tête ouvre cette page (même serveur, même j
   rouge avec le détail (par exemple « 127.0.0.1:9880 injoignable »). Le LLM est sondé par sa liste
   de modèles, jamais par une complétion (cela coûterait un appel) ; la voix par une connexion TCP.
 - **Réglages** : une sélection lisible, groupée (modèle, comportement, personnage, rôles, mémoire,
-  documents, voix, décor et effets, page). Les clés définies dans le `.env` sont **grisées et marquées** : le `.env`
+  documents, voix, page). Les clés définies dans le `.env` sont **grisées et marquées** : le `.env`
   garde la priorité, la page ne fait pas semblant de les piloter, et l'API les **refuse** (400)
   même appelée à la main. « Enregistrer » valide puis écrit
   `<MONIKA_HOME>/settings.json` (en `0600`, écriture atomique) et **applique à chaud** ce qui peut

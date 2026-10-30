@@ -177,9 +177,6 @@ class Settings(BaseSettings):
     # Local web page: 3D avatar and dashboard (reachable from this computer only)
     web_enabled: bool = True
     web_port: int = Field(8765, ge=1024, le=65535)
-    # Post-processing on the avatar's stage (depth of field, bloom, light vignette). Off by default; the
-    # page reads it at load, and "?fx=low" / "?fx=on" still wins for a single visit.
-    scene_fx_enabled: bool = False
 
     # Optional first name used in the system prompt
     user_name: str = ""
