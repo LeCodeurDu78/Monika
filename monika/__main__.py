@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
 import logging
 import sys
 import time
@@ -381,8 +382,19 @@ def load_action_director(settings: Settings, llm, hub):
         return None
 
 
-async def start_web(settings: Settings, paths: Paths, voice: bool, health=None):
-    """Start the local page (avatar and dashboard); returns (hub, dashboard, server) or None with a message."""
+@dataclass
+class WebUI:
+    """What the page needs, handed from its launcher to the chat that fills it in."""
+
+    hub: Any
+    dashboard: Any
+    server: Any
+    chat: Any
+    voice_targets: dict[str, Any] = field(default_factory=dict)
+
+
+async def start_web(settings: Settings, paths: Paths, voice: bool, health=None) -> WebUI | None:
+    """Start the local page (avatar, dashboard, conversation, microphone); None with a message."""
     if not settings.web_enabled:
         return None
     from web.chat import ChatView
@@ -390,14 +402,20 @@ async def start_web(settings: Settings, paths: Paths, voice: bool, health=None):
     from web.hub import Hub
     from web.server import WebError, WebServer
     from web.settings import Health, SettingsApi
+    from web.voice import PageVoice
 
     hub = Hub()
     chat = ChatView(hub)
     health = health if health is not None else Health()
     health.hub = hub
     dashboard = Dashboard(settings, paths, hub, mode="voix" if voice else "texte", chat=chat)
+    # One PageVoice per open page: the launcher fills the targets once the session exists
+    voice_targets: dict[str, Any] = {}
+    factory = lambda send_json, send_bytes: PageVoice(settings, paths, hub, send_json, send_bytes,
+                                                      voice_targets)
     server = WebServer(hub, dashboard.snapshot, settings.web_port, actions=dashboard.actions(),
-                       settings_api=SettingsApi(settings, paths, health), chat=chat)
+                       settings_api=SettingsApi(settings, paths, health), chat=chat,
+                       voice_factory=factory)
     try:
         await server.start()
     except WebError as exc:
@@ -405,7 +423,7 @@ async def start_web(settings: Settings, paths: Paths, voice: bool, health=None):
         return None
     console.print(f"[green]✓[/green] Page de Monika (avatar, tableau de bord et conversation) : "
                   f"{server.url} [dim](visible depuis cet ordinateur seulement)[/dim]")
-    return hub, dashboard, server, chat
+    return WebUI(hub, dashboard, server, chat, voice_targets)
 
 
 async def run_chat(settings: Settings, paths: Paths, masker: Masker, voice: bool = False,
@@ -452,8 +470,8 @@ async def _run_chat(settings: Settings, paths: Paths, masker: Masker, voice: boo
         capture = MemoryCapture([memory.capture], settings.memory_capture_min_chars)
     rag = load_rag(settings, paths)
     web = await start_web(settings, paths, voice, health)
-    hub = web[0] if web else None
-    chat = web[3] if web else None
+    hub = web.hub if web else None
+    chat = web.chat if web else None
     speaker = await start_speech(settings, paths, voice, on_level=hub.on_level if hub else None)
     health.listener = listener
     health.speaker = speaker
@@ -481,7 +499,7 @@ async def _run_chat(settings: Settings, paths: Paths, masker: Masker, voice: boo
                           sessions=sessions)
             health.agent = agent
             if web:
-                web[1].agent = agent
+                web.dashboard.agent = agent
             session_kwargs = dict(masker=masker, speaker=speaker,
                                   speech_max_chars=settings.tts_max_sentence_chars, hub=hub,
                                   action_director=action_director, tasks=tasks, chat=chat)
@@ -532,7 +550,17 @@ async def _run_chat(settings: Settings, paths: Paths, masker: Masker, voice: boo
                             await asyncio.gather(task, return_exceptions=True)
                         return _stopped_sentence(await session.stop_all(turn=running))
 
-                web[1].chat_send, web[1].chat_stop = submit, stop
+                web.dashboard.chat_send, web.dashboard.chat_stop = submit, stop
+
+                async def ask(text: str) -> None:  # The page's microphone: one whole turn, then silence
+                    if server is not None:
+                        task = server.submit_task(text)
+                        if task is not None:
+                            await asyncio.gather(task, return_exceptions=True)
+                    else:
+                        await session.reply(text)
+
+                web.voice_targets.update(speaker=speaker, ask=ask)
             if tasks is not None:  # Before the chat starts: a missed reminder fires right away
                 from agent.tasks import Scheduler
 
@@ -557,7 +585,7 @@ async def _run_chat(settings: Settings, paths: Paths, masker: Masker, voice: boo
         if scheduler is not None:
             await scheduler.stop()
         if web:
-            await web[2].stop()
+            await web.server.stop()
         if speaker is not None:
             await speaker.close()
             speaker.engine.close()

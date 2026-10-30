@@ -1,6 +1,7 @@
 // The page: connects to Monika, drives the avatar and refreshes the dashboard panels (see panels.js).
 import { render, setEmotionLabels } from './panels.js';
 import { mountChat } from './chat.js';
+import { mountVoice } from './voice.js';
 
 const STATE_TEXT = { idle: 'Au repos', listening: 'J’écoute', thinking: 'Je réfléchis', speaking: 'Je parle' };
 const SPEAKING_LEVEL = 0.02;
@@ -13,6 +14,7 @@ class Page {
     this.refreshTimer = null;
     this.retry = 500;
     this.chat = null;  // the conversation panel: the page is a client like the terminal
+    this.voice = null;  // microphone and spoken answers, in the browser (voice.js)
   }
 
   speakingNow() { return performance.now() - this.lastSound < 400; }
@@ -36,6 +38,7 @@ class Page {
     if (msg.type === 'hello') { this.setState(msg.state); this.refresh(); this.chat?.seed(); }
     else if (msg.type === 'state') this.setState(msg.state);
     else if (msg.type === 'chat') this.chat?.receive(msg);
+    else if (msg.type === 'voice' || msg.type === 'audio') this.voice?.onEvent(msg);
     else if (msg.type === 'level') {
       this.avatar?.setMouth(msg.value);
       if (msg.value > SPEAKING_LEVEL) { this.lastSound = performance.now(); this.chip(); }
@@ -62,11 +65,16 @@ class Page {
   connect() {
     const link = document.getElementById('link-chip');
     const ws = new WebSocket(`ws://${location.host}/ws`);
+    ws.binaryType = 'arraybuffer';  // Monika's voice comes back as PCM frames, not as JSON
     ws.onopen = () => { link.dataset.link = 'on'; link.textContent = 'Connectée'; this.retry = 500; };
-    ws.onmessage = (event) => this.onMessage(JSON.parse(event.data));
+    ws.onmessage = (event) => {
+      if (typeof event.data !== 'string') { this.voice?.onAudio(event.data); return; }
+      this.onMessage(JSON.parse(event.data));
+    };
     ws.onclose = () => {
       link.dataset.link = 'off';
       link.textContent = 'Connexion perdue : nouvelle tentative…';
+      this.voice?.onClose();  // the microphone must not stay open on a dead link
       setTimeout(() => this.connect(), this.retry);
       this.retry = Math.min(this.retry * 2, 8000);
     };
@@ -114,6 +122,7 @@ class Page {
     const note = document.getElementById('stage-note');
     window.monika = this;  // Handy in the browser console, and for the automated checks
     this.chat = mountChat();
+    this.voice = mountVoice({ status: (text) => this.chat?.status(text) });
     await this.loadAvatar(note);
     this.connect();
     this.refresh();

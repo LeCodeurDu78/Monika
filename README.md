@@ -74,8 +74,8 @@ voice/         Micro, détection de parole, Whisper, GPT-SoVITS (client HTTP), l
                du texte parlé
 modes/         Discussion dans le terminal (text.py) et lecteur vocal (voice.py)
 web/           Serveur local (server.py), tableau de bord (dashboard.py), diffusion en direct (hub.py),
-               conversation de la page (chat.py) et page (static/ : index.html, css/, js/, avatar/,
-               clips/, vendor/)
+               conversation de la page (chat.py), voix de la page (voice.py) et page (static/ :
+               index.html, css/, js/, avatar/, clips/, vendor/)
 ```
 
 Les paquets (`agent/`, `rag/`, `web/`…) sont à la racine du projet : lance toujours Monika
@@ -557,6 +557,9 @@ pour la couper). À gauche l'avatar 3D, à droite le tableau de bord.
   (`/aide`, `/sessions`, `/reprendre ID`, `/rappel …`, `/stop`…) s'y tapent aussi : leur réponse
   s'affiche dans la conversation (le terminal la garde) ; `/quitter` est la seule à ne rien
   pouvoir faire d'ici, il n'y a pas de terminal à détacher.
+- **Parler depuis la page** : le bouton **🎙 Parler** ouvre le micro du navigateur
+  (`getUserMedia`, annulation d'écho et réduction de bruit demandées) et lit la réponse **ici**, au
+  casque ou dans les haut-parleurs de l'appareil qui regarde la page. Voir la section suivante.
 - **Tableau de bord**, désormais cinq blocs : *Conversation*, *Contexte* (taille de la
   conversation), *Relation* (niveau, favorabilité et humeur de Monika ; son journal, dont tu peux
   modifier ou supprimer chaque note, corriger ou effacer l'impression d'ensemble, ou tout effacer ;
@@ -575,6 +578,41 @@ pour la couper). À gauche l'avatar 3D, à droite le tableau de bord.
   Si tu veux la refermer, il faut remettre un jeton (ou une phrase d'accès) devant les routes.
 - **WebGL** est nécessaire dans le navigateur ; sans lui, la page l'indique et le tableau de bord
   marche quand même.
+
+### Parler à Monika dans le navigateur
+
+```text
+[ 🎙 Parler ]  →  micro du navigateur  →  AudioWorklet 16 kHz  →  VAD + Whisper (les mêmes)
+                                                            ↓
+           haut-parleurs de l'appareil  ←  WebAudio  ←  synthèse GPT-SoVITS (la même voix)
+```
+
+- **Même pipeline que le terminal** : la page n'ajoute ni second détecteur de parole ni second
+  Whisper. Un AudioWorklet (`web/static/js/voice-worklet.js`) ramène le micro à 16 kHz mono et
+  l'envoie en trames de 512 échantillons par le WebSocket ; elles entrent dans le `VoiceListener`
+  des modes texte et voix (`parec` côté terminal). Le mode voix du terminal continue de marcher :
+  `parec`/`pacat` ne sont pas touchés.
+- **La réponse se fait entendre** : quand le micro de la page est ouvert, le `Speaker` écrit dans
+  la page (`WebAudio`, `web/voice.py`) au lieu de pacat ; en refermant le micro, la voix revient à
+  la sortie de la machine. Les pauses entre phrases (voir *Pauses* plus haut) s'entendent
+  évidemment aussi ici, puisque c'est le même flux PCM.
+- **Une seule voix à la fois** : un second appareil qui ouvre le micro reprend le flux audio ; le
+  premier n'entend plus rien tant qu'il ne l'a pas repris. Fermer la page ferme le micro (le
+  WebSocket qui tombe coupe l'écoute côté serveur).
+- **Permissions, proprement** : un refus, l'absence de micro, un micro déjà pris par un autre
+  programme ou un navigateur sans `getUserMedia` donnent chacun une phrase claire sous la
+  conversation, et **le bouton reste au repos** : rien n'est envoyé au serveur, aucune session ne
+  s'ouvre.
+- **HTTPS obligatoire (ou localhost)** : les navigateurs ne donnent le micro qu'à une origine
+  sécurisée. `http://localhost:8765` marche ; une page ouverte depuis un autre appareil en
+  `http://` **non** — utilise `tailscale serve` (HTTPS) dans ce cas. Le message le dit au lieu
+  d'échouer en silence.
+- **Half duplex** : le micro se rouvre quand la réponse a fini d'être **entendue**, pas quand elle a
+  fini d'être envoyée (le serveur tient l'horloge de lecture) ; l'annulation d'écho du navigateur
+  fait le reste sur un haut-parleur ouvert.
+- **Limite** : pas de mot d'éveil, pas de barge-in (parler par-dessus Monika ne la coupe pas), et
+  la voix dans la page demande une synthèse qui répond — sans GPT-SoVITS, le micro marche toujours
+  mais les réponses restent à l'écran.
 
 ### Page de réglages (`/settings`)
 

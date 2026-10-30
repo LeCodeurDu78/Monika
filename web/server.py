@@ -1,13 +1,15 @@
 """Local web server: serves the avatar page and streams live events. Reachable from this computer only.
 
 No access control: every route answers without a token and without an Origin check, and the page
-sends whatever it has to say (messages and /commands) to the agent.
+sends whatever it has to say (messages, /commands and, when it asks for it, microphone audio) to the
+agent.
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import socket
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -43,7 +45,7 @@ class ActionError(Exception):
 
 def create_app(hub: Hub, snapshot: Snapshot, static_dir: Path = STATIC_DIR,
                actions: Actions | None = None, settings_api: Any | None = None,
-               chat: Any = None) -> Any:
+               chat: Any = None, voice_factory: Any = None) -> Any:
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     actions = actions or {}
     if settings_api is not None:
@@ -205,6 +207,7 @@ def create_app(hub: Hub, snapshot: Snapshot, static_dir: Path = STATIC_DIR,
     async def live(ws: WebSocket) -> None:
         await ws.accept()
         queue = hub.subscribe()
+        voice = voice_factory(ws.send_json, ws.send_bytes) if voice_factory is not None else None
         try:
             await ws.send_json(hub.hello())
 
@@ -213,8 +216,24 @@ def create_app(hub: Hub, snapshot: Snapshot, static_dir: Path = STATIC_DIR,
                     await ws.send_json(await queue.get())
 
             async def listen() -> None:
-                while True:  # The page listens: reading only detects the disconnection
-                    await ws.receive_text()
+                while True:
+                    message = await ws.receive()
+                    if message.get("type") == "websocket.disconnect":
+                        return
+                    data = message.get("bytes")
+                    if data:  # microphone audio from the page (16 kHz PCM, see web/voice.py)
+                        if voice is not None:
+                            voice.feed(data)
+                        continue
+                    text = message.get("text")
+                    if not text or voice is None:
+                        continue
+                    try:
+                        payload = json.loads(text)
+                    except ValueError:
+                        continue
+                    if isinstance(payload, dict) and payload.get("type") == "voice":
+                        await voice.toggle(bool(payload.get("on")))
 
             tasks = [asyncio.create_task(pump()), asyncio.create_task(listen())]
             try:
@@ -226,6 +245,8 @@ def create_app(hub: Hub, snapshot: Snapshot, static_dir: Path = STATIC_DIR,
         except WebSocketDisconnect:
             pass
         finally:
+            if voice is not None:
+                await voice.close()  # the page is gone: the microphone goes with it
             hub.unsubscribe(queue)
 
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
@@ -248,10 +269,11 @@ class WebServer:
 
     def __init__(self, hub: Hub, snapshot: Snapshot, port: int, static_dir: Path = STATIC_DIR,
                  actions: Actions | None = None, settings_api: Any | None = None,
-                 chat: Any = None) -> None:
+                 chat: Any = None, voice_factory: Any = None) -> None:
         self._actions = actions
         self._settings_api = settings_api
         self._chat = chat
+        self._voice_factory = voice_factory
         self._hub = hub
         self._snapshot = snapshot
         self.port = port
@@ -274,7 +296,7 @@ class WebServer:
         finally:
             probe.close()
         app = create_app(self._hub, self._snapshot, self._static, self._actions,
-                         self._settings_api, self._chat)
+                         self._settings_api, self._chat, self._voice_factory)
         config = uvicorn.Config(app, host=HOST, port=self.port, log_level="warning", access_log=False,
                                 lifespan="off", timeout_graceful_shutdown=2)
         self._server = _Server(config)

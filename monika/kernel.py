@@ -321,13 +321,17 @@ class KernelServer:
 
     async def submit(self, text: str) -> bool:
         """A message from the page: started here (so the terminal sees it too) or refused if busy."""
+        return self.submit_task(text) is not None
+
+    def submit_task(self, text: str) -> asyncio.Task | None:
+        """The same, as the task that runs it: the page's voice mode waits for it before listening."""
         line = (text or "").strip()
         if line.startswith("/"):  # A /command goes through the same code as the terminal's
             if self._turn_task is not None and not self._turn_task.done():
-                return False
+                return None
             self._turn_task = asyncio.create_task(self._page_command(line))
-            return True
-        return self._start_turn(line) is not None
+            return self._turn_task
+        return self._start_turn(line)
 
     async def _page_command(self, line: str) -> None:
         """A /command typed in the page: the session runs it, and the answer shows there too."""

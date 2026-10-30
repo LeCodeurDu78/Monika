@@ -57,6 +57,7 @@ class Speaker:
                  pauses: Pauses | None = None) -> None:
         self._engine = engine
         self._sink = sink
+        self._default_sink = sink  # pacat, unless the page takes the voice over (see use_sink)
         self._pauses = pauses  # None = the neutral style, nothing inserted (previous behaviour)
         self._last: tuple[str, str, float] | None = None  # The previous sentence, for its pause
         self.on_error = on_error  # May be set later, e.g. by the chat session
@@ -85,6 +86,10 @@ class Speaker:
     def busy(self) -> bool:
         """True while a sentence is queued, buffered or being heard."""
         return self._pending > 0 or self._sink.is_open or bool(self._block)
+
+    def use_sink(self, sink: _Sink | None) -> None:
+        """Send the voice somewhere else (the page's WebAudio), or back to the default output."""
+        self._sink = sink if sink is not None else self._default_sink
 
     def set_emotion(self, emotion: str, intensity: float = 0.5) -> None:
         """The mood the next phrases are spoken in; only used when a tagger was given."""

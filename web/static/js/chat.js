@@ -22,12 +22,16 @@ export function mountChat() {
   input.placeholder = 'Écris à Monika… (Entrée envoie, Maj+Entrée ajoute une ligne)';
   input.setAttribute('aria-label', 'Message pour Monika');
 
+  const mic = el('button', 'mic', '🎙 Parler');  // wired by voice.js (the microphone lives there)
+  mic.type = 'button';
+  mic.setAttribute('aria-pressed', 'false');
+  mic.title = 'Parler à Monika au micro (nécessite https ou localhost)';
   const send = el('button', 'primary', 'Envoyer');
   send.type = 'submit';
   const stop = el('button', '', 'Arrêter');
   stop.type = 'button';
   const row = el('div', 'row');
-  row.append(send, stop);
+  row.append(mic, send, stop);
   const form = el('form', 'chat-form');
   form.append(input, row);
   body.append(log, note, form);
@@ -122,6 +126,11 @@ export function mountChat() {
     if (error) stop.disabled = !busy;
   };
 
+  /** A short line under the conversation (voice state, microphone problems). */
+  function status(text) {
+    note.textContent = text || '';
+  }
+
   setBusy(false);
-  return { receive, seed };
+  return { receive, seed, status };
 }
