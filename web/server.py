@@ -87,7 +87,8 @@ class LocalOnly:
 
 
 def create_app(hub: Hub, snapshot: Snapshot, port: int, static_dir: Path = STATIC_DIR,
-               actions: Actions | None = None, settings_api: Any | None = None) -> Any:
+               actions: Actions | None = None, settings_api: Any | None = None,
+               chat: Any = None) -> Any:
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     token = secrets.token_urlsafe(24)  # Fresh at each launch, only given to the page we serve
     actions = actions or {}
@@ -187,6 +188,27 @@ def create_app(hub: Hub, snapshot: Snapshot, port: int, static_dir: Path = STATI
     @app.post("/api/session/{session_id}/resume")
     async def session_resume(session_id: str, x_monika_token: str | None = Header(None)) -> JSONResponse:
         return await act("session_resume", x_monika_token, session_id)
+
+    @app.get("/api/chat")
+    async def chat_read(x_monika_token: str | None = Header(None)) -> JSONResponse:
+        """The conversation so far, for a page that opens or reloads (then the WebSocket keeps it live)."""
+        if not token_ok(x_monika_token):  # It holds what was said: token required
+            return JSONResponse({"error": "Jeton absent ou invalide : recharge la page."}, status_code=403)
+        if chat is None:
+            return JSONResponse({"enabled": False, "busy": False, "items": []})
+        return JSONResponse({"enabled": True, **chat.snapshot()},
+                            headers={"Cache-Control": "no-store"})
+
+    @app.post("/api/chat")
+    async def chat_send(request: Request, x_monika_token: str | None = Header(None)) -> JSONResponse:
+        text = await read_text(request)
+        if text is None:
+            return JSONResponse({"error": "Message attendu (champ « text »)."}, status_code=400)
+        return await act("chat_send", x_monika_token, text)
+
+    @app.post("/api/chat/stop")
+    async def chat_stop(x_monika_token: str | None = Header(None)) -> JSONResponse:
+        return await act("chat_stop", x_monika_token)
 
     if settings_api is not None:
         @app.get("/settings")
@@ -289,9 +311,11 @@ class WebServer:
     """Runs the app inside the current event loop, next to the chat."""
 
     def __init__(self, hub: Hub, snapshot: Snapshot, port: int, static_dir: Path = STATIC_DIR,
-                 actions: Actions | None = None, settings_api: Any | None = None) -> None:
+                 actions: Actions | None = None, settings_api: Any | None = None,
+                 chat: Any = None) -> None:
         self._actions = actions
         self._settings_api = settings_api
+        self._chat = chat
         self._hub = hub
         self._snapshot = snapshot
         self.port = port
@@ -314,7 +338,7 @@ class WebServer:
         finally:
             probe.close()
         app = create_app(self._hub, self._snapshot, self.port, self._static, self._actions,
-                         self._settings_api)
+                         self._settings_api, self._chat)
         config = uvicorn.Config(app, host=HOST, port=self.port, log_level="warning", access_log=False,
                                 lifespan="off", timeout_graceful_shutdown=2)
         self._server = _Server(config)

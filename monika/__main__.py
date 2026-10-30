@@ -361,6 +361,10 @@ def load_sessions(settings: Settings, paths: Paths, masker: Masker, voice: bool)
     return SessionRecorder(store, mode="voix" if voice else "texte")
 
 
+def _stopped_sentence(stopped: list[str]) -> str:
+    return "Arrêté : " + ", ".join(stopped) + "." if stopped else "Rien ne tournait."
+
+
 def load_action_director(settings: Settings, llm, hub):
     """The action role (a short avatar chain after each reply), or None when it is off."""
     if not settings.action_llm_enabled:
@@ -379,25 +383,27 @@ async def start_web(settings: Settings, paths: Paths, voice: bool, health=None):
     """Start the local page (avatar and dashboard); returns (hub, dashboard, server) or None with a message."""
     if not settings.web_enabled:
         return None
+    from web.chat import ChatView
     from web.dashboard import Dashboard
     from web.hub import Hub
     from web.server import WebError, WebServer
     from web.settings import Health, SettingsApi
 
     hub = Hub()
+    chat = ChatView(hub)
     health = health if health is not None else Health()
     health.hub = hub
-    dashboard = Dashboard(settings, paths, hub, mode="voix" if voice else "texte")
+    dashboard = Dashboard(settings, paths, hub, mode="voix" if voice else "texte", chat=chat)
     server = WebServer(hub, dashboard.snapshot, settings.web_port, actions=dashboard.actions(),
-                       settings_api=SettingsApi(settings, paths, health))
+                       settings_api=SettingsApi(settings, paths, health), chat=chat)
     try:
         await server.start()
     except WebError as exc:
         console.print(f"[yellow]{exc} Je continue sans la page web.[/yellow]")
         return None
-    console.print(f"[green]✓[/green] Page de Monika (avatar et tableau de bord) : {server.url} "
-                  "[dim](visible depuis cet ordinateur seulement)[/dim]")
-    return hub, dashboard, server
+    console.print(f"[green]✓[/green] Page de Monika (avatar, tableau de bord et conversation) : "
+                  f"{server.url} [dim](visible depuis cet ordinateur seulement)[/dim]")
+    return hub, dashboard, server, chat
 
 
 async def run_chat(settings: Settings, paths: Paths, masker: Masker, voice: bool = False,
@@ -445,6 +451,7 @@ async def _run_chat(settings: Settings, paths: Paths, masker: Masker, voice: boo
     rag = load_rag(settings, paths)
     web = await start_web(settings, paths, voice, health)
     hub = web[0] if web else None
+    chat = web[3] if web else None
     speaker = await start_speech(settings, paths, voice, on_level=hub.on_level if hub else None)
     health.listener = listener
     health.speaker = speaker
@@ -475,7 +482,7 @@ async def _run_chat(settings: Settings, paths: Paths, masker: Masker, voice: boo
                 web[1].agent = agent
             session_kwargs = dict(masker=masker, speaker=speaker,
                                   speech_max_chars=settings.tts_max_sentence_chars, hub=hub,
-                                  action_director=action_director, tasks=tasks)
+                                  action_director=action_director, tasks=tasks, chat=chat)
             if listener is not None:
                 from modes.voice import BANNER, BANNER_SPOKEN, VoiceReader
 
@@ -497,6 +504,33 @@ async def _run_chat(settings: Settings, paths: Paths, masker: Masker, voice: boo
                     return await prompt.prompt_async("Toi › ")
 
                 session = TextSession(agent, read_line, **session_kwargs)
+            if web is not None:  # The page sends its messages through the same session as the terminal
+                if server is not None:
+                    async def submit(text: str) -> bool:
+                        return await server.submit(text)
+
+                    async def stop() -> str:
+                        return _stopped_sentence(await server.stop_everything())
+                else:
+                    page_turn: dict[str, asyncio.Task | None] = {"task": None}
+
+                    async def submit(text: str) -> bool:
+                        task = page_turn["task"]
+                        if task is not None and not task.done():
+                            return False
+                        page_turn["task"] = asyncio.create_task(session.reply(text))
+                        await asyncio.sleep(0)
+                        return True
+
+                    async def stop() -> str:
+                        task = page_turn["task"]
+                        running = task is not None and not task.done()
+                        if running:
+                            task.cancel()
+                            await asyncio.gather(task, return_exceptions=True)
+                        return _stopped_sentence(await session.stop_all(turn=running))
+
+                web[1].chat_send, web[1].chat_stop = submit, stop
             if tasks is not None:  # Before the chat starts: a missed reminder fires right away
                 from agent.tasks import Scheduler
 

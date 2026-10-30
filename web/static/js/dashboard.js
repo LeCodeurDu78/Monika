@@ -1,5 +1,6 @@
 // The page: connects to Monika, drives the avatar and refreshes the dashboard panels (see panels.js).
 import { render, setEmotionLabels } from './panels.js';
+import { mountChat } from './chat.js';
 
 const STATE_TEXT = { idle: 'Au repos', listening: 'J’écoute', thinking: 'Je réfléchis', speaking: 'Je parle' };
 const SPEAKING_LEVEL = 0.02;
@@ -11,6 +12,7 @@ class Page {
     this.lastSound = 0;
     this.refreshTimer = null;
     this.retry = 500;
+    this.chat = null;  // the conversation panel: the page is a client like the terminal
   }
 
   speakingNow() { return performance.now() - this.lastSound < 400; }
@@ -31,8 +33,9 @@ class Page {
   }
 
   onMessage(msg) {
-    if (msg.type === 'hello') { this.setState(msg.state); this.refresh(); }
+    if (msg.type === 'hello') { this.setState(msg.state); this.refresh(); this.chat?.seed(); }
     else if (msg.type === 'state') this.setState(msg.state);
+    else if (msg.type === 'chat') this.chat?.receive(msg);
     else if (msg.type === 'level') {
       this.avatar?.setMouth(msg.value);
       if (msg.value > SPEAKING_LEVEL) { this.lastSound = performance.now(); this.chip(); }
@@ -110,6 +113,7 @@ class Page {
   async start() {
     const note = document.getElementById('stage-note');
     window.monika = this;  // Handy in the browser console, and for the automated checks
+    this.chat = mountChat();
     await this.loadAvatar(note);
     this.connect();
     this.refresh();

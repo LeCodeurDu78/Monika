@@ -243,7 +243,7 @@ dans un message ou un argument d'outil n'arrive jamais sur le disque.
 - **Tu gardes la main** : `/sessions`, `/chercher`, `/session oublier ID`, et le bloc *Sessions* du
   tableau de bord listent les quinze dernières, permettent de les reprendre et de les supprimer.
   Reprendre depuis la page recharge la conversation **dans le processus en cours** : elle se
-  poursuit ensuite au terminal (le chat dans la page n'existe pas encore).
+  poursuit au terminal comme dans la page (bloc *Conversation*).
 - **Recherche** : l'index porte sur ce qui a été dit (message et réponse), pas sur les résultats
   d'outils : ceux-ci restent dans l'historique mais hors de l'index.
 - **Limite** : l'historique complet est réécrit à chaque tour (quelques centaines de kilo-octets sur
@@ -536,7 +536,14 @@ pour la couper). À gauche l'avatar 3D, à droite le tableau de bord.
   **Bibliothèques 3D** : three.js et three-vrm sont fournis dans `web/static/vendor/` et servis
   localement (aucune dépendance à télécharger : le dossier est versionné). Ouvre la page avec `?debug`
   pour tester chaque clip et chaque émotion ; `?view=full` cadre le corps entier au lieu du buste.
-- **Tableau de bord**, volontairement réduit à quatre blocs : *Contexte* (taille de la
+- **Conversation** (premier bloc) : le même tour que celui du terminal, en direct. Un
+  texte, Entrée envoie (Maj+Entrée passe à la ligne), **Arrêter** coupe la réponse en cours —
+  exactement le même arrêt que `/stop`. Les rappels planifiés apparaissent marqués comme tels, et
+  la réponse s'écrit dans la page au fur et à mesure, comme au terminal. Vingt dernières lignes
+  gardées en mémoire pour un rechargement (le durable, c'est le bloc *Sessions*) ; un tour déjà
+  lancé au terminal s'affiche aussi ici, et réciproquement. Une seule conversation à la fois :
+  envoyer pendant une réponse est refusé (`409`) plutôt que mis en file.
+- **Tableau de bord**, désormais cinq blocs : *Conversation*, *Contexte* (taille de la
   conversation), *Relation* (niveau, favorabilité et humeur de Monika ; son journal, dont tu peux
   modifier ou supprimer chaque note, corriger ou effacer l'impression d'ensemble, ou tout effacer ;
   et « Repartir de zéro » pour la relation, avec confirmation), *Mémoire* (modifier ou supprimer
@@ -550,7 +557,9 @@ pour la couper). À gauche l'avatar 3D, à droite le tableau de bord.
   l'import map de la page est autorisée par son empreinte) ; tout
   ce qui vient de la mémoire est affiché comme du texte, jamais comme du HTML. Les seules
   actions possibles depuis la page (modifier ou supprimer un souvenir ou une note du journal, repartir de zéro, supprimer une session) exigent un jeton tiré au hasard à chaque lancement, fourni uniquement à la page servie,
-  et une origine valide. Aucune commande ne peut être envoyée à l'agent depuis la page. La lecture de l'état (`GET /api/status`, qui contient ta mémoire et ton journal) n'exige
+  et une origine valide. Depuis la page on peut **parler** à Monika (bloc *Conversation*) mais pas
+  lui envoyer de commande : une ligne qui commence par `/` reste un simple message, elle n'est
+  interprétée qu'au terminal. La lecture de l'état (`GET /api/status`, qui contient ta mémoire et ton journal) n'exige
   pas de jeton : elle n'est protégée que par l'écoute sur `127.0.0.1` et le contrôle de `Host` ; tout
   programme de cette machine peut donc la lire.
 - **WebGL** est nécessaire dans le navigateur ; sans lui, la page l'indique et le tableau de bord

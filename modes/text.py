@@ -37,9 +37,10 @@ class TextSession:
     def __init__(self, agent: Agent, read_line: Callable[[], Awaitable[str]],
                  out=None, masker: Masker | None = None, banner: str | None = None,
                  speaker=None, speech_max_chars: int = 200, hub=None,
-                 action_director=None, tasks=None) -> None:
+                 action_director=None, tasks=None, chat=None) -> None:
         self._agent = agent
         self._tasks = tasks  # agent.tasks.TaskStore (None = scheduled tasks disabled)
+        self._chat = chat    # web.chat.ChatView: the same turn, mirrored in the page (optional)
         self._turn_lock = asyncio.Lock()  # One turn at a time: a reminder waits for the answer
         self._hub = hub  # Live state for the web page (optional)
         self._action_director = action_director  # Post-turn avatar chain (optional, cosmetic)
@@ -466,14 +467,14 @@ class TextSession:
         text = self._masker.mask_text(" ".join(text.split()))
         return text if len(text) <= limit else text[: limit - 1] + "…"
 
-    async def reply(self, user_text: str) -> None:
+    async def reply(self, user_text: str, *, source: str = "user") -> None:
         """Run one turn at a time; a scheduled reminder waits for the answer in progress."""
         async with self._turn_lock:
-            await self._reply(user_text)
+            await self._reply(user_text, source=source)
 
     async def run_task(self, prompt: str) -> None:
         """Entry point of the scheduler in a local session: the reminder is an ordinary turn."""
-        await self.reply(prompt)
+        await self.reply(prompt, source="auto")
 
     async def stop_all(self, *, turn: bool = False) -> list[str]:
         """Stop everything running beside the keyboard; returns what was stopped, for the user.
@@ -498,9 +499,11 @@ class TextSession:
     def _stops(stopped: list[str]) -> str:
         return "Arrêté : " + ", ".join(stopped) + "." if stopped else "Rien ne tournait."
 
-    async def _reply(self, user_text: str) -> None:
+    async def _reply(self, user_text: str, *, source: str = "user") -> None:
         """Run one turn; on failure or Ctrl+C the agent has already tidied its history."""
         self._cancel_action_tasks()  # A chain decided for the previous answer must not land in this one
+        if self._chat is not None:
+            self._chat.begin(user_text, source=source)
         self._write("\n")
         need_prefix = True  # The "Monika ›" prefix is written only when text actually arrives
         if self._speaker is not None:
@@ -515,6 +518,8 @@ class TextSession:
                 if splitter is not None and not isinstance(event, (TextDelta, AvatarCue)):
                     self._speak(splitter.flush())  # Text before a tool call or the end is said now
                     self._speaker.flush_block()
+                if isinstance(event, TextDelta) and self._chat is not None:
+                    self._chat.delta(event.text)
                 if isinstance(event, TextDelta):
                     if need_prefix:
                         self._newline()
@@ -554,10 +559,14 @@ class TextSession:
                     self._write("\n\n")
                     if self._hub is not None:
                         self._hub.activity("turn")
+                    if self._chat is not None:
+                        self._chat.end("".join(reply_parts))
                     self._spawn_action_chain(user_text, "".join(reply_parts))
         except LLMError as exc:
             self._newline()
             self._write(f"[erreur] {exc}\n\n")
+            if self._chat is not None:
+                self._chat.end("".join(reply_parts), error=str(exc))
         except asyncio.CancelledError:
             # Ctrl+C: asyncio.run cancels the main task; swallow it to keep the session alive
             task = asyncio.current_task()
@@ -566,10 +575,14 @@ class TextSession:
             self._newline()
             stopped = await self.stop_all(turn=True)  # Ctrl+C stops everything, not only the reply
             self._write("[interrompu]\n\n")
+            if self._chat is not None:
+                self._chat.end("".join(reply_parts), error="interrompu")
             background = [s for s in stopped if s != "réponse"]
             if background:  # Only when something else was running: stay quiet in the common case
                 self._write(f"  (aussi arrêté : {', '.join(background)})\n\n")
         finally:
+            if self._chat is not None and self._chat.busy:
+                self._chat.end("".join(reply_parts))  # An unexpected error must not leave the page busy
             if self._speaker is not None:
                 self._speaker.end_block()  # Speak what is still buffered, then back to sentence mode
             if self._hub is not None:
