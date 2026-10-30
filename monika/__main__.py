@@ -25,7 +25,7 @@ from memory.capture import MemoryCapture
 from memory.fast import FastMemory, MemoryUnavailable
 from rag.service import RagError, RagService
 from tools.internal import (register_document_tools, register_memory_tools,
-                                   register_result_reader)
+                                   register_result_reader, register_task_tools)
 from tools.registry import ToolRegistry
 
 console = Console()
@@ -94,6 +94,26 @@ def load_rag(settings: Settings, paths: Paths, ignore_fingerprint: bool = False)
     except RagError as exc:
         console.print(f"[red]{exc}[/red]\nDémarrage sans index de documents.")
         return None
+
+
+def load_tasks(settings: Settings, paths: Paths, masker: Masker):
+    """Open the scheduled tasks (JSON, 0600), or explain why reminders stay off. Never stops the chat."""
+    if not settings.tasks_enabled:
+        console.print("[dim]Tâches planifiées désactivées (TASKS_ENABLED=false).[/dim]")
+        return None
+    from agent.tasks import TaskStore
+
+    store = TaskStore(paths.tasks_file, masker, settings.tasks_max)
+    tasks = store.all()
+    if not tasks:
+        console.print("[dim]Aucune tâche planifiée (/rappel pour en créer une).[/dim]")
+        return store
+    console.print(f"[green]✓[/green] Tâches planifiées : {len(tasks)} ; "
+                  f"prochaine {tasks[0].describe().strip()}")
+    late = store.due()
+    if late:
+        console.print(f"[yellow]{len(late)} tâche(s) en retard : déclenchée(s) au démarrage.")
+    return store
 
 
 async def run_rag_command(settings: Settings, paths: Paths, args: argparse.Namespace) -> int:
@@ -417,6 +437,7 @@ async def _run_chat(settings: Settings, paths: Paths, masker: Masker, voice: boo
     store = ToolOutputStore(paths.tool_results, settings.tool_result_max_chars)
     store.purge(settings.tool_results_keep_days)
     sessions = load_sessions(settings, paths, masker, voice)
+    tasks = load_tasks(settings, paths, masker)
     memory = await load_fast_memory(settings, paths)
     capture = None
     if memory and settings.memory_capture_enabled:
@@ -427,11 +448,14 @@ async def _run_chat(settings: Settings, paths: Paths, masker: Masker, voice: boo
     speaker = await start_speech(settings, paths, voice, on_level=hub.on_level if hub else None)
     health.listener = listener
     health.speaker = speaker
+    scheduler = None
     try:
         async with open_tools(settings, paths, masker, lambda manager: setattr(health, "mcp", manager)) \
                 as registry:
             if memory:
                 register_memory_tools(registry, memory)
+            if tasks:
+                register_task_tools(registry, tasks)
             if rag:
                 register_document_tools(registry, rag)
                 if rag._store.manifest.counts()["indexed"] == 0:
@@ -451,7 +475,7 @@ async def _run_chat(settings: Settings, paths: Paths, masker: Masker, voice: boo
                 web[1].agent = agent
             session_kwargs = dict(masker=masker, speaker=speaker,
                                   speech_max_chars=settings.tts_max_sentence_chars, hub=hub,
-                                  action_director=action_director)
+                                  action_director=action_director, tasks=tasks)
             if listener is not None:
                 from modes.voice import BANNER, BANNER_SPOKEN, VoiceReader
 
@@ -466,7 +490,6 @@ async def _run_chat(settings: Settings, paths: Paths, masker: Masker, voice: boo
                 session = TextSession(agent, no_input, **session_kwargs)
             else:
                 from prompt_toolkit import PromptSession
-                from prompt_toolkit.patch_stdout import patch_stdout
 
                 prompt = PromptSession()
 
@@ -474,17 +497,29 @@ async def _run_chat(settings: Settings, paths: Paths, masker: Masker, voice: boo
                     return await prompt.prompt_async("Toi › ")
 
                 session = TextSession(agent, read_line, **session_kwargs)
-                with patch_stdout():
-                    await session.run()
+            if tasks is not None:  # Before the chat starts: a missed reminder fires right away
+                from agent.tasks import Scheduler
+
+                scheduler = Scheduler(tasks, server.fire_task if server is not None else session.run_task)
+                scheduler.start()
             if server is not None:
                 try:
                     await server.serve(session=session, hub=hub, speaker=speaker,
                                        voice_factory=lambda: start_voice(settings, paths))
                 finally:
+                    if scheduler is not None:
+                        await scheduler.stop()
                     await session.close()
             elif listener is not None:
                 await session.run()
+            else:
+                from prompt_toolkit.patch_stdout import patch_stdout
+
+                with patch_stdout():
+                    await session.run()
     finally:
+        if scheduler is not None:
+            await scheduler.stop()
         if web:
             await web[2].stop()
         if speaker is not None:

@@ -23,8 +23,10 @@ HELP = (
     "/sessions (sessions enregistrées ; « /reprendre ID », « /chercher MOT », "
     "« /session oublier ID »), "
     "/indexer [dossier] (indexe tes documents), /documents (état de l'index), "
+    "/rappel QUAND : TEXTE (dans 20 minutes, demain 8h, toutes les 2 heures), "
+    "/taches (tâches planifiées ; « /tache annuler ID »), /stop (arrête tout ce qui tourne), "
     "/effacer (oublie la conversation en cours), /quitter (ou Ctrl+D). "
-    "Ctrl+C interrompt une réponse en cours."
+    "Ctrl+C interrompt la réponse et arrête ce qui tourne en arrière-plan."
 )
 
 
@@ -34,8 +36,10 @@ class TextSession:
     def __init__(self, agent: Agent, read_line: Callable[[], Awaitable[str]],
                  out=None, masker: Masker | None = None, banner: str | None = None,
                  speaker=None, speech_max_chars: int = 200, hub=None,
-                 action_director=None) -> None:
+                 action_director=None, tasks=None) -> None:
         self._agent = agent
+        self._tasks = tasks  # agent.tasks.TaskStore (None = scheduled tasks disabled)
+        self._turn_lock = asyncio.Lock()  # One turn at a time: a reminder waits for the answer
         self._hub = hub  # Live state for the web page (optional)
         self._action_director = action_director  # Post-turn avatar chain (optional, cosmetic)
         self._action_tasks: set[asyncio.Task] = set()
@@ -108,6 +112,14 @@ class TextSession:
             self._start_indexing(line[len("/indexer"):].strip())
         elif line == "/documents":
             await self._show_documents()
+        elif line == "/stop":
+            self._write(self._stops(await self.stop_all()) + "\n")
+        elif line == "/taches":
+            self._tasks_list()
+        elif line == "/tache" or line.startswith("/tache "):
+            self._task_cancel(line[len("/tache"):].strip())
+        elif line.startswith("/rappel"):
+            self._remind(line[len("/rappel"):].strip())
         elif line.startswith("/oublier"):
             await self._forget(line[len("/oublier"):].strip())
         elif line.startswith("/"):
@@ -176,6 +188,60 @@ class TextSession:
             self._write("Index de documents désactivé ou indisponible.\n")
         else:
             self._write(await rag.status_text() + "\n")
+
+    # ------------------------------------------------------------------ scheduled tasks
+    def _remind(self, rest: str) -> None:
+        """`/rappel QUAND : TEXTE`, without the model (the tool does the same from a sentence)."""
+        if self._tasks is None:
+            self._write("Tâches planifiées désactivées (TASKS_ENABLED=false).\n")
+            return
+        if " : " in rest:
+            quand, texte = rest.rsplit(" : ", 1)
+        elif ":" in rest:
+            quand, texte = rest.rsplit(":", 1)
+        else:
+            quand, texte = "", ""
+        if not quand.strip() or not texte.strip():
+            self._write("Usage : /rappel QUAND : TEXTE — par exemple « /rappel dans 20 minutes : "
+                        "boire de l'eau » ou « /rappel toutes les 2 heures : boire de l'eau ».\n")
+            return
+        from agent.tasks import TasksError, parse_when
+
+        try:
+            when = parse_when(quand)
+            task = self._tasks.add(texte, when)
+        except TasksError as exc:
+            self._write(f"{exc}\n")
+            return
+        self._write(f"Tâche {task.id} : {when.says} — « {task.prompt} ».\n")
+
+    def _tasks_list(self) -> None:
+        if self._tasks is None:
+            self._write("Tâches planifiées désactivées (TASKS_ENABLED=false).\n")
+            return
+        tasks = self._tasks.all()
+        if not tasks:
+            self._write("Aucune tâche planifiée. /rappel dans 20 minutes : boire de l'eau\n")
+            return
+        self._write(f"Tâches planifiées ({len(tasks)}) :\n")
+        for task in tasks:
+            self._write(task.describe() + "\n")
+        self._write("/tache annuler ID pour en supprimer une.\n")
+
+    def _task_cancel(self, rest: str) -> None:
+        if self._tasks is None:
+            self._write("Tâches planifiées désactivées (TASKS_ENABLED=false).\n")
+            return
+        if rest.startswith("annuler"):
+            rest = rest[len("annuler"):].strip()
+        if not rest:
+            self._write("Usage : /tache annuler ID (les ids sont dans /taches).\n")
+            return
+        task = self._tasks.cancel(rest)
+        if task is None:
+            self._write(f"Aucune tâche avec l'id {rest}.\n")
+        else:
+            self._write(f"Tâche {task.id} supprimée : « {task.prompt} ».\n")
 
     @staticmethod
     def _date(stamp: str) -> str:
@@ -398,6 +464,38 @@ class TextSession:
         return text if len(text) <= limit else text[: limit - 1] + "…"
 
     async def reply(self, user_text: str) -> None:
+        """Run one turn at a time; a scheduled reminder waits for the answer in progress."""
+        async with self._turn_lock:
+            await self._reply(user_text)
+
+    async def run_task(self, prompt: str) -> None:
+        """Entry point of the scheduler in a local session: the reminder is an ordinary turn."""
+        await self.reply(prompt)
+
+    async def stop_all(self, *, turn: bool = False) -> list[str]:
+        """Stop everything running beside the keyboard; returns what was stopped, for the user.
+
+        The memory captures already queued are not cancelled: they go on to their end. Nothing here
+        raises: an interruption must always leave a usable session.
+        """
+        stopped = ["réponse"] if turn else []
+        self._cancel_action_tasks()
+        if self._speaker is not None and self._speaker.busy:
+            await self._speaker.cancel()
+            stopped.append("voix")
+        rag = getattr(self._agent, "rag", None)
+        if rag is not None and rag.running:
+            await rag.stop_sync()
+            stopped.append("indexation")
+        if self._hub is not None:
+            self._hub.set_state("idle")
+        return stopped
+
+    @staticmethod
+    def _stops(stopped: list[str]) -> str:
+        return "Arrêté : " + ", ".join(stopped) + "." if stopped else "Rien ne tournait."
+
+    async def _reply(self, user_text: str) -> None:
         """Run one turn; on failure or Ctrl+C the agent has already tidied its history."""
         self._cancel_action_tasks()  # A chain decided for the previous answer must not land in this one
         self._write("\n")
@@ -463,9 +561,11 @@ class TextSession:
             if task is not None and task.cancelling():
                 task.uncancel()
             self._newline()
+            stopped = await self.stop_all(turn=True)  # Ctrl+C stops everything, not only the reply
             self._write("[interrompu]\n\n")
-            if self._speaker is not None:
-                await self._speaker.cancel()  # Ctrl+C also cuts the voice
+            background = [s for s in stopped if s != "réponse"]
+            if background:  # Only when something else was running: stay quiet in the common case
+                self._write(f"  (aussi arrêté : {', '.join(background)})\n\n")
         finally:
             if self._speaker is not None:
                 self._speaker.end_block()  # Speak what is still buffered, then back to sentence mode

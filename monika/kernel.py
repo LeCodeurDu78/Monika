@@ -15,6 +15,7 @@ Protocol (one line = one JSON object)
     kernel -> client   {"type": "hello", "voice": bool}
                        {"type": "out", "text": "..."}  text to display, as it is produced
                        {"type": "turn_end"}            the turn (or the command) is over
+                       {"type": "stopped", "text": "…"}  a `/stop` was honoured: what was stopped
                        {"type": "busy"}                another turn is running
                        {"type": "error", "text": "..."}
                        {"type": "info", "text": "..."}
@@ -214,7 +215,15 @@ class KernelServer:
                 if not isinstance(message, dict):
                     self._send(writer, {"type": "error", "text": "Message inattendu."})
                     continue
-                await self._dispatch(writer, message)
+                try:
+                    await self._dispatch(writer, message)
+                except (ConnectionError, asyncio.CancelledError):
+                    raise
+                except Exception as exc:  # noqa: BLE001 - a client message must not drop the client
+                    log.warning("requête %r en échec (%s: %s)", message.get("op"),
+                                type(exc).__name__, exc)
+                    self._send(writer, {"type": "error",
+                                        "text": f"Requête impossible : {type(exc).__name__}: {exc}"})
         except (ConnectionError, asyncio.IncompleteReadError):
             pass
         except asyncio.CancelledError:
@@ -242,9 +251,13 @@ class KernelServer:
     async def _dispatch(self, writer: asyncio.StreamWriter, message: dict[str, Any]) -> None:
         op = message.get("op")
         if op == "line":
-            self._run_line(writer, str(message.get("text", "")))
+            text = str(message.get("text", ""))
+            if text.strip() == "/stop":  # Works even while a turn runs: that is the point
+                await self.stop_everything(writer)
+            else:
+                self._run_line(writer, text)
         elif op == "cancel":
-            self.cancel()
+            await self.stop_everything()
         elif op == "voice":
             await self._set_voice(writer, bool(message.get("on")))
         elif op == "ping":
@@ -304,6 +317,31 @@ class KernelServer:
         """Cut the running turn; the same path as Ctrl+C in the local session."""
         if self._turn_task is not None and not self._turn_task.done():
             self._turn_task.cancel()
+
+    async def stop_everything(self, writer: asyncio.StreamWriter | None = None) -> list[str]:
+        """Ctrl+C, `cancel` and `/stop`: the turn, the voice, the indexing.
+
+        With a writer (an explicit `/stop`), the report goes back to the client that asked. Without
+        one (Ctrl+C, which already printed « [interrompu] »), nothing is added: a silent stop.
+        """
+        had_turn = self._turn_task is not None and not self._turn_task.done()
+        self.cancel()
+        if self._turn_task is not None:
+            await asyncio.gather(self._turn_task, return_exceptions=True)
+        stopped = await self.session.stop_all(turn=had_turn) if self.session is not None else []
+        if writer is not None:
+            report = "Arrêté : " + ", ".join(stopped) + "." if stopped else "Rien ne tournait."
+            # `stopped` closes the request: the client gets its report and its prompt back
+            self._send(writer, {"type": "stopped", "text": report})
+        return stopped
+
+    async def fire_task(self, prompt: str) -> None:
+        """A scheduled task is a turn like any other: it waits for the current answer, then speaks."""
+        while self._turn_task is not None and not self._turn_task.done():
+            await asyncio.gather(self._turn_task, return_exceptions=True)
+        task = self._start_turn(prompt)
+        if task is not None:
+            await asyncio.gather(task, return_exceptions=True)
 
     # ------------------------------------------------------------------ voice
     async def _set_voice(self, writer: asyncio.StreamWriter, on: bool) -> None:

@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from agent.context import ToolOutputStore
+from agent.tasks import TaskStore, TasksError, parse_when
 from memory.fast import FastMemory, MemoryUnavailable
 from rag.service import RagError, RagService
 from tools.registry import Tool, ToolFailure, ToolRegistry
@@ -121,6 +122,59 @@ def register_memory_tools(registry: ToolRegistry, memory: FastMemory) -> None:
     ):
         registry.register(Tool(name=name, description=description, parameters=params,
                                handler=_guarded(fn), source="mémoire"))
+
+
+def register_task_tools(registry: ToolRegistry, store: TaskStore) -> None:
+    """Expose the scheduled tasks: the assistant can set a reminder when the user asks for one."""
+
+    async def planifier(args: dict[str, Any]) -> str:
+        texte = str(args.get("texte", "")).strip()
+        quand = str(args.get("quand", "")).strip()
+        try:
+            when = parse_when(quand)
+            task = store.add(texte, when)
+        except TasksError as exc:
+            raise ToolFailure(str(exc)) from exc
+        repeat = " (elle se répétera)" if task.recurring else ""
+        return f"Tâche {task.id} créée : {when.says} — « {task.prompt} »{repeat}."
+
+    async def lister(args: dict[str, Any]) -> str:
+        tasks = store.all()
+        if not tasks:
+            return "Aucune tâche planifiée."
+        return "\n".join([f"{len(tasks)} tâche(s) planifiée(s) :"] + [t.describe() for t in tasks])
+
+    async def annuler(args: dict[str, Any]) -> str:
+        task_id = str(args.get("id", "")).strip()
+        if not task_id:
+            raise ToolFailure("« id » est vide : utilise taches_lister pour obtenir l'id.")
+        task = store.cancel(task_id)
+        if task is None:
+            raise ToolFailure(f"Aucune tâche avec l'id {task_id}.")
+        return f"Tâche {task.id} supprimée : « {task.prompt} »."
+
+    def obj(props: dict[str, Any], required: list[str]) -> dict[str, Any]:
+        return {"type": "object", "properties": props, "required": required}
+
+    for name, description, params, fn in (
+        ("taches_planifier",
+         "Crée un rappel ou une tâche récurrente qui se déclenchera plus tard, même sans conversation "
+         "en cours : à ce moment-là, tu recevras le texte comme une consigne et tu répondras. À "
+         "utiliser quand l'utilisateur dit « rappelle-moi… », « préviens-moi… », « tous les matins… ».",
+         obj({"quand": {"type": "string",
+                       "description": "« dans 20 minutes », « 18h30 », « demain 8h », "
+                                      "« toutes les 2 heures », « tous les 3 jours »"},
+              "texte": {"type": "string",
+                        "description": "Ce que tu devras faire ou dire à ce moment-là, à la 2e personne"}},
+             ["quand", "texte"]),
+         planifier),
+        ("taches_lister", "Liste les rappels et tâches récurrentes programmés, avec leur date et leur id.",
+         obj({}, []), lister),
+        ("taches_annuler", "Supprime une tâche planifiée à partir de son id (obtenu via taches_lister).",
+         obj({"id": {"type": "string"}}, ["id"]), annuler),
+    ):
+        registry.register(Tool(name=name, description=description, parameters=params,
+                               handler=fn, source="tâches"))
 
 
 def register_document_tools(registry: ToolRegistry, rag: RagService) -> None:

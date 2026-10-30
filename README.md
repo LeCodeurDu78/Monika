@@ -19,15 +19,16 @@ Tout est stocké chez toi ; seul le fournisseur LLM que tu configures reçoit te
 7. [Agent, contexte et prompt](#agent-contexte-et-prompt)
 8. [Sessions et reprise](#sessions-et-reprise)
 9. [Noyau persistant](#noyau-persistant)
-10. [Mémoire rapide](#mémoire-rapide)
-11. [Documents personnels (RAG)](#documents-personnels-rag)
-12. [Voix : écoute et parole](#voix--écoute-et-parole)
-13. [Avatar et tableau de bord](#avatar-et-tableau-de-bord)
-14. [Personnage : émotions, relation et journal](#personnage--émotions-relation-et-journal)
-15. [Mots sensibles](#mots-sensibles)
-16. [Données, vie privée et sécurité](#données-vie-privée-et-sécurité)
-17. [Tests](#tests)
-18. [Dépannage](#dépannage)
+10. [Tâches planifiées](#tâches-planifiées)
+11. [Mémoire rapide](#mémoire-rapide)
+12. [Documents personnels (RAG)](#documents-personnels-rag)
+13. [Voix : écoute et parole](#voix--écoute-et-parole)
+14. [Avatar et tableau de bord](#avatar-et-tableau-de-bord)
+15. [Personnage : émotions, relation et journal](#personnage--émotions-relation-et-journal)
+16. [Mots sensibles](#mots-sensibles)
+17. [Données, vie privée et sécurité](#données-vie-privée-et-sécurité)
+18. [Tests](#tests)
+19. [Dépannage](#dépannage)
 
 ## Prérequis
 
@@ -62,7 +63,8 @@ Le mode voix demande une installation supplémentaire, décrite dans [Voix](#voi
 monika/        Point d'entrée (python -m monika), configuration (config.py), chemins (paths.py), embeddings.py,
                noyau persistant (kernel.py) et son client terminal (client.py)
 agent/         Boucle ReAct (loop.py), client LLM (llm.py), contexte (context.py), prompt (prompt.py),
-               sessions persistantes (sessions.py), détection de boucle, phrases d'attente, infos système
+               sessions persistantes (sessions.py), tâches planifiées (tasks.py), détection de boucle,
+               phrases d'attente, infos système
 tools/         Registre d'outils audité (registry.py), client MCP (mcp_client.py), outils internes (internal.py)
 security/      Masquage des secrets (masking.py), enveloppe « données, pas ordres » (untrusted.py), audit (audit.py)
 memory/        Mémoire rapide : mem0 + Qdrant (fast.py) et capture en arrière-plan (capture.py)
@@ -109,10 +111,14 @@ Les paquets (`agent/`, `rag/`, `web/`…) sont à la racine du projet : lance to
 | `/chercher MOT …` | Cherche dans les tours enregistrés (plein texte) |
 | `/session oublier ID` | Supprime une session, ses tours et ses appels d'outils |
 | `/indexer [dossier]`, `/documents` | Lance l'indexation en arrière-plan ; état de l'index |
+| `/rappel QUAND : TEXTE` | Programme un rappel (« /rappel dans 20 minutes : boire de l'eau ») |
+| `/taches`, `/tache annuler ID` | Les tâches planifiées ; en supprime une |
+| `/stop` | Arrête tout ce qui tourne (réponse, voix, indexation) et dit quoi |
 | `/effacer` | Oublie la conversation en cours (et son résumé) |
 | `/quitter` (ou `/q`, Ctrl+D) | Quitte |
 
-Ctrl+C interrompt la réponse en cours.
+Ctrl+C interrompt la réponse en cours **et** arrête ce qui tourne en arrière-plan (voix,
+indexation) ; les captures mémoire déjà lancées vont jusqu'au bout.
 
 ## Configuration
 
@@ -131,6 +137,7 @@ valeurs par défaut du code). Les plus utiles :
 | `CONTEXT_BUDGET_TOKENS` | Seuil de résumé automatique (défaut 150 000) |
 | `SESSIONS_ENABLED`, `SESSIONS_KEEP_DAYS` | Historique des conversations sur disque (désactivé par défaut ; rétention 30 jours) |
 | `KERNEL_ENABLED`, `KERNEL_SOCKET` | Noyau persistant et son chemin de socket (désactivé par défaut) |
+| `TASKS_ENABLED`, `TASKS_MAX` | Rappels et tâches récurrentes (désactivé par défaut, 50 tâches max) |
 | `FAST_MEMORY_ENABLED`, `MEMORY_CAPTURE_ENABLED` | Mémoire rapide et capture automatique |
 | `RAG_ENABLED`, `RAG_ROOTS`, `RAG_EXCLUDE`, `RAG_MIN_SCORE` | Documents personnels (dont le seuil de pertinence) |
 | `STT_MODEL`, `TTS_ENABLED` | Voix |
@@ -292,6 +299,34 @@ loginctl enable-linger "$USER"      # le noyau survit à la fermeture de session
 journalctl --user -u monika -f      # ses journaux
 python -m monika --attach           # depuis n'importe quel terminal
 ```
+
+## Tâches planifiées
+
+Avec `TASKS_ENABLED=true`, Monika se souvient de faire quelque chose plus tard — et le fait
+elle-même : un rappel n'est pas une alarme, c'est un tour comme un autre, avec ses outils et sa
+voix.
+
+```
+/rappel dans 20 minutes : bois de l'eau
+/rappel demain 8h : regarde la météo et dis-moi quoi mettre
+/rappel toutes les 2 heures : rappelle-moi de faire une pause
+```
+
+- **Ce qu'elle accepte** : `dans N minutes|heures|jours`, une heure (`18h30`, `08:05` — demain si
+  elle est déjà passée), `demain 8h`, et la répétition (`toutes les 2 heures`, `tous les 3 jours`,
+  `chaque 30 minutes`). Le langage naturel marche aussi : « rappelle-moi dans deux heures de
+  sortir les poubelles » passe par l'outil `taches_planifier`.
+- **Ce qu'elle fait à l'heure dite** : un tour complet, sans toi devant l'écran. La réponse
+  s'affiche dans **tous les terminaux attachés** (et se dit à voix haute si la voix est active),
+  et s'enregistre dans la session.
+- **Un processus doit tourner** : le noyau (`--serve`) de préférence, sinon le terminal ouvert.
+  Ce qui est arrivé pendant un arrêt se déclenche **au lancement suivant**, en disant son retard
+  (« rappel prévu à 8:00, il est 9:20 »). Un rappel qui revient toutes les heures ne rejoue pas
+  les heures manquées : il repart de maintenant.
+- **Tu gardes la main** : `/taches` liste (moment, répétition, id), `/tache annuler ID` supprime.
+  Une tâche n'est jamais créée sans toi : ni le modèle ni le code n'en inventent.
+- **Limites** : 50 tâches (`TASKS_MAX`), un texte de 500 caractères, et rien ne se déclenche
+  pendant qu'un tour est en cours — le rappel attend la fin de la réponse en cours.
 
 ## Mémoire rapide
 
@@ -725,6 +760,7 @@ Tout est stocké dans `~/.config/monika` (réglable via `MONIKA_HOME`, dossier e
 | `logs/` | `audit.jsonl` et journaux des serveurs MCP |
 | `sessions/` | Historique des conversations (`sessions.db`, SQLite + FTS5, en `0600`), résumable et supprimable |
 | `kernel.sock`, `kernel.lock` | La socket du noyau (`0600`, supprimée à l'arrêt) et le verrou d'instance unique |
+| `tasks.json` | Rappels et tâches récurrentes (JSON en `0600`, textes masqués avant écriture) |
 
 - **Journal d'audit** : `logs/audit.jsonl`, un JSON par ligne (outil, arguments, statut, durée),
   secrets masqués, fichier en `0600`.
@@ -747,7 +783,8 @@ Le dossier n'est **pas versionné** (il est dans `.gitignore`) : c'est la vérif
 changement, pas une dépendance du projet. Ce qui s'y teste sans rien charger : le nettoyage et le
 découpage du texte parlé (`voice/speech_text.py`), la table des émotions et tout ce qui en dérive
 (`character/emotion_spec.py`), le découpage et la recherche par mots-clés du RAG (`rag/chunking.py`,
-`rag/lexical.py`). Les moteurs qui demandent un modèle (mémoire, Whisper, voix GPT-SoVITS) ne sont pas
+`rag/lexical.py`), et les tâches planifiées (`agent/tasks.py` : lecture des horaires, stockage,
+planificateur, sans attendre ni appeler de modèle). Les moteurs qui demandent un modèle (mémoire, Whisper, voix GPT-SoVITS) ne sont pas
 testés ici : ils se voient au lancement, dans `--config` et dans la page de réglages.
 
 ## Dépannage
@@ -768,4 +805,6 @@ testés ici : ils se voient au lancement, dans `--config` et dans la page de ré
 | `Aucun noyau ne répond sur …` | `KERNEL_ENABLED=true` des deux côtés, puis `python -m monika --serve` (ou `systemctl --user status monika`) |
 | `Une autre instance Monika utilise déjà ce dossier` | Un noyau (ou une session) tourne déjà : `--attach` au lieu d'en démarrer une seconde |
 | `Le noyau est désactivé` | `KERNEL_ENABLED=false` : `--serve` et `--attach` demandent le drapeau, `--mode texte` reste le mode local |
+| Un rappel ne se déclenche pas | `TASKS_ENABLED=false`, ou aucun processus Monika ne tourne : `python -m monika --serve` (ou le terminal ouvert) ; `/taches` dit ce qui est prévu |
+| Un rappel arrive en retard | Il est tombé pendant un arrêt : la prochaine fois, laisse le noyau tourner (`systemctl --user enable --now monika`) |
 | Avatar absent | WebGL est requis dans le navigateur ; le tableau de bord marche sans |

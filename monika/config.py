@@ -107,6 +107,11 @@ class Settings(BaseSettings):
     kernel_enabled: bool = False
     kernel_socket: Path | None = None  # default: <KERNEL home>/kernel.sock
 
+    # Scheduled tasks: reminders and recurring jobs, fired by the running process (`/rappel`).
+    # They need a process to fire: the kernel ideally, otherwise the terminal that is open.
+    tasks_enabled: bool = False
+    tasks_max: int = Field(50, ge=1, le=500)
+
     # Fast memory (mem0 + local Qdrant): facts and preferences about the user
     fast_memory_enabled: bool = True
     embedding_model: str = "sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
@@ -413,7 +418,7 @@ RESTART_REQUIRED = frozenset({
     "action_llm_enabled", "action_llm_model",
     "tool_result_max_chars", "tool_results_keep_days", "audit_enabled", "audit_max_chars",
     "sessions_enabled", "sessions_keep_days",
-    "kernel_enabled",
+    "kernel_enabled", "tasks_enabled", "tasks_max",
     "log_level",
     "web_enabled", "web_port",
 })

@@ -75,6 +75,11 @@ class Paths:
         return self.sessions / "sessions.db"
 
     @property
+    def tasks_file(self) -> Path:
+        """Scheduled tasks (JSON, 0600): reminders and recurring jobs."""
+        return self.home / "tasks.json"
+
+    @property
     def kernel_lock(self) -> Path:
         """One kernel per data folder: memory and documents cannot be opened twice."""
         return self.home / "kernel.lock"
