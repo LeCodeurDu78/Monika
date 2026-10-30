@@ -164,7 +164,8 @@ def register_task_tools(registry: ToolRegistry, store: TaskStore) -> None:
          obj({"quand": {"type": "string",
                        "description": "« dans 20 minutes », « 18h30 », « demain 8h », "
                                       "« toutes les 2 heures », « tous les 3 jours », "
-                                      "« chaque jour à 8h », « chaque lundi à 9h »"},
+                                      "« chaque jour à 8h », « chaque lundi et jeudi à 9h », "
+                                      "« du lundi au vendredi à 9h »"},
               "texte": {"type": "string",
                         "description": "Ce que tu devras faire ou dire à ce moment-là, à la 2e personne"}},
              ["quand", "texte"]),

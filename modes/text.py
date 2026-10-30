@@ -24,7 +24,7 @@ HELP = (
     "« /session oublier ID »), "
     "/indexer [dossier] (indexe tes documents), /documents (état de l'index), "
     "/rappel QUAND : TEXTE (dans 20 minutes, demain 8h, toutes les 2 heures, chaque jour à 8h, "
-    "chaque lundi à 9h), "
+    "chaque lundi et jeudi à 9h), "
     "/taches (tâches planifiées ; « /tache annuler ID »), /stop (arrête tout ce qui tourne), "
     "/effacer (oublie la conversation en cours), /quitter (ou Ctrl+D). "
     "Ctrl+C interrompt la réponse et arrête ce qui tourne en arrière-plan."
@@ -205,8 +205,8 @@ class TextSession:
         if not quand.strip() or not texte.strip():
             self._write("Usage : /rappel QUAND : TEXTE — par exemple « /rappel dans 20 minutes : "
                         "boire de l'eau », « /rappel toutes les 2 heures : boire de l'eau » ou "
-                        "« /rappel chaque jour à 8h : la météo du jour » ou « /rappel chaque lundi "
-                        "à 9h : la revue de la semaine ».\n")
+                        "« /rappel chaque jour à 8h : la météo du jour » ou « /rappel du lundi au "
+                        "vendredi à 9h : la revue du matin ».\n")
             return
         from agent.tasks import TasksError, parse_when
 
