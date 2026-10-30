@@ -163,7 +163,8 @@ def register_task_tools(registry: ToolRegistry, store: TaskStore) -> None:
          "utiliser quand l'utilisateur dit « rappelle-moi… », « préviens-moi… », « tous les matins… ».",
          obj({"quand": {"type": "string",
                        "description": "« dans 20 minutes », « 18h30 », « demain 8h », "
-                                      "« toutes les 2 heures », « tous les 3 jours »"},
+                                      "« toutes les 2 heures », « tous les 3 jours », "
+                                      "« chaque jour à 8h »"},
               "texte": {"type": "string",
                         "description": "Ce que tu devras faire ou dire à ce moment-là, à la 2e personne"}},
              ["quand", "texte"]),
