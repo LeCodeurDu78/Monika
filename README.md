@@ -18,15 +18,16 @@ Tout est stocké chez toi ; seul le fournisseur LLM que tu configures reçoit te
 6. [Outils (serveurs MCP)](#outils-serveurs-mcp)
 7. [Agent, contexte et prompt](#agent-contexte-et-prompt)
 8. [Sessions et reprise](#sessions-et-reprise)
-9. [Mémoire rapide](#mémoire-rapide)
-10. [Documents personnels (RAG)](#documents-personnels-rag)
-11. [Voix : écoute et parole](#voix--écoute-et-parole)
-12. [Avatar et tableau de bord](#avatar-et-tableau-de-bord)
-13. [Personnage : émotions, relation et journal](#personnage--émotions-relation-et-journal)
-14. [Mots sensibles](#mots-sensibles)
-15. [Données, vie privée et sécurité](#données-vie-privée-et-sécurité)
-16. [Tests](#tests)
-17. [Dépannage](#dépannage)
+9. [Noyau persistant](#noyau-persistant)
+10. [Mémoire rapide](#mémoire-rapide)
+11. [Documents personnels (RAG)](#documents-personnels-rag)
+12. [Voix : écoute et parole](#voix--écoute-et-parole)
+13. [Avatar et tableau de bord](#avatar-et-tableau-de-bord)
+14. [Personnage : émotions, relation et journal](#personnage--émotions-relation-et-journal)
+15. [Mots sensibles](#mots-sensibles)
+16. [Données, vie privée et sécurité](#données-vie-privée-et-sécurité)
+17. [Tests](#tests)
+18. [Dépannage](#dépannage)
 
 ## Prérequis
 
@@ -58,7 +59,8 @@ Le mode voix demande une installation supplémentaire, décrite dans [Voix](#voi
 ## Structure du projet
 
 ```
-monika/        Point d'entrée (python -m monika), configuration (config.py), chemins (paths.py), embeddings.py
+monika/        Point d'entrée (python -m monika), configuration (config.py), chemins (paths.py), embeddings.py,
+               noyau persistant (kernel.py) et son client terminal (client.py)
 agent/         Boucle ReAct (loop.py), client LLM (llm.py), contexte (context.py), prompt (prompt.py),
                sessions persistantes (sessions.py), détection de boucle, phrases d'attente, infos système
 tools/         Registre d'outils audité (registry.py), client MCP (mcp_client.py), outils internes (internal.py)
@@ -84,6 +86,8 @@ Les paquets (`agent/`, `rag/`, `web/`…) sont à la racine du projet : lance to
 | `./lancer-monika.sh` | Démarre la voix GPT-SoVITS si besoin, vérifie qu'elle répond, puis lance Monika (mêmes options que ci-dessous) |
 | `python -m monika --mode texte` | Discussion dans le terminal, réponses en streaming |
 | `python -m monika --mode voix` | Conversation à voix haute (réponses aussi à l'écran) |
+| `python -m monika --serve` | Lance le noyau persistant (mémoire, documents, outils, page, voix) et le laisse tourner |
+| `python -m monika --attach` | Ce terminal devient client du noyau (`--mode voix` : lui demande le micro) |
 | `python -m monika --config` | Affiche la configuration chargée (secrets masqués) |
 | `python -m monika --tools` | Liste les serveurs MCP et leurs outils |
 | `python -m monika --call NOM '{"arg": 1}'` | Appelle un outil à la main |
@@ -126,6 +130,7 @@ valeurs par défaut du code). Les plus utiles :
 | `ACTION_LLM_ENABLED`, `ACTION_LLM_MODEL` | Rôle action : chaîne de gestes de l'avatar après la réponse (désactivé par défaut) |
 | `CONTEXT_BUDGET_TOKENS` | Seuil de résumé automatique (défaut 150 000) |
 | `SESSIONS_ENABLED`, `SESSIONS_KEEP_DAYS` | Historique des conversations sur disque (désactivé par défaut ; rétention 30 jours) |
+| `KERNEL_ENABLED`, `KERNEL_SOCKET` | Noyau persistant et son chemin de socket (désactivé par défaut) |
 | `FAST_MEMORY_ENABLED`, `MEMORY_CAPTURE_ENABLED` | Mémoire rapide et capture automatique |
 | `RAG_ENABLED`, `RAG_ROOTS`, `RAG_EXCLUDE`, `RAG_MIN_SCORE` | Documents personnels (dont le seuil de pertinence) |
 | `STT_MODEL`, `TTS_ENABLED` | Voix |
@@ -237,6 +242,56 @@ dans un message ou un argument d'outil n'arrive jamais sur le disque.
 - **Limite** : l'historique complet est réécrit à chaque tour (quelques centaines de kilo-octets sur
   une très longue session) ; l'écriture est atomique par transaction, et un échec de la base est
   journalisé sans jamais interrompre la conversation.
+
+## Noyau persistant
+
+Par défaut, `python -m monika` fait tout dans un seul terminal : mémoire, documents, outils, page et
+voix vivent et meurent avec lui. Le noyau renverse ça : **un** processus possède les données et les
+outils, et le terminal s'y rattache. Tu peux fermer le terminal, rouvrir une autre session, la
+conversation est toujours là, la mémoire et l'index ne sont chargés qu'une fois.
+
+```bash
+python -m monika --serve                # le noyau (à laisser tourner)
+python -m monika --attach               # ce terminal devient son client
+python -m monika --attach --mode voix   # ce client demande le micro au noyau
+```
+
+- **Activation** : `KERNEL_ENABLED=true` (désactivé par défaut) dans `.env` ou dans `/settings`,
+  puis redémarrage. Sans le drapeau, tout se comporte exactement comme avant ; avec lui,
+  `python -m monika --mode texte` s'attache au noyau s'il en trouve un, sinon démarre en local en
+  le disant.
+- **Deux cerveaux interdits** : un verrou (`MONIKA_HOME/kernel.lock`) empêche deux instances
+  d'ouvrir le même dossier de données (Qdrant local ne supporte pas deux processus). La seconde
+  s'arrête avec un message qui renvoie vers `--attach`.
+- **Connexion** : socket Unix `MONIKA_HOME/kernel.sock` en `0600` (chemin réglable par
+  `KERNEL_SOCKET`), messages JSON par ligne, UID du pair vérifié. Rien n'écoute sur le réseau.
+- **Un tour à la fois** : un client qui écrit pendant qu'une réponse défile reçoit « occupée » ;
+  deux terminaux ne mélangent jamais leur historique. Chaque client ne reçoit que ses propres
+  réponses.
+- **Ctrl+C** : coupe la réponse en cours, la session continue (même règle qu'en local).
+  `/quitter` (ou Ctrl+D) **détache le terminal** : le noyau et la conversation continuent.
+- **La voix à la demande** : en `--serve`, le micro n'est ouvert que si un client le demande.
+  Charger Whisper prend plusieurs secondes, inutile pour un terminal texte. En mode voix client,
+  Ctrl+C coupe sa parole et `/quitter` + Entrée détache.
+- **Commandes** : elles passent par le noyau (`/sessions`, `/reprendre`, `/indexer`…). Ainsi
+  `/reprendre` change la conversation pour de bon, et le tableau de bord agit sur le même état.
+- **Arrêt propre** : SIGTERM ou Ctrl+C sur le noyau → la voix se tait, les clients reçoivent un
+  adieu, la socket est supprimée, la capture en cours est enregistrée, puis « À bientôt. ».
+- **Limite** : si un client se détache pendant une réponse, la réponse va jusqu'au bout (elle est
+  enregistrée et mémorisée) mais son texte n'est plus affiché nulle part.
+
+Pour le lancer au démarrage, avec ta session (la voix a besoin de PipeWire/PulseAudio) :
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp deploy/monika.service ~/.config/systemd/user/
+# adapte WorkingDirectory et ExecStart si le projet n'est pas dans ~/monika
+systemctl --user daemon-reload
+systemctl --user enable --now monika
+loginctl enable-linger "$USER"      # le noyau survit à la fermeture de session
+journalctl --user -u monika -f      # ses journaux
+python -m monika --attach           # depuis n'importe quel terminal
+```
 
 ## Mémoire rapide
 
@@ -669,6 +724,7 @@ Tout est stocké dans `~/.config/monika` (réglable via `MONIKA_HOME`, dossier e
 | `tool_results/` | Gros résultats d'outils (purgés après 14 jours) |
 | `logs/` | `audit.jsonl` et journaux des serveurs MCP |
 | `sessions/` | Historique des conversations (`sessions.db`, SQLite + FTS5, en `0600`), résumable et supprimable |
+| `kernel.sock`, `kernel.lock` | La socket du noyau (`0600`, supprimée à l'arrêt) et le verrou d'instance unique |
 
 - **Journal d'audit** : `logs/audit.jsonl`, un JSON par ligne (outil, arguments, statut, durée),
   secrets masqués, fichier en `0600`.
@@ -709,4 +765,7 @@ testés ici : ils se voient au lancement, dans `--config` et dans la page de ré
 | Index qui refuse de s'ouvrir | Modèle ou taille de passages changés : `python -m monika --rag-index --reset` |
 | Mémoire en erreur après changement de `EMBEDDING_MODEL` | Supprime `~/.config/monika/memory/qdrant` |
 | `/sessions` vide ou « sessions désactivées » | `SESSIONS_ENABLED=false` par défaut : l'activer dans `/settings` puis redémarrer |
+| `Aucun noyau ne répond sur …` | `KERNEL_ENABLED=true` des deux côtés, puis `python -m monika --serve` (ou `systemctl --user status monika`) |
+| `Une autre instance Monika utilise déjà ce dossier` | Un noyau (ou une session) tourne déjà : `--attach` au lieu d'en démarrer une seconde |
+| `Le noyau est désactivé` | `KERNEL_ENABLED=false` : `--serve` et `--attach` demandent le drapeau, `--mode texte` reste le mode local |
 | Avatar absent | WebGL est requis dans le navigateur ; le tableau de bord marche sans |

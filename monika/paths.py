@@ -21,6 +21,7 @@ class Paths:
     tool_results: Path
     sessions: Path
     mcp_config: Path
+    kernel_socket: Path
 
     @classmethod
     def from_settings(cls, settings: Settings) -> Paths:
@@ -35,6 +36,7 @@ class Paths:
             tool_results=home / "tool_results",
             sessions=home / "sessions",
             mcp_config=settings.mcp_servers_file or home / "mcp_servers.json",
+            kernel_socket=settings.kernel_socket or home / "kernel.sock",
         )
 
     @property
@@ -71,6 +73,11 @@ class Paths:
     def sessions_db(self) -> Path:
         """The conversation log (SQLite + FTS5), in 0600."""
         return self.sessions / "sessions.db"
+
+    @property
+    def kernel_lock(self) -> Path:
+        """One kernel per data folder: memory and documents cannot be opened twice."""
+        return self.home / "kernel.lock"
 
     def ensure(self) -> None:
         """Create all directories; the home itself is private to the user."""

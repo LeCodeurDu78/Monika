@@ -54,6 +54,10 @@ class TextSession:
         self._out.flush()
         self._at_line_start = text.endswith("\n")
 
+    def set_output(self, out) -> None:
+        """Send what the session displays somewhere else (the kernel's clients)."""
+        self._out = out
+
     async def run(self) -> None:
         self._write(f"{self._banner}\n" if self._banner else f"Monika est là. {HELP}\n")
         while True:
@@ -65,39 +69,55 @@ class TextSession:
                 continue
             if line in ("/quitter", "/q"):
                 break
-            if line == "/aide":
-                self._write(HELP + "\n")
-            elif line == "/effacer":
-                self._agent.clear()
-                self._write("Conversation effacée.\n")
-            elif line == "/sessions":
-                self._sessions()
-            elif line.startswith("/reprendre"):
-                self._resume(line[len("/reprendre"):].strip())
-            elif line.startswith("/chercher"):
-                self._search(line[len("/chercher"):].strip())
-            elif line == "/session" or line.startswith("/session "):
-                self._forget_session(line[len("/session"):].strip())
-            elif line == "/outils":
-                self._show_tools()
-            elif line == "/contexte":
-                self._show_context()
-            elif line == "/memoire":
-                await self._show_memory()
-            elif line.startswith("/journal"):
-                self._journal(line[len("/journal"):].strip())
-            elif line.startswith("/relation"):
-                self._relation(line[len("/relation"):].strip())
-            elif line.startswith("/indexer"):
-                self._start_indexing(line[len("/indexer"):].strip())
-            elif line == "/documents":
-                await self._show_documents()
-            elif line.startswith("/oublier"):
-                await self._forget(line[len("/oublier"):].strip())
-            elif line.startswith("/"):
-                self._write(f"Commande inconnue : {line}. {HELP}\n")
-            else:
-                await self.reply(line)
+            if await self.handle_command(line):
+                continue
+            await self.reply(line)
+        await self.close()
+
+    async def handle_command(self, line: str) -> bool:
+        """Run one /command; returns False when the line is a message for Monika.
+
+        The kernel uses this to serve the terminal and the page through the same code.
+        """
+        if line in ("/quitter", "/q"):
+            return True  # the caller decides how to leave (the local loop breaks)
+        if line == "/aide":
+            self._write(HELP + "\n")
+        elif line == "/effacer":
+            self._agent.clear()
+            self._write("Conversation effacée.\n")
+        elif line == "/sessions":
+            self._sessions()
+        elif line.startswith("/reprendre"):
+            self._resume(line[len("/reprendre"):].strip())
+        elif line.startswith("/chercher"):
+            self._search(line[len("/chercher"):].strip())
+        elif line == "/session" or line.startswith("/session "):
+            self._forget_session(line[len("/session"):].strip())
+        elif line == "/outils":
+            self._show_tools()
+        elif line == "/contexte":
+            self._show_context()
+        elif line == "/memoire":
+            await self._show_memory()
+        elif line.startswith("/journal"):
+            self._journal(line[len("/journal"):].strip())
+        elif line.startswith("/relation"):
+            self._relation(line[len("/relation"):].strip())
+        elif line.startswith("/indexer"):
+            self._start_indexing(line[len("/indexer"):].strip())
+        elif line == "/documents":
+            await self._show_documents()
+        elif line.startswith("/oublier"):
+            await self._forget(line[len("/oublier"):].strip())
+        elif line.startswith("/"):
+            self._write(f"Commande inconnue : {line}. {HELP}\n")
+        else:
+            return False
+        return True
+
+    async def close(self) -> None:
+        """Save what is left, say goodbye: run once, when the session really ends."""
         capture = self._agent.capture
         character = self._agent.character
         if character is not None:

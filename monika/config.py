@@ -101,6 +101,12 @@ class Settings(BaseSettings):
     sessions_enabled: bool = False
     sessions_keep_days: int = Field(30, ge=1)
 
+    # Persistent kernel: one process owns memory, documents, tools, the page and the voice, and the
+    # terminal becomes its client (`--serve`, `--attach`). Off by default: without it, `python -m monika`
+    # keeps working exactly as before.
+    kernel_enabled: bool = False
+    kernel_socket: Path | None = None  # default: <KERNEL home>/kernel.sock
+
     # Fast memory (mem0 + local Qdrant): facts and preferences about the user
     fast_memory_enabled: bool = True
     embedding_model: str = "sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
@@ -210,6 +216,14 @@ class Settings(BaseSettings):
     @classmethod
     def _expand_home(cls, value: Path) -> Path:
         return value.expanduser().resolve()
+
+    @field_validator("kernel_socket", mode="before")
+    @classmethod
+    def _expand_socket(cls, value: Any) -> Any:
+        # KERNEL_SOCKET= (empty) means the default path, not "." (which pydantic would make of "")
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return None
+        return Path(value).expanduser() if isinstance(value, str) else value.expanduser()
 
     @field_validator("persona_text")
     @classmethod
@@ -378,7 +392,7 @@ def get_settings() -> Settings:
 # Paths and secrets are edited by hand: writing one from the browser would turn the page into a way of
 # making Monika read arbitrary folders. OPENAI_API_KEY has its own one-line path below.
 NOT_EDITABLE = frozenset({"monika_home", "rag_roots", "mcp_servers_file", "openai_api_key",
-                          "tts_speakers_dir"})
+                          "tts_speakers_dir", "kernel_socket"})
 
 # Values a component reads once at startup (models, clients, devices, ports, index settings): saving them
 # works, but they only take effect after a restart and the page says so.
@@ -399,6 +413,7 @@ RESTART_REQUIRED = frozenset({
     "action_llm_enabled", "action_llm_model",
     "tool_result_max_chars", "tool_results_keep_days", "audit_enabled", "audit_max_chars",
     "sessions_enabled", "sessions_keep_days",
+    "kernel_enabled",
     "log_level",
     "web_enabled", "web_port",
 })

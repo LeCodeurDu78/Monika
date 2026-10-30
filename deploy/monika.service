@@ -1,0 +1,25 @@
+[Unit]
+Description=Monika, assistante IA personnelle locale (noyau persistant)
+Documentation=file://%h/monika/README.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Adapte ces deux chemins si le projet n'est pas dans ~/monika.
+WorkingDirectory=%h/monika
+ExecStart=%h/monika/.venv/bin/python -m monika --serve
+Environment=PYTHONUNBUFFERED=1
+
+# on-abnormal : une erreur de configuration (KERNEL_ENABLED=false, port pris, clé absente) sort en
+# code 1 et ne doit pas boucler ; un plantage ou un SIGKILL, si.
+Restart=on-abnormal
+RestartSec=5
+
+# SIGTERM : la voix se tait, la capture en cours est enregistrée, les clients reçoivent leur adieu
+# et la socket est retirée.
+KillSignal=SIGTERM
+TimeoutStopSec=40
+
+[Install]
+WantedBy=default.target

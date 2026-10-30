@@ -65,6 +65,7 @@ def show_config(settings: Settings, paths: Paths) -> None:
     env_state = "trouvé" if ENV_FILE.exists() else "absent (valeurs par défaut)"
     console.print(f"Fichier .env : {ENV_FILE} — {env_state}")
     console.print(f"Dossier de données : {paths.home}")
+    console.print(f"Socket du noyau : {paths.kernel_socket}")
 
 
 async def load_fast_memory(settings: Settings, paths: Paths) -> FastMemory | None:
@@ -379,8 +380,30 @@ async def start_web(settings: Settings, paths: Paths, voice: bool, health=None):
     return hub, dashboard, server
 
 
-async def run_chat(settings: Settings, paths: Paths, masker: Masker, voice: bool = False) -> int:
-    """Start the chat: keyboard (text mode) or microphone (voice mode), with tools, memory and documents."""
+async def run_chat(settings: Settings, paths: Paths, masker: Masker, voice: bool = False,
+                   server=None) -> int:
+    """One chat per data folder: the instance lock goes before memory and documents open."""
+    from monika.kernel import InstanceLock, KernelError
+
+    lock = InstanceLock(paths.kernel_lock)
+    try:
+        lock.acquire()
+    except KernelError as exc:
+        console.print(f"[red]{exc}[/red]")
+        return 1
+    try:
+        return await _run_chat(settings, paths, masker, voice=voice, server=server)
+    finally:
+        lock.release()
+
+
+async def _run_chat(settings: Settings, paths: Paths, masker: Masker, voice: bool = False,
+                    server=None) -> int:
+    """Start the chat: keyboard (text mode) or microphone (voice mode), with tools, memory and documents.
+
+    With `server` (the kernel), stdin is not the input any more: the socket is, and this function
+    keeps everything running until the kernel stops.
+    """
     from modes.text import TextSession
     from web.settings import Health
 
@@ -426,15 +449,21 @@ async def run_chat(settings: Settings, paths: Paths, masker: Masker, voice: bool
             health.agent = agent
             if web:
                 web[1].agent = agent
+            session_kwargs = dict(masker=masker, speaker=speaker,
+                                  speech_max_chars=settings.tts_max_sentence_chars, hub=hub,
+                                  action_director=action_director)
             if listener is not None:
                 from modes.voice import BANNER, BANNER_SPOKEN, VoiceReader
 
                 reader = VoiceReader(listener, lambda text: (sys.stdout.write(text), sys.stdout.flush()), speaker,
                                      hub=hub)
-                await TextSession(agent, reader, masker=masker, speaker=speaker,
-                                  banner=BANNER_SPOKEN if speaker else BANNER,
-                                  speech_max_chars=settings.tts_max_sentence_chars, hub=hub,
-                                  action_director=action_director).run()
+                session = TextSession(agent, reader, banner=BANNER_SPOKEN if speaker else BANNER,
+                                      **session_kwargs)
+            elif server is not None:
+                async def no_input() -> str:  # The kernel never reads stdin: clients send lines
+                    raise EOFError
+
+                session = TextSession(agent, no_input, **session_kwargs)
             else:
                 from prompt_toolkit import PromptSession
                 from prompt_toolkit.patch_stdout import patch_stdout
@@ -444,10 +473,17 @@ async def run_chat(settings: Settings, paths: Paths, masker: Masker, voice: bool
                 async def read_line() -> str:
                     return await prompt.prompt_async("Toi › ")
 
+                session = TextSession(agent, read_line, **session_kwargs)
                 with patch_stdout():
-                    await TextSession(agent, read_line, masker=masker, speaker=speaker,
-                                      speech_max_chars=settings.tts_max_sentence_chars, hub=hub,
-                                      action_director=action_director).run()
+                    await session.run()
+            if server is not None:
+                try:
+                    await server.serve(session=session, hub=hub, speaker=speaker,
+                                       voice_factory=lambda: start_voice(settings, paths))
+                finally:
+                    await session.close()
+            elif listener is not None:
+                await session.run()
     finally:
         if web:
             await web[2].stop()
@@ -503,6 +539,46 @@ async def run_tools_command(settings: Settings, paths: Paths, masker: Masker,
     return 0
 
 
+def attach_console(paths: Paths, voice: bool) -> int:
+    """Hand this terminal to the kernel (Ctrl+C while waiting for a reply is handled by the client)."""
+    from monika.client import attach
+    from monika.kernel import KernelError
+
+    try:
+        return asyncio.run(attach(paths.kernel_socket, voice=voice))
+    except KernelError as exc:
+        console.print(f"[red]{exc}[/red]")
+        return 1
+    except KeyboardInterrupt:
+        return 130
+
+
+def run_kernel_command(settings: Settings, paths: Paths, masker: Masker,
+                       args: argparse.Namespace) -> int:
+    """--serve (the kernel, in the foreground) and --attach (this terminal as its client)."""
+    if args.serve and args.attach:
+        console.print("[red]--serve et --attach sont exclusifs.[/red]")
+        return 1
+    if not settings.kernel_enabled:
+        console.print("[red]Le noyau est désactivé[/red] (KERNEL_ENABLED=false). Active-le dans "
+                      "/settings ou dans .env puis relance. Sans noyau, `python -m monika` reste le "
+                      "mode local d'avant.")
+        return 1
+    if args.attach:
+        return attach_console(paths, args.mode == "voix")
+    from monika.kernel import KernelError, KernelServer
+
+    try:
+        return asyncio.run(run_chat(settings, paths, masker, voice=False,
+                                    server=KernelServer(paths.kernel_socket)))
+    except KernelError as exc:
+        console.print(f"[red]{exc}[/red]")
+        return 1
+    except KeyboardInterrupt:  # Ctrl+C on the kernel itself: stop, and release the socket
+        console.print("\nNoyau arrêté.")
+        return 0
+
+
 def choose_mode() -> str | None:
     """Ask which mode to start; return None if the user gives up."""
     try:
@@ -530,6 +606,10 @@ def main(argv: list[str] | None = None) -> int:
                         help="Affiche l'état de l'index de documents et quitte.")
     parser.add_argument("--tools", action="store_true",
                         help="Liste les serveurs MCP et leurs outils, puis quitte.")
+    parser.add_argument("--serve", action="store_true",
+                        help="Lance le noyau persistant (mémoire, outils, page, voix) et le laisse tourner.")
+    parser.add_argument("--attach", action="store_true",
+                        help="Se connecte au noyau en cours : le terminal devient un client.")
     parser.add_argument("--call", nargs="+", metavar=("OUTIL", "JSON"),
                         help="Appelle un outil, ex. --call fichiers__read_file '{\"path\": \"/tmp/a\"}'.")
     args = parser.parse_args(argv)
@@ -555,10 +635,20 @@ def main(argv: list[str] | None = None) -> int:
             return 130
     if args.tools or args.call:
         return asyncio.run(run_tools_command(settings, paths, masker, args.call))
+    if args.serve or args.attach:
+        return run_kernel_command(settings, paths, masker, args)
 
     mode = args.mode or choose_mode()
     if mode is None:
         return 0
+    if settings.kernel_enabled:  # A kernel exists: the terminal is a client, not a second brain
+        from monika.client import kernel_alive
+
+        if kernel_alive(paths.kernel_socket):
+            console.print("[dim]Noyau en cours : je m'y rattache.")
+            return attach_console(paths, mode == "voix")
+        console.print("[dim]Aucun noyau en cours : je démarre en local "
+                      "(python -m monika --serve pour le noyau).[/dim]")
     try:
         return asyncio.run(run_chat(settings, paths, masker, voice=(mode == "voix")))
     except KeyboardInterrupt:

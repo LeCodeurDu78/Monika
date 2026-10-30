@@ -26,6 +26,11 @@ warn() { printf '\033[33m⚠ %s\033[0m\n' "$*"; }
 
 [ -x "$PY" ] || die "Pas d'environnement ici : python3 -m venv .venv && .venv/bin/pip install -r requirements.txt"
 
+# Un client qui rejoint le noyau ne synthétise rien lui-même : inutile de démarrer la voix ici.
+for arg in "$@"; do
+    [ "$arg" = "--attach" ] && exec "$PY" -m monika "$@"
+done
+
 # --- Ce que la configuration dit de la voix -----------------------------------------
 read -r ENABLED TTS_URL < <(cd "$ROOT" && "$PY" -c '
 from monika.config import Settings
