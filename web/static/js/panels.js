@@ -34,7 +34,7 @@ export async function apiRequest(url, method, body) {
 
 // `editing` freezes every panel while something is being typed (a refresh would wipe it);
 // `messages` holds the last error to show, per panel.
-export const ui = { editing: false, messages: { memory: '', character: '' } };
+export const ui = { editing: false, messages: { memory: '', character: '', sessions: '' } };
 
 /**
  * One line of editable text with Modifier / Supprimer.
@@ -99,6 +99,26 @@ function noteRow(note, refresh) {
     onSave: (text) => apiRequest(url, 'PUT', { text }),
     onDelete: () => apiRequest(url, 'DELETE'),
   });
+}
+
+function sessionRow(item, current, refresh) {
+  const li = el('li');
+  const facts = [noteDate(item.at), `${fmt(item.turns)} tour(s)`];
+  if (item.has_summary) facts.push('résumé');
+  if (current) facts.push('en cours');
+  li.append(el('span', 'meta muted', facts.join(' · ')));
+  li.append(el('span', 'text', item.title || '(sans titre)'));
+  const remove = el('button', 'danger', 'Supprimer');
+  const actions = el('span', 'actions');
+  actions.append(remove);
+  li.append(actions);
+  remove.onclick = async () => {
+    if (!confirm(`Supprimer la session « ${item.title || item.id} » ? Ses messages et ses appels d’outils seront effacés.`)) return;
+    remove.disabled = true;
+    ui.messages.sessions = (await apiRequest(`/api/session/${encodeURIComponent(item.id)}`, 'DELETE')) || '';
+    refresh();
+  };
+  return li;
 }
 
 function noteDate(at) {
@@ -216,6 +236,22 @@ export const sections = {
     }
     fill('p-memory', ...nodes);
   },
+  sessions(s, refresh) {
+    if (!s) return fill('p-sessions', el('p', 'muted', 'Démarrage en cours…'));
+    if (s.error) return fill('p-sessions', el('p', 'err', s.error));
+    if (!s.enabled) return fill('p-sessions', el('p', 'muted', 'Sessions désactivées (SESSIONS_ENABLED).'));
+    const nodes = [];
+    if (ui.messages.sessions) nodes.push(el('p', 'err', ui.messages.sessions));
+    if (!s.items.length) nodes.push(el('p', 'muted', 'Aucune session enregistrée pour l’instant.'));
+    else {
+      const list = el('ul', 'facts');
+      for (const item of s.items) list.append(sessionRow(item, s.current === item.id, refresh));
+      const box = el('div', 'scroll');
+      box.append(list);
+      nodes.push(el('div', 'muted', `${s.items.length} session(s)`), box);
+    }
+    fill('p-sessions', ...nodes);
+  },
   character(c, refresh) {
     if (ui.editing) return;
     if (!c) return fill('p-relation', el('p', 'muted', 'Démarrage en cours…'));
@@ -235,4 +271,5 @@ export function render(snap, refresh) {
   sections.context(snap.context);
   sections.memory(snap.memory, refresh);
   sections.character(snap.character, refresh);
+  sections.sessions(snap.sessions, refresh);
 }

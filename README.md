@@ -228,6 +228,8 @@ dans un message ou un argument d'outil n'arrive jamais sur le disque.
   anciens sont écartés **entiers** (jamais au milieu d'un appel d'outil) et la reprise le dit.
 - **Rétention** : les sessions inutilisées depuis `SESSIONS_KEEP_DAYS` (30 jours) sont purgées au
   lancement. `/effacer` repart sur une session neuve sans effacer l'ancienne.
+- **Tu gardes la main** : `/sessions`, `/chercher`, `/session oublier ID`, et le bloc *Sessions* du
+  tableau de bord listent les quinze dernières et permettent de les supprimer.
 - **Recherche** : l'index porte sur ce qui a été dit (message et réponse), pas sur les résultats
   d'outils : ceux-ci restent dans l'historique mais hors de l'index.
 - **Limite** : l'historique complet est réécrit à chaque tour (quelques centaines de kilo-octets sur
@@ -434,17 +436,19 @@ pour la couper). À gauche l'avatar 3D, à droite le tableau de bord.
   **Bibliothèques 3D** : three.js et three-vrm sont fournis dans `web/static/vendor/` et servis
   localement (aucune dépendance à télécharger : le dossier est versionné). Ouvre la page avec `?debug`
   pour tester chaque clip et chaque émotion ; `?view=full` cadre le corps entier au lieu du buste.
-- **Tableau de bord**, volontairement réduit à trois blocs : *Contexte* (taille de la
+- **Tableau de bord**, volontairement réduit à quatre blocs : *Contexte* (taille de la
   conversation), *Relation* (niveau, favorabilité et humeur de Monika ; son journal, dont tu peux
   modifier ou supprimer chaque note, corriger ou effacer l'impression d'ensemble, ou tout effacer ;
-  et « Repartir de zéro » pour la relation, avec confirmation) et *Mémoire* (modifier ou supprimer
-  chaque souvenir ; la modification recalcule son indexation).
+  et « Repartir de zéro » pour la relation, avec confirmation), *Mémoire* (modifier ou supprimer
+  chaque souvenir ; la modification recalcule son indexation) et *Sessions* (les quinze dernières
+  conversations enregistrées, la session en cours signalée, avec suppression — celle en cours
+  repart alors sur une conversation neuve).
 - **Sécurité** : le serveur n'écoute que sur `127.0.0.1` ; les requêtes dont l'en-tête `Host` ou
   `Origin` n'est pas ton ordinateur sont refusées ; les bibliothèques 3D sont servies
   localement (`web/static/vendor/`), la page ne charge rien depuis Internet (CSP stricte, seule
   l'import map de la page est autorisée par son empreinte) ; tout
   ce qui vient de la mémoire est affiché comme du texte, jamais comme du HTML. Les seules
-  actions possibles depuis la page (modifier ou supprimer un souvenir ou une note du journal, repartir de zéro) exigent un jeton tiré au hasard à chaque lancement, fourni uniquement à la page servie,
+  actions possibles depuis la page (modifier ou supprimer un souvenir ou une note du journal, repartir de zéro, supprimer une session) exigent un jeton tiré au hasard à chaque lancement, fourni uniquement à la page servie,
   et une origine valide. Aucune commande ne peut être envoyée à l'agent depuis la page. La lecture de l'état (`GET /api/status`, qui contient ta mémoire et ton journal) n'exige
   pas de jeton : elle n'est protégée que par l'écoute sur `127.0.0.1` et le contrôle de `Host` ; tout
   programme de cette machine peut donc la lire.

@@ -16,6 +16,7 @@ from web.server import ActionError
 log = logging.getLogger(__name__)
 
 SECTION_TIMEOUT_S = 3.0
+SESSION_PANEL_LIMIT = 15  # the page lists the most recent sessions, the terminal can see them all
 
 
 class Dashboard:
@@ -50,6 +51,7 @@ class Dashboard:
             "context": await self._section(lambda: agent.stats() if agent else None),
             "memory": await self._section(self._memory),
             "character": await self._section(self._character_section),
+            "sessions": await self._section(self._sessions_section),
         }
 
     async def _memory(self) -> dict[str, Any]:
@@ -66,13 +68,25 @@ class Dashboard:
             return {"enabled": False}
         return {"enabled": True, "state": character.snapshot() or None, "journal": character.journal_entries()}
 
+    async def _sessions_section(self) -> dict[str, Any] | None:
+        """The recent sessions, so they can be read and deleted from the page (None: still starting)."""
+        if self.agent is None:
+            return None
+        sessions = getattr(self.agent, "sessions", None)
+        if sessions is None:
+            return {"enabled": False}
+        items = [{"id": row.id, "title": row.title, "mode": row.mode,
+                  "at": row.updated_at, "turns": row.turns, "has_summary": row.has_summary}
+                 for row in sessions.store.list(limit=SESSION_PANEL_LIMIT)]
+        return {"enabled": True, "current": sessions.session_id, "items": items}
+
     # --- edits requested from the page ---------------------------------------------------------
 
     def actions(self) -> dict[str, Callable[..., Any]]:
         return {"memory_update": self._memory_update, "memory_delete": self._memory_delete,
                 "journal_update": self._journal_update, "journal_delete": self._journal_delete,
                 "journal_clear": self._journal_clear, "impression_update": self._impression_update,
-                "relation_reset": self._relation_reset}
+                "relation_reset": self._relation_reset, "session_forget": self._session_forget}
 
     def _character(self) -> Any:
         character = getattr(self.agent, "character", None)
@@ -113,6 +127,22 @@ class Dashboard:
         self._character().reset_relationship()
         log.info("Relation réinitialisée depuis la page")
         self._hub.activity("character")
+
+    def _recorder(self) -> Any:
+        sessions = getattr(self.agent, "sessions", None)
+        if sessions is None:
+            raise ActionError("Les sessions sont désactivées ou indisponibles.", 503)
+        return sessions
+
+    async def _session_forget(self, session_id: str) -> None:
+        sessions = self._recorder()
+        if not sessions.store.forget(str(session_id)):
+            raise ActionError("Cette session n'existe plus.", 404)
+        if sessions.is_current(session_id):
+            # The conversation being continued cannot outlive its file: start a fresh one.
+            self.agent.clear()
+        log.info("Session supprimée depuis la page")
+        self._hub.activity("sessions")
 
     def _fast_memory(self) -> Any:
         memory = getattr(self.agent, "memory", None)
