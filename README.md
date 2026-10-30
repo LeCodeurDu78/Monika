@@ -144,6 +144,7 @@ valeurs par défaut du code). Les plus utiles :
 | `STT_MODEL`, `TTS_ENABLED` | Voix |
 | `TTS_URL`, `TTS_SPEAKERS_DIR`, `TTS_CHARACTER_ID` | GPT-SoVITS : adresse de l'API et pack de voix |
 | `TTS_LANGUAGE`, `TTS_EMOTION_TAGS`, `TTS_RENDER` | Langue parlée, tags d'émotion, découpage des requêtes |
+| `TTS_PAUSE_STYLE`, `TTS_PAUSE_SCALE`, `TTS_PAUSE_MAX_S` | Pauses entre phrases : `neutre` (rien) ou `naturel` |
 | `WEB_ENABLED`, `WEB_PORT` | Page locale (défaut 8765) |
 | `SENSITIVE_WORDS_ENABLED` | Filtre de mots sensibles (la liste est dans `words.json`) |
 | `LOG_LEVEL`, `AUDIT_ENABLED` | Journaux |
@@ -511,6 +512,15 @@ pendant que le modèle écrit encore**.
 - **Latence** : `TTS_RENDER=sentence` (défaut) envoie une phrase par requête, donc le premier son
   arrive vite. `TTS_RENDER=block` regroupe les phrases jusqu'à `TTS_BLOCK_MAX_CHARS` : meilleure
   prosodie sur les longues réponses, premier son plus tardif. `TTS_TIMEOUT_S` borne l'attente.
+- **Pauses** : `TTS_PAUSE_STYLE=neutre` (défaut) ne change rien, les phrases s'enchaînent comme
+  avant. `naturel` insère un court silence **après** chaque phrase, selon sa ponctuation
+  (« . » 0,50 s, « ? » 0,45, « ! » 0,35, « … » 0,75, une virgule finale 0,25) et son émotion :
+  une voix triste ou déçue traîne (×1,35), en colère ou excitée se presse (×0,65 à 0,75), et
+  l'intensité du sentiment module l'écart. `TTS_PAUSE_SCALE` multiplie le tout, `TTS_PAUSE_MAX_S`
+  plafonne une pause (1,2 s par défaut). Ce sont **des silences seulement**, jamais de bruit
+  d'hésitation : aucun « euh » n'est ajouté. Rien n'est inséré avant le premier mot d'une réponse,
+  ni après son dernier — la parole commence et se déroule sans l'attendre. Réglable à chaud
+  depuis `/settings` (groupe *Voix*). La règle vit dans `voice/pauses.py`.
 - **Panne** : serveur arrêté ou lent → message clair, réponses à l'écran, et la conversation
   continue ; trois échecs de suite coupent la voix.
 

@@ -187,6 +187,11 @@ class Settings(BaseSettings):
     tts_language: str = "en"  # Text front-end: en, zh, ja, ko, yue or auto (French is read as en)
     tts_speed: float = Field(1.0, ge=0.5, le=2.0)
     tts_max_sentence_chars: int = Field(200, ge=60, le=240)
+    # Pauses between sentences (see voice/pauses.py). neutre = nothing added, as before; naturel = a
+    # short silence after the punctuation, a little longer in a slow mood, shorter when excited.
+    tts_pause_style: str = "neutre"
+    tts_pause_scale: float = Field(1.0, ge=0.0, le=3.0)  # multiplier on the computed pause
+    tts_pause_max_s: float = Field(1.2, ge=0.0, le=5.0)  # never longer than this
     audio_output_device: str = ""  # PulseAudio/PipeWire sink for pacat; empty = default output
 
     # Local web page: 3D avatar and dashboard (reachable from this computer only)
@@ -240,6 +245,14 @@ class Settings(BaseSettings):
     @classmethod
     def _expand_mcp_file(cls, value: Path | None) -> Path | None:
         return value.expanduser().resolve() if value else None
+
+    @field_validator("tts_pause_style")
+    @classmethod
+    def _known_pause_style(cls, value: str) -> str:
+        value = value.strip().lower()
+        if value not in ("neutre", "naturel"):
+            raise ValueError("TTS_PAUSE_STYLE doit être « neutre » ou « naturel »")
+        return value
 
     @field_validator("tts_speakers_dir")
     @classmethod

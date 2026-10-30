@@ -36,7 +36,8 @@ CATALOG: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("Noyau persistant", ("kernel_enabled",)),
     ("Tâches planifiées", ("tasks_enabled", "tasks_max")),
     ("Documents", ("rag_top_k", "rag_min_score", "rag_rerank_enabled")),
-    ("Voix", ("tts_enabled", "tts_text_mode", "tts_speed", "tts_emotion_tags", "tts_render")),
+    ("Voix", ("tts_enabled", "tts_text_mode", "tts_speed", "tts_emotion_tags", "tts_render",
+               "tts_pause_style", "tts_pause_scale", "tts_pause_max_s")),
     ("Mots sensibles", ("sensitive_words_enabled",)),
     ("Page et journaux", ("web_port", "log_level")),
 )

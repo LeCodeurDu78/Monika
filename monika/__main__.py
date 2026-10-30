@@ -278,8 +278,10 @@ async def start_speech(settings: Settings, paths: Paths, voice: bool, on_level=N
         console.print(f"[yellow]⚠ {warning}[/yellow]")
     tagger = _emotion_tagger(settings, engine)
     block_chars = settings.tts_block_max_chars if settings.tts_render_mode() == "block" else 0
+    # Read at each gap: the pause settings apply from the page without a restart
+    pauses = lambda: (settings.tts_pause_style, settings.tts_pause_scale, settings.tts_pause_max_s)
     return Speaker(engine, PacatSink(engine.sample_rate, settings.audio_output_device, on_level=on_level),
-                   tagger=tagger, block_chars=block_chars)
+                   tagger=tagger, block_chars=block_chars, pauses=pauses)
 
 
 def _emotion_tagger(settings: Settings, engine):
