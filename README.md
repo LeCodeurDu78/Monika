@@ -229,7 +229,9 @@ dans un message ou un argument d'outil n'arrive jamais sur le disque.
 - **Rétention** : les sessions inutilisées depuis `SESSIONS_KEEP_DAYS` (30 jours) sont purgées au
   lancement. `/effacer` repart sur une session neuve sans effacer l'ancienne.
 - **Tu gardes la main** : `/sessions`, `/chercher`, `/session oublier ID`, et le bloc *Sessions* du
-  tableau de bord listent les quinze dernières et permettent de les supprimer.
+  tableau de bord listent les quinze dernières, permettent de les reprendre et de les supprimer.
+  Reprendre depuis la page recharge la conversation **dans le processus en cours** : elle se
+  poursuit ensuite au terminal (le chat dans la page n'existe pas encore).
 - **Recherche** : l'index porte sur ce qui a été dit (message et réponse), pas sur les résultats
   d'outils : ceux-ci restent dans l'historique mais hors de l'index.
 - **Limite** : l'historique complet est réécrit à chaque tour (quelques centaines de kilo-octets sur
@@ -441,8 +443,9 @@ pour la couper). À gauche l'avatar 3D, à droite le tableau de bord.
   modifier ou supprimer chaque note, corriger ou effacer l'impression d'ensemble, ou tout effacer ;
   et « Repartir de zéro » pour la relation, avec confirmation), *Mémoire* (modifier ou supprimer
   chaque souvenir ; la modification recalcule son indexation) et *Sessions* (les quinze dernières
-  conversations enregistrées, la session en cours signalée, avec suppression — celle en cours
-  repart alors sur une conversation neuve).
+  conversations enregistrées, la session en cours signalée, avec **Reprendre** et **Supprimer**).
+  Supprimer la session en cours repart sur une conversation neuve ; les deux actions sont refusées
+  pendant une réponse, pour ne pas échanger l'historique sous les pieds d'un tour en cours.
 - **Sécurité** : le serveur n'écoute que sur `127.0.0.1` ; les requêtes dont l'en-tête `Host` ou
   `Origin` n'est pas ton ordinateur sont refusées ; les bibliothèques 3D sont servies
   localement (`web/static/vendor/`), la page ne charge rien depuis Internet (CSP stricte, seule

@@ -16,25 +16,34 @@ export function fill(id, ...children) {
 
 const token = () => document.querySelector('meta[name="monika-token"]')?.content || '';
 
-// Ask the server to change something; returns an error text, or null when it worked
-export async function apiRequest(url, method, body) {
+// Ask the server to change something; returns { error, data } (error is null when it worked)
+export async function apiCall(url, method, body) {
   try {
     const response = await fetch(url, {
       method,
       headers: { 'Content-Type': 'application/json', 'X-Monika-Token': token() },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
-    if (response.ok) return null;
     const data = await response.json().catch(() => ({}));
-    return data.error || `Erreur ${response.status}`;
+    if (response.ok) return { error: null, data };
+    return { error: data.error || `Erreur ${response.status}`, data: {} };
   } catch (err) {
-    return 'Monika ne répond pas.';
+    return { error: 'Monika ne répond pas.', data: {} };
   }
+}
+
+// Same call, error text only (the common case: nothing to read back)
+export async function apiRequest(url, method, body) {
+  return (await apiCall(url, method, body)).error;
 }
 
 // `editing` freezes every panel while something is being typed (a refresh would wipe it);
 // `messages` holds the last error to show, per panel.
-export const ui = { editing: false, messages: { memory: '', character: '', sessions: '' } };
+export const ui = {
+  editing: false,
+  messages: { memory: '', character: '', sessions: '' },  // last error, per panel
+  notices: { sessions: '' },                            // last confirmation, per panel
+};
 
 /**
  * One line of editable text with Modifier / Supprimer.
@@ -108,14 +117,26 @@ function sessionRow(item, current, refresh) {
   if (current) facts.push('en cours');
   li.append(el('span', 'meta muted', facts.join(' · ')));
   li.append(el('span', 'text', item.title || '(sans titre)'));
+  const resume = el('button', '', 'Reprendre');
   const remove = el('button', 'danger', 'Supprimer');
   const actions = el('span', 'actions');
-  actions.append(remove);
+  actions.append(resume, remove);
   li.append(actions);
+  const url = `/api/session/${encodeURIComponent(item.id)}`;
+  resume.disabled = current;  // already the live conversation
+  resume.onclick = async () => {
+    if (!confirm(`Reprendre « ${item.title || item.id} » ? La conversation en cours sera remplacée.`)) return;
+    resume.disabled = remove.disabled = true;
+    const { error, data } = await apiCall(`${url}/resume`, 'POST');
+    ui.messages.sessions = error || '';
+    ui.notices.sessions = error ? '' : (data.message || 'Session reprise.');
+    refresh();
+  };
   remove.onclick = async () => {
     if (!confirm(`Supprimer la session « ${item.title || item.id} » ? Ses messages et ses appels d’outils seront effacés.`)) return;
-    remove.disabled = true;
-    ui.messages.sessions = (await apiRequest(`/api/session/${encodeURIComponent(item.id)}`, 'DELETE')) || '';
+    remove.disabled = resume.disabled = true;
+    ui.messages.sessions = (await apiRequest(url, 'DELETE')) || '';
+    ui.notices.sessions = '';
     refresh();
   };
   return li;
@@ -242,6 +263,7 @@ export const sections = {
     if (!s.enabled) return fill('p-sessions', el('p', 'muted', 'Sessions désactivées (SESSIONS_ENABLED).'));
     const nodes = [];
     if (ui.messages.sessions) nodes.push(el('p', 'err', ui.messages.sessions));
+    else if (ui.notices.sessions) nodes.push(el('p', 'muted', ui.notices.sessions));
     if (!s.items.length) nodes.push(el('p', 'muted', 'Aucune session enregistrée pour l’instant.'));
     else {
       const list = el('ul', 'facts');

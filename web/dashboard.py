@@ -8,6 +8,7 @@ import time
 from collections.abc import Callable
 from typing import Any
 
+from agent.sessions import SessionsError
 from monika import __version__
 from monika.config import Settings
 from monika.paths import Paths
@@ -86,7 +87,8 @@ class Dashboard:
         return {"memory_update": self._memory_update, "memory_delete": self._memory_delete,
                 "journal_update": self._journal_update, "journal_delete": self._journal_delete,
                 "journal_clear": self._journal_clear, "impression_update": self._impression_update,
-                "relation_reset": self._relation_reset, "session_forget": self._session_forget}
+                "relation_reset": self._relation_reset, "session_forget": self._session_forget,
+                "session_resume": self._session_resume}
 
     def _character(self) -> Any:
         character = getattr(self.agent, "character", None)
@@ -134,8 +136,14 @@ class Dashboard:
             raise ActionError("Les sessions sont désactivées ou indisponibles.", 503)
         return sessions
 
+    def _busy(self) -> bool:
+        """A streaming turn owns the history: it must not be cleared or swapped under its feet."""
+        return bool(getattr(self.agent, "turn_running", False))
+
     async def _session_forget(self, session_id: str) -> None:
         sessions = self._recorder()
+        if sessions.is_current(session_id) and self._busy():
+            raise ActionError("Une réponse est en cours : réessaie quand elle est finie.", 409)
         if not sessions.store.forget(str(session_id)):
             raise ActionError("Cette session n'existe plus.", 404)
         if sessions.is_current(session_id):
@@ -143,6 +151,19 @@ class Dashboard:
             self.agent.clear()
         log.info("Session supprimée depuis la page")
         self._hub.activity("sessions")
+
+    async def _session_resume(self, session_id: str) -> dict[str, Any]:
+        """Load a stored conversation into the running agent (the terminal continues it)."""
+        self._recorder()
+        if self._busy():
+            raise ActionError("Une réponse est en cours : réessaie quand elle est finie.", 409)
+        try:
+            message = self.agent.resume_session(str(session_id))
+        except SessionsError as exc:
+            raise ActionError(str(exc), 404) from exc
+        log.info("Session reprise depuis la page")
+        self._hub.activity("sessions")
+        return {"message": message}
 
     def _fast_memory(self) -> Any:
         memory = getattr(self.agent, "memory", None)

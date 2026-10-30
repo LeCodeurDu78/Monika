@@ -122,6 +122,7 @@ class Agent:
         self._tone_block = ""  # Sensitive-word tone for this message, this turn only
         self.words = words  # The user's word bank; the settings page swaps it (hot reload)
         self.sessions = sessions  # Persistent conversation log; None when SESSIONS_ENABLED is false
+        self.turn_running = False  # True while a turn streams: the history must not be swapped then
         self._memory_warned = False
         self.history: list[dict[str, Any]] = []
         self.last_plan: TurnPlan | None = None  # What the director decided for the last turn (/contexte)
@@ -137,6 +138,9 @@ class Agent:
         """Replace the conversation with a stored one; returns the line to show to the user."""
         if self.sessions is None:
             raise SessionsError("Les sessions sont désactivées (SESSIONS_ENABLED=false).")
+        if self.turn_running:
+            raise SessionsError("Une réponse est en cours : attends la fin du tour pour reprendre "
+                                "une autre session.")
         loaded = self.sessions.store.load(session_id)
         if loaded is None:
             raise SessionsError(f"Aucune session avec l'id {session_id}.")
@@ -198,6 +202,7 @@ class Agent:
         """Stream events for one user message; the last one is always TurnEnd."""
         start = len(self.history)
         self.history.append({"role": "user", "content": user_text})
+        self.turn_running = True
         if self.sessions is not None:
             self.sessions.begin(user_text)
         now = datetime.now().astimezone()
@@ -357,6 +362,7 @@ class Agent:
                 turn.close()  # An aborted turn leaves no trace: the background tone reading is cancelled
             if self.sessions is not None:  # Runs on every exit: done, step limit, error, Ctrl+C, close
                 self.sessions.finish(self.history, self.context.summary, start, complete=finished)
+            self.turn_running = False
 
     def _sensitive_tier(self, text: str) -> str | None:
         """The level this message hits (or None). Deterministic, no model call, never buys a turn."""

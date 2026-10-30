@@ -184,6 +184,10 @@ def create_app(hub: Hub, snapshot: Snapshot, port: int, static_dir: Path = STATI
     async def session_forget(session_id: str, x_monika_token: str | None = Header(None)) -> JSONResponse:
         return await act("session_forget", x_monika_token, session_id)
 
+    @app.post("/api/session/{session_id}/resume")
+    async def session_resume(session_id: str, x_monika_token: str | None = Header(None)) -> JSONResponse:
+        return await act("session_resume", x_monika_token, session_id)
+
     if settings_api is not None:
         @app.get("/settings")
         async def settings_page() -> HTMLResponse:
