@@ -5,9 +5,9 @@ from __future__ import annotations
 import asyncio
 import json
 import sys
+from collections.abc import Awaitable, Callable
 from datetime import datetime
 from pathlib import Path
-from collections.abc import Awaitable, Callable
 
 from agent.llm import LLMError, TextDelta
 from agent.loop import Agent, AvatarCue, Filler, Notice, ToolEnd, ToolStart, TurnEnd
@@ -54,16 +54,32 @@ class _ChatOut:
 class TextSession:
     """Interactive loop: read a line, run an agent turn, print its events."""
 
-    def __init__(self, agent: Agent, read_line: Callable[[], Awaitable[str]],
-                 out=None, masker: Masker | None = None, banner: str | None = None,
-                 speaker=None, speech_max_chars: int = 200, hub=None,
-                 action_director=None, tasks=None, chat=None) -> None:
+    def __init__(
+        self,
+        agent: Agent,
+        read_line: Callable[[], Awaitable[str]],
+        out=None,
+        masker: Masker | None = None,
+        banner: str | None = None,
+        speaker=None,
+        speech_max_chars: int = 200,
+        hub=None,
+        action_director=None,
+        tasks=None,
+        chat=None,
+    ) -> None:
         self._agent = agent
         self._tasks = tasks  # agent.tasks.TaskStore (None = scheduled tasks disabled)
-        self._chat = chat    # web.chat.ChatView: the same turn, mirrored in the page (optional)
-        self._turn_lock = asyncio.Lock()  # One turn at a time: a reminder waits for the answer
+        self._chat = (
+            chat  # web.chat.ChatView: the same turn, mirrored in the page (optional)
+        )
+        self._turn_lock = (
+            asyncio.Lock()
+        )  # One turn at a time: a reminder waits for the answer
         self._hub = hub  # Live state for the web page (optional)
-        self._action_director = action_director  # Post-turn avatar chain (optional, cosmetic)
+        self._action_director = (
+            action_director  # Post-turn avatar chain (optional, cosmetic)
+        )
         self._action_tasks: set[asyncio.Task] = set()
         self._speaker = speaker
         self._speech_max_chars = speech_max_chars
@@ -115,11 +131,11 @@ class TextSession:
         elif line == "/sessions":
             self._sessions()
         elif line.startswith("/reprendre"):
-            self._resume(line[len("/reprendre"):].strip())
+            self._resume(line[len("/reprendre") :].strip())
         elif line.startswith("/chercher"):
-            self._search(line[len("/chercher"):].strip())
+            self._search(line[len("/chercher") :].strip())
         elif line == "/session" or line.startswith("/session "):
-            self._forget_session(line[len("/session"):].strip())
+            self._forget_session(line[len("/session") :].strip())
         elif line == "/outils":
             self._show_tools()
         elif line == "/contexte":
@@ -127,11 +143,11 @@ class TextSession:
         elif line == "/memoire":
             await self._show_memory()
         elif line.startswith("/journal"):
-            self._journal(line[len("/journal"):].strip())
+            self._journal(line[len("/journal") :].strip())
         elif line.startswith("/relation"):
-            self._relation(line[len("/relation"):].strip())
+            self._relation(line[len("/relation") :].strip())
         elif line.startswith("/indexer"):
-            self._start_indexing(line[len("/indexer"):].strip())
+            self._start_indexing(line[len("/indexer") :].strip())
         elif line == "/documents":
             await self._show_documents()
         elif line == "/stop":
@@ -139,11 +155,11 @@ class TextSession:
         elif line == "/taches":
             self._tasks_list()
         elif line == "/tache" or line.startswith("/tache "):
-            self._task_cancel(line[len("/tache"):].strip())
+            self._task_cancel(line[len("/tache") :].strip())
         elif line.startswith("/rappel"):
-            self._remind(line[len("/rappel"):].strip())
+            self._remind(line[len("/rappel") :].strip())
         elif line.startswith("/oublier"):
-            await self._forget(line[len("/oublier"):].strip())
+            await self._forget(line[len("/oublier") :].strip())
         elif line.startswith("/"):
             self._write(f"Commande inconnue : {line}. {HELP}\n")
         else:
@@ -156,7 +172,9 @@ class TextSession:
         character = self._agent.character
         if character is not None:
             character.journal_flush()
-        if (capture is not None and capture.pending) or (character is not None and character.journal_writing):
+        if (capture is not None and capture.pending) or (
+            character is not None and character.journal_writing
+        ):
             self._write("Je termine d'enregistrer mes souvenirs…\n")
         farewell = await self._start_farewell()
         left = await self._agent.aclose()
@@ -190,7 +208,9 @@ class TextSession:
     def _start_indexing(self, folder: str) -> None:
         rag = self._agent.rag
         if rag is None:
-            self._write("Index de documents désactivé ou indisponible (voir le message au lancement).\n")
+            self._write(
+                "Index de documents désactivé ou indisponible (voir le message au lancement).\n"
+            )
             return
         roots = None
         if folder:
@@ -200,9 +220,13 @@ class TextSession:
                 return
             roots = [path.resolve()]
         if rag.start_sync(roots):
-            self._write("Indexation lancée en arrière-plan. /documents pour suivre l'avancement.\n")
+            self._write(
+                "Indexation lancée en arrière-plan. /documents pour suivre l'avancement.\n"
+            )
         else:
-            self._write("Une indexation est déjà en cours. /documents pour suivre l'avancement.\n")
+            self._write(
+                "Une indexation est déjà en cours. /documents pour suivre l'avancement.\n"
+            )
 
     async def _show_documents(self) -> None:
         rag = self._agent.rag
@@ -224,10 +248,12 @@ class TextSession:
         else:
             quand, texte = "", ""
         if not quand.strip() or not texte.strip():
-            self._write("Usage : /rappel QUAND : TEXTE — par exemple « /rappel dans 20 minutes : "
-                        "boire de l'eau », « /rappel toutes les 2 heures : boire de l'eau » ou "
-                        "« /rappel chaque jour à 8h : la météo du jour » ou « /rappel du lundi au "
-                        "vendredi à 9h : la revue du matin ».\n")
+            self._write(
+                "Usage : /rappel QUAND : TEXTE — par exemple « /rappel dans 20 minutes : "
+                "boire de l'eau », « /rappel toutes les 2 heures : boire de l'eau » ou "
+                "« /rappel chaque jour à 8h : la météo du jour » ou « /rappel du lundi au "
+                "vendredi à 9h : la revue du matin ».\n"
+            )
             return
         from agent.tasks import TasksError, parse_when
 
@@ -245,7 +271,9 @@ class TextSession:
             return
         tasks = self._tasks.all()
         if not tasks:
-            self._write("Aucune tâche planifiée. /rappel dans 20 minutes : boire de l'eau\n")
+            self._write(
+                "Aucune tâche planifiée. /rappel dans 20 minutes : boire de l'eau\n"
+            )
             return
         self._write(f"Tâches planifiées ({len(tasks)}) :\n")
         for task in tasks:
@@ -257,7 +285,7 @@ class TextSession:
             self._write("Tâches planifiées désactivées (TASKS_ENABLED=false).\n")
             return
         if rest.startswith("annuler"):
-            rest = rest[len("annuler"):].strip()
+            rest = rest[len("annuler") :].strip()
         if not rest:
             self._write("Usage : /tache annuler ID (les ids sont dans /taches).\n")
             return
@@ -291,8 +319,10 @@ class TextSession:
         for row in rows:
             mark = " ← en cours" if sessions.is_current(row.id) else ""
             summary = ", résumé" if row.has_summary else ""
-            self._write(f"  [{row.id}] {self._date(row.started_at)} · {row.turns} tour(s)"
-                        f"{summary}{mark} · {row.title or '(sans titre)'}\n")
+            self._write(
+                f"  [{row.id}] {self._date(row.started_at)} · {row.turns} tour(s)"
+                f"{summary}{mark} · {row.title or '(sans titre)'}\n"
+            )
         self._write("  /reprendre ID, /session oublier ID\n")
 
     def _resume(self, session_id: str) -> None:
@@ -340,7 +370,9 @@ class TextSession:
             return
         command, _, rest = argument.partition(" ")
         if command != "oublier" or not rest.strip():
-            self._write("Usage : /session oublier ID (les ids s'affichent avec /sessions).\n")
+            self._write(
+                "Usage : /session oublier ID (les ids s'affichent avec /sessions).\n"
+            )
             return
         session_id = rest.strip()
         try:
@@ -359,21 +391,27 @@ class TextSession:
     async def _show_memory(self) -> None:
         memory = self._agent.memory
         if memory is None:
-            self._write("Mémoire rapide désactivée ou indisponible (voir le message au lancement).\n")
+            self._write(
+                "Mémoire rapide désactivée ou indisponible (voir le message au lancement).\n"
+            )
             return
         try:
             items = await memory.list_all(limit=30)
         except Exception as exc:
             self._write(f"[erreur mémoire] {type(exc).__name__}: {exc}\n")
             return
-        self._write("Ce que je sais de toi :\n" if items else "Je ne sais encore rien de toi.\n")
+        self._write(
+            "Ce que je sais de toi :\n" if items else "Je ne sais encore rien de toi.\n"
+        )
         for item in items:
             self._write(f"  - {item.text}  [id {item.id}]\n")
         capture = self._agent.capture
         if capture is not None:
             err = f" Dernière erreur : {capture.last_error}" if capture.failures else ""
-            self._write(f"Captures automatiques : {capture.captured} réussie(s), "
-                        f"{capture.failures} échec(s), {capture.pending} en attente.{err}\n")
+            self._write(
+                f"Captures automatiques : {capture.captured} réussie(s), "
+                f"{capture.failures} échec(s), {capture.pending} en attente.{err}\n"
+            )
 
     async def _forget(self, memory_id: str) -> None:
         memory = self._agent.memory
@@ -387,7 +425,11 @@ class TextSession:
             except Exception as exc:
                 self._write(f"[erreur mémoire] {type(exc).__name__}: {exc}\n")
                 return
-            self._write(f"Oublié : {text}\n" if text is not None else "Aucun souvenir avec cet id.\n")
+            self._write(
+                f"Oublié : {text}\n"
+                if text is not None
+                else "Aucun souvenir avec cet id.\n"
+            )
 
     def _journal(self, argument: str) -> None:
         character = self._agent.character
@@ -402,7 +444,9 @@ class TextSession:
             self._write("Journal effacé : je repars d'une page blanche.\n")
         elif command == "oublier":
             if not rest:
-                self._write("Usage : /journal oublier ID (les ids s'affichent avec /journal).\n")
+                self._write(
+                    "Usage : /journal oublier ID (les ids s'affichent avec /journal).\n"
+                )
             elif character.journal_delete(rest):
                 self._write(f"Note {rest} supprimée.\n")
             else:
@@ -410,14 +454,18 @@ class TextSession:
         elif command:
             self._write("Usage : /journal, /journal oublier ID ou /journal effacer.\n")
         elif not (entries["impression"] or entries["threads"] or entries["notes"]):
-            self._write("Mon journal est encore vide : j'écris une note tous les quelques échanges.\n")
+            self._write(
+                "Mon journal est encore vide : j'écris une note tous les quelques échanges.\n"
+            )
         else:
             if entries["impression"]:
                 self._write(f"Impression d'ensemble : {entries['impression']}\n")
             if entries["threads"]:
                 self._write("À reprendre : " + " · ".join(entries["threads"]) + "\n")
             for note in entries["notes"]:
-                self._write(f"[{note['id']}] ({note['at'][:16].replace('T', ' ')}) {note['text']}\n")
+                self._write(
+                    f"[{note['id']}] ({note['at'][:16].replace('T', ' ')}) {note['text']}\n"
+                )
 
     def _relation(self, argument: str) -> None:
         character = self._agent.character
@@ -436,40 +484,65 @@ class TextSession:
             self._write("État indisponible pour le moment.\n")
             return
         mood = snap["dominant"] if snap["dominant"] != "neutre" else "égale"
-        self._write(f"Relation : {snap['level_label']} (favorabilité {snap['favorability']:.2f}) · humeur : {mood} · "
-                    f"{snap['messages']} messages, {snap['active_days']} jour(s) de présence, "
-                    f"série en cours : {snap['streak']}.\n")
+        self._write(
+            f"Relation : {snap['level_label']} (favorabilité {snap['favorability']:.2f}) · humeur : {mood} · "
+            f"{snap['messages']} messages, {snap['active_days']} jour(s) de présence, "
+            f"série en cours : {snap['streak']}.\n"
+        )
 
     def _show_context(self) -> None:
         def fmt(n: int) -> str:
             return f"{n:,}".replace(",", " ")
 
         st = self._agent.stats()
-        summary = (f"environ {fmt(st['summary_tokens'])} tokens" if st["summary_tokens"] else "aucun")
-        self._write(f"Contexte : environ {fmt(st['tokens'])} tokens sur un budget de {fmt(st['budget'])} "
-                    f"(fenêtre du modèle : {fmt(st['window'])}), {st['messages']} messages. "
-                    f"Résumé des anciens échanges : {summary}.\n")
-        self._write(f"Répartition : prompt système ≈ {fmt(st['prompt_tokens'])}, "
-                    f"outils ≈ {fmt(st['tools_tokens'])} ({st['tools_count']} outil(s)), "
-                    f"historique ≈ {fmt(st['history_tokens'])} tokens.\n")
+        summary = (
+            f"environ {fmt(st['summary_tokens'])} tokens"
+            if st["summary_tokens"]
+            else "aucun"
+        )
+        self._write(
+            f"Contexte : environ {fmt(st['tokens'])} tokens sur un budget de {fmt(st['budget'])} "
+            f"(fenêtre du modèle : {fmt(st['window'])}), {st['messages']} messages. "
+            f"Résumé des anciens échanges : {summary}.\n"
+        )
+        self._write(
+            f"Répartition : prompt système ≈ {fmt(st['prompt_tokens'])}, "
+            f"outils ≈ {fmt(st['tools_tokens'])} ({st['tools_count']} outil(s)), "
+            f"historique ≈ {fmt(st['history_tokens'])} tokens.\n"
+        )
         costs = self._agent.tool_costs()
         if costs:
             by_source: dict[str, list[int]] = {}
             for _name, source, tokens in costs:
                 by_source.setdefault(source, []).append(tokens)
-            parts = [f"{src} : {len(v)} outil(s), ≈ {fmt(sum(v))}"
-                     for src, v in sorted(by_source.items(), key=lambda kv: -sum(kv[1]))]
+            parts = [
+                f"{src} : {len(v)} outil(s), ≈ {fmt(sum(v))}"
+                for src, v in sorted(by_source.items(), key=lambda kv: -sum(kv[1]))
+            ]
             self._write("Outils par source : " + " ; ".join(parts) + ".\n")
-            self._write("Les plus lourds : " + ", ".join(f"{n} ({fmt(t)})" for n, _s, t in costs[:5])
-                        + ".\n")
+            self._write(
+                "Les plus lourds : "
+                + ", ".join(f"{n} ({fmt(t)})" for n, _s, t in costs[:5])
+                + ".\n"
+            )
             if st["tools_tokens"] > 0.25 * st["budget"]:
-                self._write("Les outils pèsent lourd à chaque message : limite-les avec « enabled_tools » "
-                            "ou « disabled_tools » dans mcp_servers.json.\n")
+                self._write(
+                    "Les outils pèsent lourd à chaque message : limite-les avec « enabled_tools » "
+                    "ou « disabled_tools » dans mcp_servers.json.\n"
+                )
         plan = self._agent.last_plan
-        if plan is not None:  # What the director kept for the last turn (it runs before every turn)
-            kept = "tous" if plan.tools is None else f"{len(plan.tools)} sur {st['tools_count']}"
+        if (
+            plan is not None
+        ):  # What the director kept for the last turn (it runs before every turn)
+            kept = (
+                "tous"
+                if plan.tools is None
+                else f"{len(plan.tools)} sur {st['tools_count']}"
+            )
             hint = f" · piste : {plan.hint}" if plan.hint else ""
-            self._write(f"Dernier tour planifié : {kept} outil(s) envoyé(s) au modèle{hint}.\n")
+            self._write(
+                f"Dernier tour planifié : {kept} outil(s) envoyé(s) au modèle{hint}.\n"
+            )
 
     def _show_tools(self) -> None:
         tools = self._agent.registry.tools()
@@ -481,7 +554,11 @@ class TextSession:
     def _summary(self, raw: str, limit: int = 100) -> str:
         try:
             data = json.loads(raw)
-            text = ", ".join(f"{k}={v!r}" for k, v in data.items()) if isinstance(data, dict) else raw
+            text = (
+                ", ".join(f"{k}={v!r}" for k, v in data.items())
+                if isinstance(data, dict)
+                else raw
+            )
         except (json.JSONDecodeError, AttributeError):
             text = raw
         text = self._masker.mask_text(" ".join(text.split()))
@@ -556,26 +633,42 @@ class TextSession:
 
     @staticmethod
     def _stops(stopped: list[str]) -> str:
-        return "Arrêté : " + ", ".join(stopped) + "." if stopped else "Rien ne tournait."
+        return (
+            "Arrêté : " + ", ".join(stopped) + "." if stopped else "Rien ne tournait."
+        )
 
-    async def _reply(self, user_text: str, *, source: str = "user", announce: bool = True) -> None:
+    async def _reply(
+        self, user_text: str, *, source: str = "user", announce: bool = True
+    ) -> None:
         """Run one turn; on failure or Ctrl+C the agent has already tidied its history."""
         self._cancel_action_tasks()  # A chain decided for the previous answer must not land in this one
         if self._chat is not None and announce:
             self._chat.begin(user_text, source=source)
         self._write("\n")
-        need_prefix = True  # The "Monika ›" prefix is written only when text actually arrives
+        need_prefix = (
+            True  # The "Monika ›" prefix is written only when text actually arrives
+        )
         if self._speaker is not None:
-            await self._speaker.cancel()  # A new message cuts whatever was still being said
+            await (
+                self._speaker.cancel()
+            )  # A new message cuts whatever was still being said
             self._speaker.start_block()  # Grouping stays for this whole answer (TTS_RENDER=block)
-        splitter = SentenceSplitter(max_chars=self._speech_max_chars) if self._speaker else None
+        splitter = (
+            SentenceSplitter(max_chars=self._speech_max_chars)
+            if self._speaker
+            else None
+        )
         reply_parts: list[str] = []  # Monika's own text, for the action role
         if self._hub is not None:
             self._hub.set_state("thinking")
         try:
             async for event in self._agent.run_turn(user_text):
-                if splitter is not None and not isinstance(event, (TextDelta, AvatarCue)):
-                    self._speak(splitter.flush())  # Text before a tool call or the end is said now
+                if splitter is not None and not isinstance(
+                    event, (TextDelta, AvatarCue)
+                ):
+                    self._speak(
+                        splitter.flush()
+                    )  # Text before a tool call or the end is said now
                     self._speaker.flush_block()
                 if isinstance(event, TextDelta) and self._chat is not None:
                     self._chat.delta(event.text)
@@ -594,7 +687,11 @@ class TextSession:
                     need_prefix = True
                 elif isinstance(event, ToolEnd):
                     mark = "✓" if event.ok else "✗"
-                    detail = "" if event.ok else f" {self._masker.mask_text(event.preview)[:100]}"
+                    detail = (
+                        ""
+                        if event.ok
+                        else f" {self._masker.mask_text(event.preview)[:100]}"
+                    )
                     self._write(f"  {mark} {event.duration_ms:.0f} ms{detail}\n")
                     if self._hub is not None:
                         self._hub.activity("tool")
@@ -607,7 +704,9 @@ class TextSession:
                 elif isinstance(event, AvatarCue):
                     # A gesture for the avatar only: it must not interrupt the sentence being read aloud
                     if self._speaker is not None and event.emotion:
-                        self._speaker.set_emotion(event.emotion, event.intensity)  # Tone of the voice
+                        self._speaker.set_emotion(
+                            event.emotion, event.intensity
+                        )  # Tone of the voice
                     if self._hub is not None:
                         self._hub.publish("avatar", **event.payload())
                 elif isinstance(event, Notice):
@@ -632,16 +731,22 @@ class TextSession:
             if task is not None and task.cancelling():
                 task.uncancel()
             self._newline()
-            stopped = await self.stop_all(turn=True)  # Ctrl+C stops everything, not only the reply
+            stopped = await self.stop_all(
+                turn=True
+            )  # Ctrl+C stops everything, not only the reply
             self._write("[interrompu]\n\n")
             if self._chat is not None:
                 self._chat.end("".join(reply_parts), error="interrompu")
             background = [s for s in stopped if s != "réponse"]
-            if background:  # Only when something else was running: stay quiet in the common case
+            if (
+                background
+            ):  # Only when something else was running: stay quiet in the common case
                 self._write(f"  (aussi arrêté : {', '.join(background)})\n\n")
         finally:
             if self._chat is not None and self._chat.busy:
-                self._chat.end("".join(reply_parts))  # An unexpected error must not leave the page busy
+                self._chat.end(
+                    "".join(reply_parts)
+                )  # An unexpected error must not leave the page busy
             if self._speaker is not None:
                 self._speaker.end_block()  # Speak what is still buffered, then back to sentence mode
             if self._hub is not None:
@@ -662,7 +767,8 @@ class TextSession:
         snapshot = character.snapshot() if character is not None else {}
         try:
             task = asyncio.get_running_loop().create_task(
-                self._action_director.suggest(user_text, reply, snapshot))
+                self._action_director.suggest(user_text, reply, snapshot)
+            )
         except Exception:  # noqa: BLE001 - cosmetic role: never break the session
             return
         self._action_tasks.add(task)

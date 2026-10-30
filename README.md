@@ -527,16 +527,20 @@ pendant que le modèle écrit encore**.
 ## Avatar et tableau de bord
 
 Au lancement, Monika ouvre une page à `http://localhost:8765` (`WEB_PORT` ; `WEB_ENABLED=false`
-pour la couper). À gauche l'avatar 3D, à droite le tableau de bord.
+pour la couper). À gauche l'avatar 3D, à droite le tableau de bord ; l'onglet **❯** collé à son bord gauche le
+replie et rend toute la largeur à l'avatar (**❮** le ramène ; le choix est mémorisé d'une visite à l'autre).
 
-- **Avatar** : un modèle VRM (`web/static/avatar.vrm`) animé par des clips de mouvement
-  (`web/static/clips/`, manifeste `web/static/clips.json`, 26 gestes sous licence CC0 — voir
-  `web/static/clips/LICENSE.txt`) : repos, réflexion, parole, joie, surprise, hochement, salut,
-  colère, pleurs, danse, mains sur les hanches, bras ouverts, index pointé, étirement… Les expressions du visage (joie, colère, tristesse, détente, surprise),
-  le clignement et la synchronisation labiale suivent l'état et le son réel. Un voyant indique
+- **Avatar** : un modèle VRM (`web/static/assets/avatar.vrm`) animé par des clips de mouvement
+  (`web/static/assets/clips/`, manifeste `web/static/assets/clips.json`, 26 gestes sous licence CC0 — voir
+  `web/static/assets/clips/LICENSE.txt`) : repos, réflexion, parole, joie, surprise, hochement, salut,
+  colère, pleurs, danse, mains sur les hanches, bras ouverts, index pointé, étirement… Le mouvement et le
+  visage passent par le moteur d'**OpenSakura**, repris tel quel dans `web/static/js/avatar/animation.js` :
+  même reciblage des clips, mêmes poids d'expressions (joie, colère, tristesse, détente, surprise), même
+  clignement, même synchronisation labiale, pilotés par l'état et le son réel — aucun moteur maison par-dessus.
+  Un voyant indique
   « Au repos », « J'écoute », « Je réfléchis » ou « Je parle ».
   Le décor est une salle de club littéraire au crépuscule, entièrement procédurale
-  (`web/static/js/avatar/environment.js`) : plancher en lattes, tableau noir, fenêtres à claies et
+  (`web/static/js/avatar.js`) : plancher en lattes, tableau noir, fenêtres à claies et
   rideaux, pupitres, suspension qui oscille et poussière en suspension. Aucun fichier à télécharger ;
   si le décor échoue à se construire, la scène reste utilisable sans lui.
 - **Caméra** : glisser avec le bouton gauche tourne autour d'elle, la molette rapproche ou éloigne,
@@ -588,7 +592,7 @@ pour la couper). À gauche l'avatar 3D, à droite le tableau de bord.
 ```
 
 - **Même pipeline que le terminal** : la page n'ajoute ni second détecteur de parole ni second
-  Whisper. Un AudioWorklet (`web/static/js/voice-worklet.js`) ramène le micro à 16 kHz mono et
+  Whisper. Un AudioWorklet (dans `web/static/js/voice.js`) ramène le micro à 16 kHz mono et
   l'envoie en trames de 512 échantillons par le WebSocket ; elles entrent dans le `VoiceListener`
   des modes texte et voix (`parec` côté terminal). Le mode voix du terminal continue de marcher :
   `parec`/`pacat` ne sont pas touchés.
@@ -688,8 +692,10 @@ fermeture ──► aclose()                    dernière note du journal, puis 
 
 26 émotions : six de base (`joyeuse`, `tristesse`, `colere`, `peur`, `surprise`, `degout`) et vingt
 nuances (`taquine`, `boudeuse`, `jalousie`, `timide`, `fiere`, `attentionnee`, `tsundere`…). Leur liste,
-leurs demi-vies, leurs plafonds, leurs tags de voix et leurs expressions du visage vivent dans **une
-seule table**, `character/emotion_spec.py`. « Neutre » est dérivée (ce que l'émotion la plus forte
+leurs demi-vies, leurs plafonds et leurs tags de voix vivent dans **une seule table**,
+`character/emotion_spec.py`. Les poids d'expressions du visage sont ceux d'OpenSakura
+(`EMOTION_EXPR` dans `web/static/js/avatar/animation.js`), où chaque émotion française est reliée à sa
+clé anglaise. « Neutre » est dérivée (ce que l'émotion la plus forte
 laisse libre), jamais stockée. Au plus trois émotions comptent à la fois : les plus faibles retombent
 au seuil, et la page ne dessine que celles qui vivent.
 
@@ -753,7 +759,7 @@ conversation à l'autre.
 
 | Fichier | Rôle |
 |---|---|
-| `emotion_spec.py` | La table des 26 émotions : la seule déclaration d'une émotion (demi-vie, plafonds par niveau, tags de voix, expressions, gestes) |
+| `emotion_spec.py` | La table des 26 émotions : la seule déclaration d'une émotion (demi-vie, plafonds par niveau, tags de voix, gestes de repli) |
 | `models.py` | Types communs : `Appraisal`, `AvatarCue`, listes dérivées des émotions et signaux autorisés |
 | `appraisal.py` | Lecture du ton : lexique français, LLM (sortie non fiable, validée strictement), repli. **Seul endroit** qui transforme un ton en variations d'émotions (`deltas_from`) |
 | `emotions.py` | Vecteur des 26 émotions, décroissance dans le temps (aussi entre sessions), inhibition joie/bouderie, au plus 3 émotions notables |
@@ -772,8 +778,8 @@ Côté page : `web/static/js/avatar/` (clips, retargeting, visage, gestes), `web
 
 ### Modifier le comportement
 
-- **Ajouter un clip** : copier le `.glb` dans `web/static/clips/`, l'ajouter à
-  `web/static/clips.json`, puis l'utiliser dans `cues.py`. `tests/test_clips.py` refuse un nom
+- **Ajouter un clip** : copier le `.glb` dans `web/static/assets/clips/`, l'ajouter à
+  `web/static/assets/clips.json`, puis l'utiliser dans `cues.py`. `tests/test_clips.py` refuse un nom
   utilisé par le code mais absent du manifeste, et un fichier que rien ne joue. En `once: true` le
   clip se joue une fois et tient sa dernière pose ; `fade` règle le fondu d'entrée (0 = coupure). La page ignore les noms de clips
   qu'elle ne connaît pas.
@@ -785,7 +791,9 @@ Côté page : `web/static/js/avatar/` (clips, retargeting, visage, gestes), `web
 - **Régler le journal** : `SYSTEM_PROMPT` dans `journal_keeper.py`, tailles dans `journal.py`.
 - **Ajouter une émotion** : une ligne dans `SPECS` (`character/emotion_spec.py`). Le reste en découle :
   listes et signaux (`models.py`), demi-vies et inhibition (`emotions.py`), plafonds (`relationship.py`),
-  `GET /api/emotions`, et côté page les expressions et gestes de repli (aucune table en dur à toucher).
+  `GET /api/emotions` et les libellés du tableau de bord. Le visage demande en plus une ligne dans
+  `FRENCH_EMOTIONS` (`web/static/js/avatar/animation.js`) pour lui donner sa clé OpenSakura ; sans elle,
+  l'émotion reste neutre de visage.
 
 ## Mots sensibles
 

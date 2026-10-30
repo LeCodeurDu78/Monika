@@ -15,11 +15,27 @@ EMOTIONS: tuple[str, ...] = ALL_NAMES
 ACTIVE_EMOTIONS: tuple[str, ...] = NAMES
 
 # What an appraisal may report about a user message. Anything else coming from a model is dropped.
-SIGNALS: frozenset[str] = frozenset({
-    "greeting", "farewell", "thanks", "compliment", "affection", "tease", "surprise",
-    "insult", "hostility", "disappointment", "shouting", "user_distress", "task_issue",
-    "jealousy", "shyness", "worry", "pride",
-})
+SIGNALS: frozenset[str] = frozenset(
+    {
+        "greeting",
+        "farewell",
+        "thanks",
+        "compliment",
+        "affection",
+        "tease",
+        "surprise",
+        "insult",
+        "hostility",
+        "disappointment",
+        "shouting",
+        "user_distress",
+        "task_issue",
+        "jealousy",
+        "shyness",
+        "worry",
+        "pride",
+    }
+)
 
 
 def clamp(value: float, low: float, high: float) -> float:
@@ -29,23 +45,31 @@ def clamp(value: float, low: float, high: float) -> float:
 def fold_text(text: str) -> str:
     """Lower case without accents, curly apostrophes straightened: 'Génial' -> 'genial'."""
     text = text.lower().replace("’", "'")
-    return "".join(c for c in unicodedata.normalize("NFD", text) if unicodedata.category(c) != "Mn")
+    return "".join(
+        c for c in unicodedata.normalize("NFD", text) if unicodedata.category(c) != "Mn"
+    )
 
 
 def finite(value: Any) -> bool:
     """True for real numbers only (bool is refused: True is not a valence)."""
-    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+    )
 
 
 @dataclass(frozen=True)
 class Appraisal:
     """How a user message sounds. It describes the message only: it never sets any state by itself."""
 
-    valence: float = 0.0                      # -1 hostile .. +1 warm, towards Monika / the conversation
-    intensity: float = 0.0                    # 0..1, how strongly the tone is expressed
-    deltas: dict[str, float] = field(default_factory=dict)   # emotion changes, each in [-0.5, 0.5]
+    valence: float = 0.0  # -1 hostile .. +1 warm, towards Monika / the conversation
+    intensity: float = 0.0  # 0..1, how strongly the tone is expressed
+    deltas: dict[str, float] = field(
+        default_factory=dict
+    )  # emotion changes, each in [-0.5, 0.5]
     signals: tuple[str, ...] = ()
-    source: str = "lexicon"                   # "lexicon" | "llm"
+    source: str = "lexicon"  # "lexicon" | "llm"
 
 
 @dataclass(frozen=True)
@@ -64,7 +88,10 @@ class AvatarCue:
     duration_s: float | None = None
 
     def payload(self) -> dict[str, Any]:
-        data: dict[str, Any] = {"intensity": round(clamp(self.intensity, 0.0, 1.0), 3), "priority": self.priority}
+        data: dict[str, Any] = {
+            "intensity": round(clamp(self.intensity, 0.0, 1.0), 3),
+            "priority": self.priority,
+        }
         if self.emotion:
             data["emotion"] = self.emotion
         if self.clip:

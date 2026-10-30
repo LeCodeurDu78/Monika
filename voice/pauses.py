@@ -25,11 +25,25 @@ DEFAULT_S = 0.40  # no punctuation at all (a fragment the splitter could not clo
 
 # How the mood stretches or tightens the silence (1.0 = unchanged); the intensity scales the deviation
 EMOTION_FACTORS: dict[str, float] = {
-    "colere": 0.65, "frustree": 0.70, "excitee": 0.75, "joyeuse": 0.80, "surprise": 0.80,
-    "sarcastique": 0.90, "taquine": 0.90, "malicieuse": 0.95,
-    "timide": 1.15, "genee": 1.15, "sereine": 1.15, "attentionnee": 1.15,
-    "inquiete": 1.20, "froide": 1.20, "peur": 1.25, "distante": 1.30,
-    "decue": 1.30, "solitaire": 1.30, "tristesse": 1.35,
+    "colere": 0.65,
+    "frustree": 0.70,
+    "excitee": 0.75,
+    "joyeuse": 0.80,
+    "surprise": 0.80,
+    "sarcastique": 0.90,
+    "taquine": 0.90,
+    "malicieuse": 0.95,
+    "timide": 1.15,
+    "genee": 1.15,
+    "sereine": 1.15,
+    "attentionnee": 1.15,
+    "inquiete": 1.20,
+    "froide": 1.20,
+    "peur": 1.25,
+    "distante": 1.30,
+    "decue": 1.30,
+    "solitaire": 1.30,
+    "tristesse": 1.35,
 }
 
 _CLOSERS = "\"'»”’)]}»"  # a sentence often ends with « … » or « (…) » : the mark is before them
@@ -46,14 +60,24 @@ def _last_mark(text: str) -> str:
 def _emotion_factor(emotion: str, intensity: float) -> float:
     if not emotion:
         return 1.0
-    name = "".join(c for c in unicodedata.normalize("NFKD", emotion.lower()) if not unicodedata.combining(c))
+    name = "".join(
+        c
+        for c in unicodedata.normalize("NFKD", emotion.lower())
+        if not unicodedata.combining(c)
+    )
     factor = EMOTION_FACTORS.get(name.strip(), 1.0)
     weight = min(max(float(intensity), 0.0), 1.0)  # a faint mood changes almost nothing
     return 1.0 + (factor - 1.0) * weight
 
 
-def pause_after(text: str, emotion: str = "", intensity: float = 0.5, style: str = "neutre",
-                scale: float = 1.0, max_s: float = 1.2) -> float:
+def pause_after(
+    text: str,
+    emotion: str = "",
+    intensity: float = 0.5,
+    style: str = "neutre",
+    scale: float = 1.0,
+    max_s: float = 1.2,
+) -> float:
     """Seconds of silence to leave after this sentence; 0.0 for the neutral style or a zero scale."""
     if style != "naturel" or scale <= 0.0 or max_s <= 0.0:
         return 0.0

@@ -60,7 +60,7 @@ def parse_plan(raw: Any, known: set[str]) -> TurnPlan | None:
     if end <= start:
         return None
     try:
-        data = json.loads(raw[start:end + 1])
+        data = json.loads(raw[start : end + 1])
     except (json.JSONDecodeError, TypeError):
         return None
     if not isinstance(data, dict):
@@ -77,14 +77,21 @@ def parse_plan(raw: Any, known: set[str]) -> TurnPlan | None:
     return TurnPlan(tools, clean_hint(data.get("hint")))
 
 
-async def plan(user_text: str, known: set[str], llm: Any, timeout_s: float = 1.5,
-               model: str = "") -> TurnPlan | None:
+async def plan(
+    user_text: str, known: set[str], llm: Any, timeout_s: float = 1.5, model: str = ""
+) -> TurnPlan | None:
     """Ask for one plan; None on timeout, error or unusable answer. Never raises (cancellation aside)."""
     if not known:
         return None
     messages = [
-        {"role": "system", "content": SYSTEM_PROMPT.format(
-            tools=", ".join(sorted(known)), max_tools=MAX_TOOLS, max_hint=MAX_HINT_CHARS)},
+        {
+            "role": "system",
+            "content": SYSTEM_PROMPT.format(
+                tools=", ".join(sorted(known)),
+                max_tools=MAX_TOOLS,
+                max_hint=MAX_HINT_CHARS,
+            ),
+        },
         {"role": "user", "content": user_text[:2000]},
     ]
     try:

@@ -15,14 +15,22 @@ MAX_MOODS = 3
 MOOD_THRESHOLD = 0.15
 
 LEVEL_GUIDANCE: dict[str, str] = {
-    "reservee": ("Vous vous connaissez encore peu : reste polie, posée et attentive, avec peu de familiarité "
-                 "(pas de surnom, taquineries très légères). Sobre, jamais froide ni sèche."),
-    "cordiale": ("Relation cordiale : ton chaleureux et naturel, une pointe d'humour de temps en temps, "
-                 "un peu de familiarité."),
-    "complice": ("Vous êtes complices : plus de familiarité et d'aisance, taquineries amicales, plaisir visible "
-                 "de lui parler, clins d'œil à vos échanges passés quand ils reviennent naturellement."),
-    "proche": ("Vous êtes proches : grande aisance, tendresse discrète, taquineries affectueuses, tu peux être plus "
-               "personnelle et spontanée. Toujours respectueuse : ni jalousie ni possessivité."),
+    "reservee": (
+        "Vous vous connaissez encore peu : reste polie, posée et attentive, avec peu de familiarité "
+        "(pas de surnom, taquineries très légères). Sobre, jamais froide ni sèche."
+    ),
+    "cordiale": (
+        "Relation cordiale : ton chaleureux et naturel, une pointe d'humour de temps en temps, "
+        "un peu de familiarité."
+    ),
+    "complice": (
+        "Vous êtes complices : plus de familiarité et d'aisance, taquineries amicales, plaisir visible "
+        "de lui parler, clins d'œil à vos échanges passés quand ils reviennent naturellement."
+    ),
+    "proche": (
+        "Vous êtes proches : grande aisance, tendresse discrète, taquineries affectueuses, tu peux être plus "
+        "personnelle et spontanée. Toujours respectueuse : ni jalousie ni possessivité."
+    ),
 }
 
 # Wording for the emotions whose effect on the REPLY needs to be spelled out (the rest read as their label).
@@ -30,12 +38,16 @@ LEVEL_GUIDANCE: dict[str, str] = {
 MOOD_GUIDANCE: dict[str, str] = {
     "joyeuse": "joyeuse : un peu plus enjouée, phrases légères.",
     "taquine": "d'humeur taquine : tu peux le taquiner gentiment, sans moquerie blessante.",
-    "boudeuse": ("un peu vexée : tu peux le montrer avec légèreté, dire franchement en une phrase ce qui t'a "
-                 "froissée, sans reproche appuyé ni culpabilisation, puis aider pleinement."),
+    "boudeuse": (
+        "un peu vexée : tu peux le montrer avec légèreté, dire franchement en une phrase ce qui t'a "
+        "froissée, sans reproche appuyé ni culpabilisation, puis aider pleinement."
+    ),
     "surprise": "surprise : réagis-y brièvement et naturellement.",
     "colere": "en colère : dis ce qui ne va pas en une phrase, sans éclat ni reproche appuyé, puis aide pleinement.",
-    "jalousie": ("jalouse : ne le montre que par une pointe d'humour ; jamais de reproche, de possessivité "
-                 "ni de contrôle."),
+    "jalousie": (
+        "jalouse : ne le montre que par une pointe d'humour ; jamais de reproche, de possessivité "
+        "ni de contrôle."
+    ),
     "froide": "distante d'un coup : plus brève et réservée, sans sécheresse ni punition.",
     "distante": "ailleurs : moins expansive, tu restes tout aussi utile et présente.",
     "sarcastique": "sarcastique : ironie légère, jamais moqueuse ni blessante.",
@@ -63,9 +75,17 @@ def _moods(snapshot: dict[str, Any]) -> list[str]:
     emotions = snapshot.get("emotions")
     if not isinstance(emotions, dict):
         return []
-    notable = sorted(((value, name) for name, value in emotions.items()
-                      if name != NEUTRAL and isinstance(value, (int, float)) and not isinstance(value, bool)
-                      and value >= MOOD_THRESHOLD), reverse=True)[:MAX_MOODS]
+    notable = sorted(
+        (
+            (value, name)
+            for name, value in emotions.items()
+            if name != NEUTRAL
+            and isinstance(value, (int, float))
+            and not isinstance(value, bool)
+            and value >= MOOD_THRESHOLD
+        ),
+        reverse=True,
+    )[:MAX_MOODS]
     return [line for value, name in notable if (line := _mood_line(name, float(value)))]
 
 

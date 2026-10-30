@@ -1,6 +1,7 @@
-// Debug panel (open the page with ?debug): play every clip, force an emotion, inspect the VRM's expressions.
+// Debug panel (open the page with ?debug): play every clip, force an emotion, hold an expression preset.
 // Built with DOM calls only (no innerHTML), like the rest of the page.
-const EMOTIONS = ['neutre', 'joyeuse', 'taquine', 'boudeuse', 'surprise'];
+const EMOTIONS = ['joyeuse', 'taquine', 'boudeuse', 'tristesse', 'colere', 'excitee'];
+const EXPRESSIONS = ['happy', 'angry', 'sad', 'relaxed', 'surprised'];   // the VRM presets the face drives
 
 function el(tag, attrs = {}, text = '') {
   const node = document.createElement(tag);
@@ -26,19 +27,9 @@ export function mountDebugPanel(avatar) {
   const panel = el('aside', { id: 'debug-panel', 'aria-label': 'Debug avatar' });
   panel.append(el('h2', {}, 'Debug avatar'));
 
-  const resolved = avatar.face.resolved;
-  const missing = Object.entries(resolved).filter(([, real]) => !real).map(([name]) => name);
-  const info = el('p', { class: 'dbg-info' },
-    `Expressions : ${Object.entries(resolved).map(([k, v]) => `${k}→${v ?? '✗'}`).join(' · ')}`);
-  if (missing.length) info.classList.add('dbg-warn');
-  panel.append(info);
-
-  panel.append(group('Clips', avatar.clipNames.map((n) => [n, () => avatar.cues.cue({ clip: n, priority: 9 })])));
+  panel.append(group('Clips', avatar.clipNames.map((n) => [n, () => avatar.playOnce(n, 4)])));
   panel.append(group('Émotions (visage + clip)', EMOTIONS.map((e) => [e, () => avatar.cue({ emotion: e, intensity: 0.8 })])));
-  panel.append(group('Visage seul', [
-    ...EMOTIONS.map((e) => [e, () => avatar.face.setEmotion(e, 0.9)]),
-  ]));
-  panel.append(group('États', ['idle', 'thinking'].map((s) => [s, () => avatar.setState(s)])));
+  panel.append(group('Visage seul', EXPRESSIONS.map((n) => [n, () => avatar.setExpression(n, 1)])));
   panel.append(group('Bouche', [
     ['parler 3 s', () => {
       avatar.setSound(true);

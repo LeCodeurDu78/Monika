@@ -18,11 +18,18 @@ from datetime import datetime
 from typing import Any
 
 from character.appraisal import Complete
-from character.journal import (MAX_IMPRESSION_CHARS, MAX_NOTE_CHARS, MAX_THREAD_CHARS, MAX_THREADS, Journal, clean)
+from character.journal import (
+    MAX_IMPRESSION_CHARS,
+    MAX_NOTE_CHARS,
+    MAX_THREAD_CHARS,
+    MAX_THREADS,
+    Journal,
+    clean,
+)
 
 log = logging.getLogger(__name__)
 
-MAX_BATCH = 16               # exchanges kept while waiting for enough substance
+MAX_BATCH = 16  # exchanges kept while waiting for enough substance
 CLIP_USER_CHARS = 600
 CLIP_REPLY_CHARS = 500
 MIN_NOTE_CHARS = 15
@@ -59,7 +66,7 @@ def parse_note(raw: str) -> NoteDraft:
     if start < 0 or end <= start:
         raise NoteError("no JSON object in the answer")
     try:
-        data = json.loads(raw[start:end + 1])
+        data = json.loads(raw[start : end + 1])
     except json.JSONDecodeError as err:
         raise NoteError(f"invalid JSON: {err}") from err
     if not isinstance(data, dict) or not isinstance(data.get("note"), str):
@@ -67,10 +74,22 @@ def parse_note(raw: str) -> NoteDraft:
     note = clean(data["note"], MAX_NOTE_CHARS)
     if len(note) < MIN_NOTE_CHARS:
         raise NoteError("note too short")
-    impression = clean(data["impression"], MAX_IMPRESSION_CHARS) if isinstance(data.get("impression"), str) else None
+    impression = (
+        clean(data["impression"], MAX_IMPRESSION_CHARS)
+        if isinstance(data.get("impression"), str)
+        else None
+    )
     threads = None
     if isinstance(data.get("threads"), list):
-        threads = [t for t in (clean(x, MAX_THREAD_CHARS) for x in data["threads"] if isinstance(x, str)) if t][:MAX_THREADS]
+        threads = [
+            t
+            for t in (
+                clean(x, MAX_THREAD_CHARS)
+                for x in data["threads"]
+                if isinstance(x, str)
+            )
+            if t
+        ][:MAX_THREADS]
     return NoteDraft(note, impression or None, threads)
 
 
@@ -82,6 +101,7 @@ class _Job:
 
 def build_prompt(journal: Journal, job: _Job) -> str:
     """The user message of the writing call. Conversation text is data between tags that it cannot close."""
+
     def tag_safe(text: str) -> str:
         return text.replace("<", "‹").replace(">", "›")
 
@@ -90,16 +110,25 @@ def build_prompt(journal: Journal, job: _Job) -> str:
         lines.append(f"[Lui] {tag_safe(user)}")
         lines.append(f"[Moi] {tag_safe(reply)}")
     threads = "\n".join(f"- {t}" for t in journal.data.threads) or "(aucun)"
-    return (f"<niveau_relation>{job.level}</niveau_relation>\n"
-            f"<impression_actuelle>\n{journal.data.impression or '(aucune encore)'}\n</impression_actuelle>\n"
-            f"<fils_en_cours>\n{threads}\n</fils_en_cours>\n"
-            f"<echanges>\n" + "\n".join(lines) + "\n</echanges>")
+    return (
+        f"<niveau_relation>{job.level}</niveau_relation>\n"
+        f"<impression_actuelle>\n{journal.data.impression or '(aucune encore)'}\n</impression_actuelle>\n"
+        f"<fils_en_cours>\n{threads}\n</fils_en_cours>\n"
+        f"<echanges>\n" + "\n".join(lines) + "\n</echanges>"
+    )
 
 
 class JournalKeeper:
-    def __init__(self, journal: Journal, complete: Complete, every_turns: int = 8, min_user_chars: int = 80,
-                 mask: Callable[[str], str] = lambda text: text, clock: Callable[[], datetime] | None = None,
-                 timeout_s: float = 60.0) -> None:
+    def __init__(
+        self,
+        journal: Journal,
+        complete: Complete,
+        every_turns: int = 8,
+        min_user_chars: int = 80,
+        mask: Callable[[str], str] = lambda text: text,
+        clock: Callable[[], datetime] | None = None,
+        timeout_s: float = 60.0,
+    ) -> None:
         self._journal = journal
         self._complete = complete
         self._every = max(2, every_turns)
@@ -155,7 +184,7 @@ class JournalKeeper:
 
     def _enqueue(self) -> None:
         if self._user_chars < self._min_user_chars:
-            return   # too little to write about: keep gathering
+            return  # too little to write about: keep gathering
         job = _Job(self._batch, self._level)
         try:
             self._queue.put_nowait(job)
@@ -183,8 +212,11 @@ class JournalKeeper:
                 self._queue.task_done()
 
     async def _write(self, job: _Job) -> None:
-        raw = await asyncio.wait_for(self._complete(SYSTEM_PROMPT, build_prompt(self._journal, job)), self._timeout)
-        draft = parse_note(self._mask(raw))   # what comes back is masked too
+        raw = await asyncio.wait_for(
+            self._complete(SYSTEM_PROMPT, build_prompt(self._journal, job)),
+            self._timeout,
+        )
+        draft = parse_note(self._mask(raw))  # what comes back is masked too
         if self._journal.add_note(draft.note, job.level, self._clock()) is None:
             return
         if draft.impression:
@@ -208,4 +240,10 @@ class JournalKeeper:
         return left
 
 
-__all__: list[Any] = ["JournalKeeper", "NoteError", "parse_note", "build_prompt", "SYSTEM_PROMPT"]
+__all__: list[Any] = [
+    "SYSTEM_PROMPT",
+    "JournalKeeper",
+    "NoteError",
+    "build_prompt",
+    "parse_note",
+]

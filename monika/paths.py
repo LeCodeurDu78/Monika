@@ -88,6 +88,13 @@ class Paths:
         """Create all directories; the home itself is private to the user."""
         self.home.mkdir(parents=True, exist_ok=True)
         self.home.chmod(0o700)
-        for path in (self.memory, self.voice, self.rag, self.character, self.logs,
-                     self.tool_results, self.sessions):
+        for path in (
+            self.memory,
+            self.voice,
+            self.rag,
+            self.character,
+            self.logs,
+            self.tool_results,
+            self.sessions,
+        ):
             path.mkdir(parents=True, exist_ok=True)

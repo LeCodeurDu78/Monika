@@ -44,17 +44,27 @@ log = logging.getLogger(__name__)
 
 DEFAULT_TAG = "neutral1"
 DEFAULT_SAMPLE_RATE = 32000  # Used until the warm-up says otherwise
-CHUNK_SAMPLES = 20000        # ~0.6 s at 32 kHz: the mouth keeps moving between two chunks
-WARMUP_TEXT = "Hello."       # Short and speakable in every GPT-SoVITS front-end
-LOAD_TIMEOUT_S = 180.0       # The first request loads the model: give it time, it is a one-off
+CHUNK_SAMPLES = 20000  # ~0.6 s at 32 kHz: the mouth keeps moving between two chunks
+WARMUP_TEXT = "Hello."  # Short and speakable in every GPT-SoVITS front-end
+LOAD_TIMEOUT_S = (
+    180.0  # The first request loads the model: give it time, it is a one-off
+)
 EMOTIONS_FILE = Path("references") / "emotions.json"
 
 # `【tag】` as written by the emotion mapper (a tag is never part of what is spoken)
 TAG_RE = re.compile(r"【\s*([^】]*?)\s*】")
 # GPT-SoVITS languages; French has no front-end of its own (see language_code)
 LANGUAGES = frozenset({"auto", "en", "zh", "ja", "ko", "yue"})
-_NAMES = {"chinese": "zh", "english": "en", "japanese": "ja", "korean": "ko", "cantonese": "yue",
-          "français": "en", "french": "en", "fr": "en"}
+_NAMES = {
+    "chinese": "zh",
+    "english": "en",
+    "japanese": "ja",
+    "korean": "ko",
+    "cantonese": "yue",
+    "français": "en",
+    "french": "en",
+    "fr": "en",
+}
 _LANGUAGES = {**{code: code for code in LANGUAGES}, **_NAMES}
 
 
@@ -63,16 +73,26 @@ def wav_to_pcm(audio: bytes) -> tuple[np.ndarray, int]:
     """Decode a RIFF/WAVE blob into mono int16 samples; raises TtsError for anything else."""
     try:
         with wave.open(io.BytesIO(audio), "rb") as handle:
-            channels, width, rate = handle.getnchannels(), handle.getsampwidth(), handle.getframerate()
+            channels, width, rate = (
+                handle.getnchannels(),
+                handle.getsampwidth(),
+                handle.getframerate(),
+            )
             frames = handle.readframes(handle.getnframes())
     except (wave.Error, EOFError) as exc:
-        raise TtsError("GPT-SoVITS a renvoyé un son illisible (fichier WAV attendu). Vérifie la version "
-                       "d'api_v2.py lancée côté serveur.") from exc
+        raise TtsError(
+            "GPT-SoVITS a renvoyé un son illisible (fichier WAV attendu). Vérifie la version "
+            "d'api_v2.py lancée côté serveur."
+        ) from exc
     if width != 2:
-        raise TtsError(f"GPT-SoVITS renvoie du PCM {width * 8} bits : seul le 16 bits est géré "
-                       "(format WAV en 16 bits).")
+        raise TtsError(
+            f"GPT-SoVITS renvoie du PCM {width * 8} bits : seul le 16 bits est géré "
+            "(format WAV en 16 bits)."
+        )
     if not rate or not frames:
-        raise TtsError("GPT-SoVITS a renvoyé un son vide : le texte n'était peut-être pas prononçable.")
+        raise TtsError(
+            "GPT-SoVITS a renvoyé un son vide : le texte n'était peut-être pas prononçable."
+        )
     pcm = np.frombuffer(frames, dtype="<i2")
     if channels > 1:
         pcm = pcm.reshape(-1, channels).astype(np.int32).mean(axis=1).astype(np.int16)
@@ -83,7 +103,7 @@ def resample(pcm: np.ndarray, from_rate: int, to_rate: int) -> np.ndarray:
     """Linear resampling: a server answering at another rate must not play too fast or too slow."""
     if from_rate == to_rate or pcm.size == 0:
         return pcm
-    count = max(1, int(round(pcm.size * to_rate / from_rate)))
+    count = max(1, round(pcm.size * to_rate / from_rate))
     source = np.arange(pcm.size, dtype=np.float32)
     target = np.arange(count, dtype=np.float32) * (from_rate / to_rate)
     return np.interp(target, source, pcm.astype(np.float32)).astype(np.int16)
@@ -91,7 +111,7 @@ def resample(pcm: np.ndarray, from_rate: int, to_rate: int) -> np.ndarray:
 
 def chunks_of(pcm: np.ndarray, size: int = CHUNK_SAMPLES) -> Iterator[np.ndarray]:
     for start in range(0, len(pcm), size):
-        piece = pcm[start:start + size]
+        piece = pcm[start : start + size]
         if piece.size:
             yield piece
 
@@ -106,7 +126,7 @@ def split_tagged(text: str) -> list[tuple[str | None, str]]:
     tag: str | None = None
     pos = 0
     for match in TAG_RE.finditer(text):
-        chunk = " ".join(text[pos:match.start()].split())
+        chunk = " ".join(text[pos : match.start()].split())
         if chunk:
             runs.append((tag, chunk))
         tag, pos = match.group(1).strip().lower(), match.end()
@@ -141,7 +161,7 @@ class VoicePack:
     name: str
     prompt_lang: str
     references: dict[str, Reference] = field(default_factory=dict)
-    missing: tuple[str, ...] = ()          # Tags announced by emotions.json without a recording
+    missing: tuple[str, ...] = ()  # Tags announced by emotions.json without a recording
     warnings: list[str] = field(default_factory=list)
 
 
@@ -167,24 +187,37 @@ def find_pack(root: Path, character_id: str = "") -> Path:
     if (root / EMOTIONS_FILE).is_file():
         return root
     if not root.is_dir():
-        raise TtsError(f"Dossier de voix introuvable : {root}. Crée-le, ou corrige TTS_SPEAKERS_DIR "
-                       "dans ton .env (défaut : ~/.config/monika/voice).")
-    packs = sorted(p for p in root.iterdir() if p.is_dir() and (p / EMOTIONS_FILE).is_file())
+        raise TtsError(
+            f"Dossier de voix introuvable : {root}. Crée-le, ou corrige TTS_SPEAKERS_DIR "
+            "dans ton .env (défaut : ~/.config/monika/voice)."
+        )
+    packs = sorted(
+        p for p in root.iterdir() if p.is_dir() and (p / EMOTIONS_FILE).is_file()
+    )
     if not packs:
-        raise TtsError(f"Aucun pack de voix GPT-SoVITS dans {root} : il faut un dossier contenant "
-                       f"{EMOTIONS_FILE} et ses enregistrements de référence (une voix par émotion). "
-                       "Voir le README, section Voix.")
+        raise TtsError(
+            f"Aucun pack de voix GPT-SoVITS dans {root} : il faut un dossier contenant "
+            f"{EMOTIONS_FILE} et ses enregistrements de référence (une voix par émotion). "
+            "Voir le README, section Voix."
+        )
     wanted = character_id.strip()
     if wanted:
         for pack in packs:
-            if pack.name == wanted or str(_character_meta(pack).get("character_id") or "") == wanted:
+            if (
+                pack.name == wanted
+                or str(_character_meta(pack).get("character_id") or "") == wanted
+            ):
                 return pack
         names = ", ".join(pack.name for pack in packs)
-        raise TtsError(f"Voix « {wanted} » introuvable dans {root} (packs présents : {names}). "
-                       "Corrige TTS_CHARACTER_ID.")
+        raise TtsError(
+            f"Voix « {wanted} » introuvable dans {root} (packs présents : {names}). "
+            "Corrige TTS_CHARACTER_ID."
+        )
     if len(packs) > 1:
         names = ", ".join(pack.name for pack in packs)
-        raise TtsError(f"Plusieurs voix dans {root} ({names}) : choisis la tienne avec TTS_CHARACTER_ID.")
+        raise TtsError(
+            f"Plusieurs voix dans {root} ({names}) : choisis la tienne avec TTS_CHARACTER_ID."
+        )
     return packs[0]
 
 
@@ -194,16 +227,25 @@ def read_pack(folder: Path, prompt_lang_default: str = "zh") -> VoicePack:
     try:
         table = json.loads(emo_file.read_text(encoding="utf-8-sig"))
     except OSError as exc:
-        raise TtsError(f"Impossible de lire {emo_file} : {type(exc).__name__}. Vérifie le pack de voix.") from exc
+        raise TtsError(
+            f"Impossible de lire {emo_file} : {type(exc).__name__}. Vérifie le pack de voix."
+        ) from exc
     except json.JSONDecodeError as exc:
-        raise TtsError(f"{emo_file} n'est pas un JSON valide (ligne {exc.lineno}) : corrige-le ou "
-                       "remplace le pack de voix.") from exc
+        raise TtsError(
+            f"{emo_file} n'est pas un JSON valide (ligne {exc.lineno}) : corrige-le ou "
+            "remplace le pack de voix."
+        ) from exc
     if not isinstance(table, dict):
-        raise TtsError(f"{emo_file} doit contenir un objet JSON (tag -> {{audio, text}}).")
+        raise TtsError(
+            f"{emo_file} doit contenir un objet JSON (tag -> {{audio, text}})."
+        )
     meta = _character_meta(folder)
-    pack = VoicePack(folder=folder, character_id=str(meta.get("character_id") or folder.name),
-                     name=str(meta.get("name") or folder.name),
-                     prompt_lang=language_code(str(meta.get("language") or ""), prompt_lang_default))
+    pack = VoicePack(
+        folder=folder,
+        character_id=str(meta.get("character_id") or folder.name),
+        name=str(meta.get("name") or folder.name),
+        prompt_lang=language_code(str(meta.get("language") or ""), prompt_lang_default),
+    )
     missing: list[str] = []
     for tag, entry in table.items():
         key = str(tag).strip().lower()
@@ -216,20 +258,27 @@ def read_pack(folder: Path, prompt_lang_default: str = "zh") -> VoicePack:
         if not audio.is_file():
             missing.append(key)
             continue
-        pack.references[key] = Reference(key, audio, str(entry.get("text") or "").strip())
+        pack.references[key] = Reference(
+            key, audio, str(entry.get("text") or "").strip()
+        )
     if not pack.references:
-        raise TtsError(f"Aucun enregistrement de référence utilisable dans {folder / 'references'} : "
-                       "chaque tag d'emotions.json doit avoir son fichier audio, comme dans un pack "
-                       "GPT-SoVITS (Speakers/<voix>/references/).")
+        raise TtsError(
+            f"Aucun enregistrement de référence utilisable dans {folder / 'references'} : "
+            "chaque tag d'emotions.json doit avoir son fichier audio, comme dans un pack "
+            "GPT-SoVITS (Speakers/<voix>/references/)."
+        )
     pack.missing = tuple(sorted(missing))
     if pack.missing:
         pack.warnings.append(
             f"{len(pack.missing)} tag(s) d'émotion sans enregistrement dans {emo_file.name} "
             f"({', '.join(pack.missing[:5])}{'…' if len(pack.missing) > 5 else ''}) : ils parleront "
-            f"avec la voix de {DEFAULT_TAG}.")
+            f"avec la voix de {DEFAULT_TAG}."
+        )
     if DEFAULT_TAG not in pack.references:
-        pack.warnings.append(f"Ce pack n'a pas de {DEFAULT_TAG} : les émotions sans enregistrement "
-                             f"utilisent « {next(iter(pack.references))} ».")
+        pack.warnings.append(
+            f"Ce pack n'a pas de {DEFAULT_TAG} : les émotions sans enregistrement "
+            f"utilisent « {next(iter(pack.references))} »."
+        )
     return pack
 
 
@@ -237,8 +286,12 @@ def read_pack(folder: Path, prompt_lang_default: str = "zh") -> VoicePack:
 def http_post(url: str, payload: dict[str, Any], timeout: float) -> bytes:
     """POST one synthesis request to api_v2.py and return the WAV body; TtsError when it fails."""
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-    request = urllib.request.Request(url, data=body, method="POST",
-                                     headers={"Content-Type": "application/json; charset=utf-8"})
+    request = urllib.request.Request(
+        url,
+        data=body,
+        method="POST",
+        headers={"Content-Type": "application/json; charset=utf-8"},
+    )
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             return response.read()
@@ -248,19 +301,29 @@ def http_post(url: str, payload: dict[str, Any], timeout: float) -> bytes:
         except Exception:  # noqa: BLE001 - the body is a courtesy, never a reason to fail differently
             detail = ""
         hint = " Vérifie le texte de référence (prompt_text) et le chemin du fichier audio côté serveur."
-        raise TtsError(f"GPT-SoVITS a refusé la synthèse (HTTP {exc.code})"
-                       f"{' : ' + detail if detail else ''}.{hint}") from exc
+        raise TtsError(
+            f"GPT-SoVITS a refusé la synthèse (HTTP {exc.code})"
+            f"{' : ' + detail if detail else ''}.{hint}"
+        ) from exc
     except urllib.error.URLError as exc:
         if isinstance(exc.reason, (TimeoutError, socket.timeout)):
-            raise TtsError(f"GPT-SoVITS n'a pas répondu en {timeout:.0f} s : le modèle est peut-être encore "
-                           "en train de charger, ou il est occupé. Augmente TTS_TIMEOUT_S.") from exc
-        raise TtsError(f"Le serveur GPT-SoVITS ({url}) ne répond pas : lance-le (api_v2.py, port 9880) "
-                       f"ou corrige TTS_URL. Détail : {exc.reason}") from exc
-    except (TimeoutError, socket.timeout) as exc:
-        raise TtsError(f"GPT-SoVITS n'a pas répondu en {timeout:.0f} s : augmente TTS_TIMEOUT_S.") from exc
+            raise TtsError(
+                f"GPT-SoVITS n'a pas répondu en {timeout:.0f} s : le modèle est peut-être encore "
+                "en train de charger, ou il est occupé. Augmente TTS_TIMEOUT_S."
+            ) from exc
+        raise TtsError(
+            f"Le serveur GPT-SoVITS ({url}) ne répond pas : lance-le (api_v2.py, port 9880) "
+            f"ou corrige TTS_URL. Détail : {exc.reason}"
+        ) from exc
+    except TimeoutError as exc:
+        raise TtsError(
+            f"GPT-SoVITS n'a pas répondu en {timeout:.0f} s : augmente TTS_TIMEOUT_S."
+        ) from exc
     except OSError as exc:
-        raise TtsError(f"Connexion à GPT-SoVITS impossible ({type(exc).__name__}: {exc}) : vérifie TTS_URL "
-                       "et que le serveur tourne.") from exc
+        raise TtsError(
+            f"Connexion à GPT-SoVITS impossible ({type(exc).__name__}: {exc}) : vérifie TTS_URL "
+            "et que le serveur tourne."
+        ) from exc
 
 
 Post = Callable[[str, dict[str, Any], float], bytes]
@@ -270,7 +333,9 @@ Post = Callable[[str, dict[str, Any], float], bytes]
 class GptSovitsEngine:
     """Speaks through the GPT-SoVITS HTTP API; same duck-typed interface as `Speaker` expects."""
 
-    def __init__(self, settings: Settings, paths: Paths, post: Post | None = None) -> None:
+    def __init__(
+        self, settings: Settings, paths: Paths, post: Post | None = None
+    ) -> None:
         self._s = settings
         self._paths = paths
         self._post = post or http_post
@@ -313,16 +378,20 @@ class GptSovitsEngine:
                 await self.run(self._warm_up)
             except TtsError:
                 raise
-            except Exception as exc:  # noqa: BLE001 - one clear message for the console
-                raise TtsError(f"GPT-SoVITS est injoignable : {type(exc).__name__}: {str(exc)[:250]}. "
-                               f"Vérifie que le serveur tourne sur {self._s.tts_url}.") from exc
+            except Exception as exc:
+                raise TtsError(
+                    f"GPT-SoVITS est injoignable : {type(exc).__name__}: {str(exc)[:250]}. "
+                    f"Vérifie que le serveur tourne sur {self._s.tts_url}."
+                ) from exc
             self._loaded = True
             self.load_seconds = time.perf_counter() - start
             return self.load_seconds
 
     def _read_pack(self) -> None:
         root = self._s.tts_speakers_dir or self._paths.voice
-        self.pack = read_pack(find_pack(root, self._s.tts_character_id), self._s.tts_prompt_lang)
+        self.pack = read_pack(
+            find_pack(root, self._s.tts_character_id), self._s.tts_prompt_lang
+        )
         self.references = self.pack.references
         self.available_tags = set(self.references)
         self.character_name = self.pack.name
@@ -332,7 +401,9 @@ class GptSovitsEngine:
     def _warm_up(self) -> None:
         """One short request: it loads the model server-side and tells us the real sample rate."""
         payload = self._payload(WARMUP_TEXT, self._default_reference())
-        _, rate = wav_to_pcm(self._post(self.url, payload, max(self._s.tts_timeout_s, LOAD_TIMEOUT_S)))
+        _, rate = wav_to_pcm(
+            self._post(self.url, payload, max(self._s.tts_timeout_s, LOAD_TIMEOUT_S))
+        )
         self.sample_rate = rate
 
     def _default_reference(self) -> Reference:
@@ -370,12 +441,18 @@ class GptSovitsEngine:
             raise TtsError("La synthèse vocale n'est pas chargée.")
         for tag, run in split_tagged(text):
             reference = self._reference(tag)
-            wav = self._post(self.url, self._payload(run, reference), self._s.tts_timeout_s)
+            wav = self._post(
+                self.url, self._payload(run, reference), self._s.tts_timeout_s
+            )
             pcm, rate = wav_to_pcm(wav)
             if rate != self.sample_rate:
                 if not self._rate_warned:
                     self._rate_warned = True
-                    log.warning("GPT-SoVITS answered at %d Hz instead of %d: resampling", rate, self.sample_rate)
+                    log.warning(
+                        "GPT-SoVITS answered at %d Hz instead of %d: resampling",
+                        rate,
+                        self.sample_rate,
+                    )
                 pcm = resample(pcm, rate, self.sample_rate)
             yield from chunks_of(pcm)
 

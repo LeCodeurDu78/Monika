@@ -26,7 +26,9 @@ def _next_chunk(stream: Any, end: object) -> Any:
 
 _SENTENCE_DONE = object()  # Marks the end of a sentence that was spoken
 _SENTENCE_SKIPPED = object()  # Marks the end of a sentence that failed
-MAX_FAILURES = 3  # Consecutive failures after which the voice is switched off for the session
+MAX_FAILURES = (
+    3  # Consecutive failures after which the voice is switched off for the session
+)
 
 # (text, emotion, intensity) -> text with emotion tags for the engine (see character/tts_emotion.py)
 Tagger = Callable[[str, str, float], str]
@@ -52,17 +54,32 @@ class _Sink(Protocol):
 class Speaker:
     """Turns queued sentences into sound, one burst at a time, without ever overlapping speech."""
 
-    def __init__(self, engine: _Engine, sink: _Sink, on_error: Callable[[str], None] | None = None,
-                 lookahead_chunks: int = 6, tagger: Tagger | None = None, block_chars: int = 0,
-                 pauses: Pauses | None = None) -> None:
+    def __init__(
+        self,
+        engine: _Engine,
+        sink: _Sink,
+        on_error: Callable[[str], None] | None = None,
+        lookahead_chunks: int = 6,
+        tagger: Tagger | None = None,
+        block_chars: int = 0,
+        pauses: Pauses | None = None,
+    ) -> None:
         self._engine = engine
         self._sink = sink
-        self._default_sink = sink  # pacat, unless the page takes the voice over (see use_sink)
-        self._pauses = pauses  # None = the neutral style, nothing inserted (previous behaviour)
-        self._last: tuple[str, str, float] | None = None  # The previous sentence, for its pause
+        self._default_sink = (
+            sink  # pacat, unless the page takes the voice over (see use_sink)
+        )
+        self._pauses = (
+            pauses  # None = the neutral style, nothing inserted (previous behaviour)
+        )
+        self._last: tuple[str, str, float] | None = (
+            None  # The previous sentence, for its pause
+        )
         self.on_error = on_error  # May be set later, e.g. by the chat session
         self.engine = engine
-        self._tagger = tagger  # Emotion tags: None means the engine takes plain text, without tags
+        self._tagger = (
+            tagger  # Emotion tags: None means the engine takes plain text, without tags
+        )
         self._mood: tuple[str, float] = ("neutre", 0.0)
         self._block_chars = max(0, block_chars)  # 0 = one sentence per request
         self._block: list[str] = []  # Sentences waiting to be spoken as one block
@@ -101,10 +118,15 @@ class Speaker:
         if not text or self.disabled_reason is not None:
             return False
         if filler and self.busy:
-            return False  # A waiting phrase never talks over, or right after, real speech
+            return (
+                False  # A waiting phrase never talks over, or right after, real speech
+            )
         if self._blocking and self._block_chars > 0 and not filler:
             self._block.append(text)
-            if sum(len(part) for part in self._block) + len(self._block) - 1 >= self._block_chars:
+            if (
+                sum(len(part) for part in self._block) + len(self._block) - 1
+                >= self._block_chars
+            ):
                 self._flush_block()  # Reaches the limit: speak what we have, it is one request
             else:
                 self._idle.clear()  # Buffered text still counts as speech waiting to be heard
@@ -187,7 +209,9 @@ class Speaker:
             log.exception("pause settings unreadable, speaking without a pause")
             return None
         text, emotion, intensity = self._last
-        seconds = pause_after(text, emotion, intensity, style=style, scale=scale, max_s=max_s)
+        seconds = pause_after(
+            text, emotion, intensity, style=style, scale=scale, max_s=max_s
+        )
         if seconds <= 0:
             return None
         rate = int(getattr(self._engine, "sample_rate", 24000) or 24000)
@@ -196,7 +220,10 @@ class Speaker:
     def _ensure_started(self) -> None:
         if not self._tasks:
             loop = asyncio.get_running_loop()
-            self._tasks = [loop.create_task(self._produce()), loop.create_task(self._consume())]
+            self._tasks = [
+                loop.create_task(self._produce()),
+                loop.create_task(self._consume()),
+            ]
 
     def _report(self, message: str) -> None:
         self.failures += 1
@@ -225,7 +252,9 @@ class Speaker:
             try:
                 stream = self._engine.synth(self._tag(text))
                 if gap is not None and generation == self._generation:
-                    await self._audio.put((generation, gap))  # The breathing room comes before the words
+                    await self._audio.put(
+                        (generation, gap)
+                    )  # The breathing room comes before the words
                 while True:
                     chunk = await self._engine.run(_next_chunk, stream, end)
                     if chunk is end:
@@ -240,11 +269,19 @@ class Speaker:
                 raise
             except Exception as exc:
                 if generation == self._generation:
-                    self._report(str(exc) if isinstance(exc, VoiceError)
-                                 else f"La synthèse vocale a échoué : {type(exc).__name__}: {exc}")
+                    self._report(
+                        str(exc)
+                        if isinstance(exc, VoiceError)
+                        else f"La synthèse vocale a échoué : {type(exc).__name__}: {exc}"
+                    )
             finally:
-                if generation == self._generation:  # a cancelled answer must not leave a pause behind
-                    self._last = (text, *mood)  # The next gap depends on this sentence and its mood
+                if (
+                    generation == self._generation
+                ):  # a cancelled answer must not leave a pause behind
+                    self._last = (
+                        text,
+                        *mood,
+                    )  # The next gap depends on this sentence and its mood
                 if stream is not None:
                     try:
                         await self._engine.run(stream.close)
@@ -263,7 +300,9 @@ class Speaker:
                     self._pending = max(0, self._pending - 1)
                     self.spoken += item is _SENTENCE_DONE
                     if self._pending == 0:
-                        await self._sink.close()  # Returns when the last sound has been heard
+                        await (
+                            self._sink.close()
+                        )  # Returns when the last sound has been heard
                         if self._pending == 0 and generation == self._generation:
                             self._idle.set()
                     continue
@@ -283,7 +322,9 @@ class Speaker:
                     await self._abort()
             except Exception as exc:
                 if generation == self._generation:
-                    self._report(f"La lecture audio a échoué : {type(exc).__name__}: {exc}")
+                    self._report(
+                        f"La lecture audio a échoué : {type(exc).__name__}: {exc}"
+                    )
                     await self._abort()
 
     async def _abort(self) -> None:

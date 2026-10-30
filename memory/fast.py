@@ -50,7 +50,8 @@ def embedding_dims(model: str) -> int:
     dims = lookup_dims(model)
     if dims is None:
         raise MemoryUnavailable(
-            f"Modèle d'embeddings inconnu de fastembed : {model}. Vérifie EMBEDDING_MODEL.")
+            f"Modèle d'embeddings inconnu de fastembed : {model}. Vérifie EMBEDDING_MODEL."
+        )
     return dims
 
 
@@ -62,44 +63,69 @@ def _items(raw: Any) -> list[MemoryItem]:
         text = row.get("memory") or row.get("text") or row.get("data") or ""
         if text and row.get("id"):
             score = row.get("score")
-            items.append(MemoryItem(str(row["id"]), text, float(score) if score is not None else None,
-                                    row.get("created_at")))
+            items.append(
+                MemoryItem(
+                    str(row["id"]),
+                    text,
+                    float(score) if score is not None else None,
+                    row.get("created_at"),
+                )
+            )
     return items
 
 
 def format_for_prompt(items: list[MemoryItem]) -> str:
     """Bullet list for the system prompt; forged <memoire> tags in the text are defused."""
-    return "\n".join(f"- {_TAG.sub(lambda m: '‹' + m.group(1) + 'memoire', i.text)}" for i in items)
+    return "\n".join(
+        f"- {_TAG.sub(lambda m: '‹' + m.group(1) + 'memoire', i.text)}" for i in items
+    )
 
 
 class FastMemory:
     """Async facade over mem0; every blocking call runs on one dedicated thread."""
 
-    def __init__(self, mem0_memory: Any, settings: Settings, user_id: str = USER_ID) -> None:
+    def __init__(
+        self, mem0_memory: Any, settings: Settings, user_id: str = USER_ID
+    ) -> None:
         self._m = mem0_memory
         self._s = settings
         self._uid = user_id
         # One thread: local Qdrant is not built for concurrent access
-        self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="monika-memory")
+        self._pool = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="monika-memory"
+        )
 
     @classmethod
-    def create(cls, settings: Settings, paths: Paths, user_id: str = USER_ID) -> FastMemory:
+    def create(
+        cls, settings: Settings, paths: Paths, user_id: str = USER_ID
+    ) -> FastMemory:
         """Build the mem0 instance (blocking: may download the embedding model on first run)."""
         dims = embedding_dims(settings.embedding_model)
         paths.memory.mkdir(parents=True, exist_ok=True)
         config = {
-            "llm": {"provider": "openai", "config": {
-                "model": settings.memory_llm_model or settings.model_name,
-                "api_key": settings.openai_api_key.get_secret_value() or "sans-cle",
-                "openai_base_url": settings.llm_base_url,
-                "temperature": 0.1,
-                "max_tokens": 2000,
-            }},
-            "embedder": {"provider": "fastembed", "config": {
-                "model": settings.embedding_model, "embedding_dims": dims}},
-            "vector_store": {"provider": "qdrant", "config": {
-                "collection_name": COLLECTION, "embedding_model_dims": dims,
-                "path": str(paths.memory / "qdrant"), "on_disk": True}},
+            "llm": {
+                "provider": "openai",
+                "config": {
+                    "model": settings.memory_llm_model or settings.model_name,
+                    "api_key": settings.openai_api_key.get_secret_value() or "sans-cle",
+                    "openai_base_url": settings.llm_base_url,
+                    "temperature": 0.1,
+                    "max_tokens": 2000,
+                },
+            },
+            "embedder": {
+                "provider": "fastembed",
+                "config": {"model": settings.embedding_model, "embedding_dims": dims},
+            },
+            "vector_store": {
+                "provider": "qdrant",
+                "config": {
+                    "collection_name": COLLECTION,
+                    "embedding_model_dims": dims,
+                    "path": str(paths.memory / "qdrant"),
+                    "on_disk": True,
+                },
+            },
             "history_db_path": str(paths.memory / "history.db"),
             "custom_instructions": EXTRACTION_INSTRUCTIONS,
         }
@@ -120,24 +146,40 @@ class FastMemory:
     def _warm_up(memory: Any, user_id: str) -> None:
         """Load the embedding and keyword models now, so downloads never stall a conversation."""
         try:
-            memory.search("initialisation", top_k=1, filters={"user_id": user_id}, threshold=0.0)
-        except Exception as exc:  # Only a warm-up: real errors will surface on first use
+            memory.search(
+                "initialisation", top_k=1, filters={"user_id": user_id}, threshold=0.0
+            )
+        except (
+            Exception
+        ) as exc:  # Only a warm-up: real errors will surface on first use
             log.debug("Préchauffage de la mémoire échoué : %s", exc)
 
     async def _run(self, fn: Any, *args: Any, **kwargs: Any) -> Any:
         loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(self._pool, functools.partial(fn, *args, **kwargs))
+        return await loop.run_in_executor(
+            self._pool, functools.partial(fn, *args, **kwargs)
+        )
 
-    async def search(self, query: str, limit: int | None = None,
-                     threshold: float | None = None) -> list[MemoryItem]:
+    async def search(
+        self, query: str, limit: int | None = None, threshold: float | None = None
+    ) -> list[MemoryItem]:
         raw = await self._run(
-            self._m.search, query, top_k=limit or self._s.memory_recall_limit,
+            self._m.search,
+            query,
+            top_k=limit or self._s.memory_recall_limit,
             filters={"user_id": self._uid},
-            threshold=self._s.memory_recall_threshold if threshold is None else threshold)
+            threshold=self._s.memory_recall_threshold
+            if threshold is None
+            else threshold,
+        )
         return _items(raw)
 
     async def list_all(self, limit: int = 50) -> list[MemoryItem]:
-        return _items(await self._run(self._m.get_all, filters={"user_id": self._uid}, top_k=limit))
+        return _items(
+            await self._run(
+                self._m.get_all, filters={"user_id": self._uid}, top_k=limit
+            )
+        )
 
     async def recall(self, query: str) -> list[MemoryItem]:
         """Facts to inject in the prompt: all of them while the memory is small, else the relevant ones."""
@@ -145,16 +187,24 @@ class FastMemory:
         if cap > 0:
             everything = await self.list_all(limit=cap + 1)
             if len(everything) <= cap:
-                return sorted(everything, key=lambda i: i.created_at or "", reverse=True)
+                return sorted(
+                    everything, key=lambda i: i.created_at or "", reverse=True
+                )
         return await self.search(query)
 
     async def add_fact(self, text: str) -> MemoryItem:
         """Store a fact verbatim (no LLM extraction)."""
-        raw = await self._run(self._m.add, [{"role": "user", "content": text}],
-                              user_id=self._uid, infer=False)
+        raw = await self._run(
+            self._m.add,
+            [{"role": "user", "content": text}],
+            user_id=self._uid,
+            infer=False,
+        )
         items = _items(raw)
         if not items:
-            raise MemoryUnavailable("Le souvenir n'a pas été enregistré (doublon ou refus du stockage).")
+            raise MemoryUnavailable(
+                "Le souvenir n'a pas été enregistré (doublon ou refus du stockage)."
+            )
         return items[0]
 
     async def delete(self, memory_id: str) -> str | None:
@@ -194,9 +244,15 @@ class FastMemory:
 def _explain(exc: Exception, paths: Paths) -> str:
     text = str(exc)
     if "already accessed" in text or "AlreadyLocked" in type(exc).__name__:
-        return ("Mémoire rapide indisponible : une autre instance de Monika utilise déjà "
-                f"{paths.memory / 'qdrant'}. Ferme-la puis relance.")
+        return (
+            "Mémoire rapide indisponible : une autre instance de Monika utilise déjà "
+            f"{paths.memory / 'qdrant'}. Ferme-la puis relance."
+        )
     if "dimension" in text.lower() or "vector size" in text.lower():
-        return ("Mémoire rapide indisponible : le modèle d'embeddings a changé (dimensions "
-                f"différentes). Supprime {paths.memory / 'qdrant'} ou remets l'ancien EMBEDDING_MODEL.")
-    return f"Mémoire rapide indisponible : {type(exc).__name__}: {text[:300] or repr(exc)}"
+        return (
+            "Mémoire rapide indisponible : le modèle d'embeddings a changé (dimensions "
+            f"différentes). Supprime {paths.memory / 'qdrant'} ou remets l'ancien EMBEDDING_MODEL."
+        )
+    return (
+        f"Mémoire rapide indisponible : {type(exc).__name__}: {text[:300] or repr(exc)}"
+    )

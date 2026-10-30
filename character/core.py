@@ -26,8 +26,12 @@ class TurnOutcome:
 
 
 class CharacterCore:
-    def __init__(self, store: CharacterStore | None = None, emotions: EmotionState | None = None,
-                 relationship: Relationship | None = None) -> None:
+    def __init__(
+        self,
+        store: CharacterStore | None = None,
+        emotions: EmotionState | None = None,
+        relationship: Relationship | None = None,
+    ) -> None:
         self.store = store
         self.emotions = emotions or EmotionState()
         self.relationship = relationship or Relationship()
@@ -36,8 +40,11 @@ class CharacterCore:
     def load(cls, path: Path) -> CharacterCore:
         store = CharacterStore(path)
         data = store.load() or {}
-        return cls(store, EmotionState.from_dict(data.get("emotions")),
-                   Relationship(RelationshipState.from_dict(data.get("relationship"))))
+        return cls(
+            store,
+            EmotionState.from_dict(data.get("emotions")),
+            Relationship(RelationshipState.from_dict(data.get("relationship"))),
+        )
 
     def apply(self, appraisal: Appraisal, now: datetime) -> TurnOutcome:
         """Commit one completed turn. The relationship is updated first: it decides how freely emotions may rise."""
@@ -45,7 +52,13 @@ class CharacterCore:
         self.emotions.apply(appraisal.deltas, now, self.relationship.ceilings())
         self.save()
         name, intensity = self.emotions.dominant()
-        return TurnOutcome(name, intensity, self.relationship.level_name, change.level_changed, change.delta)
+        return TurnOutcome(
+            name,
+            intensity,
+            self.relationship.level_name,
+            change.level_changed,
+            change.delta,
+        )
 
     def snapshot(self, now: datetime) -> dict[str, Any]:
         """Current state for the page and the dashboard (emotions are decayed to `now` on a copy)."""
@@ -57,7 +70,9 @@ class CharacterCore:
         The reply is written with this mood, but it only becomes real when the turn completes (`apply`).
         """
         emotions = EmotionState.from_dict(self.emotions.to_dict())
-        relationship = Relationship(RelationshipState.from_dict(self.relationship.to_dict()))
+        relationship = Relationship(
+            RelationshipState.from_dict(self.relationship.to_dict())
+        )
         relationship.update(appraisal, now)
         emotions.apply(appraisal.deltas, now, relationship.ceilings())
         return _snapshot(emotions, relationship, now)
@@ -66,8 +81,13 @@ class CharacterCore:
         if self.store is None:
             return
         try:
-            self.store.save({"emotions": self.emotions.to_dict(), "relationship": self.relationship.to_dict()})
-        except OSError as err:   # losing one save must never break a conversation
+            self.store.save(
+                {
+                    "emotions": self.emotions.to_dict(),
+                    "relationship": self.relationship.to_dict(),
+                }
+            )
+        except OSError as err:  # losing one save must never break a conversation
             log.warning("character state not saved: %s", err)
 
     def reset_relationship(self) -> None:
@@ -75,12 +95,21 @@ class CharacterCore:
         self.save()
 
 
-def _snapshot(emotions: EmotionState, relationship: Relationship, now: datetime) -> dict[str, Any]:
+def _snapshot(
+    emotions: EmotionState, relationship: Relationship, now: datetime
+) -> dict[str, Any]:
     view = EmotionState(emotions.values, emotions.updated_at)
     view.decay(now)
     name, intensity = view.dominant()
     state = relationship.state
-    return {"emotions": view.vector(), "dominant": name, "intensity": intensity,
-            "favorability": round(state.favorability, 3), "level": relationship.level_name,
-            "level_label": relationship.level_label, "messages": state.message_count,
-            "active_days": state.active_days, "streak": state.streak}
+    return {
+        "emotions": view.vector(),
+        "dominant": name,
+        "intensity": intensity,
+        "favorability": round(state.favorability, 3),
+        "level": relationship.level_name,
+        "level_label": relationship.level_label,
+        "messages": state.message_count,
+        "active_days": state.active_days,
+        "streak": state.streak,
+    }

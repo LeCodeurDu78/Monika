@@ -42,7 +42,9 @@ class SyncProgress:
     chunks: int = 0
     current: str = ""
     skipped: Counter = field(default_factory=Counter)  # Reason -> files (this run)
-    excluded: Counter = field(default_factory=Counter)  # Reason -> files not even considered
+    excluded: Counter = field(
+        default_factory=Counter
+    )  # Reason -> files not even considered
     secret_files: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
 
@@ -51,19 +53,32 @@ class SyncProgress:
         return self.state in ("analyse", "indexation")
 
     def summary(self) -> str:
-        elapsed = (self.finished_at or time.time()) - self.started_at if self.started_at else 0
+        elapsed = (
+            (self.finished_at or time.time()) - self.started_at
+            if self.started_at
+            else 0
+        )
         parts = [f"État : {self.state}"]
         if self.state == "indexation":
-            parts.append(f"{self.processed}/{self.total} fichiers traités"
-                         + (f" (en cours : {self.current})" if self.current else ""))
+            parts.append(
+                f"{self.processed}/{self.total} fichiers traités"
+                + (f" (en cours : {self.current})" if self.current else "")
+            )
         elif self.state in ("terminé", "annulé"):
             parts.append(f"{self.processed}/{self.total} fichiers traités")
-        parts.append(f"{self.added} nouveau(x), {self.updated} modifié(s), {self.deleted} supprimé(s), "
-                     f"{self.unchanged} inchangé(s), {self.chunks} passages ajoutés")
+        parts.append(
+            f"{self.added} nouveau(x), {self.updated} modifié(s), {self.deleted} supprimé(s), "
+            f"{self.unchanged} inchangé(s), {self.chunks} passages ajoutés"
+        )
         if self.skipped:
-            parts.append("ignorés : " + ", ".join(f"{n} {r}" for r, n in self.skipped.most_common(5)))
+            parts.append(
+                "ignorés : "
+                + ", ".join(f"{n} {r}" for r, n in self.skipped.most_common(5))
+            )
         if self.secret_files:
-            parts.append(f"{len(self.secret_files)} fichier(s) de secrets exclus par nom")
+            parts.append(
+                f"{len(self.secret_files)} fichier(s) de secrets exclus par nom"
+            )
         if self.errors:
             parts.append(f"{len(self.errors)} erreur(s), dernière : {self.errors[-1]}")
         if elapsed:
@@ -71,7 +86,9 @@ class SyncProgress:
         return ". ".join(parts) + "."
 
 
-def scan(roots: list[Path], filt: PathFilter) -> tuple[list[Candidate], Counter, list[str]]:
+def scan(
+    roots: list[Path], filt: PathFilter
+) -> tuple[list[Candidate], Counter, list[str]]:
     """Walk the roots (blocking) and return indexable files, exclusion counts and secret names."""
     found: list[Candidate] = []
     excluded: Counter = Counter()
@@ -119,8 +136,13 @@ def _sha256(path: Path) -> str:
 class Indexer:
     """Runs one incremental sync at a time against a RagStore."""
 
-    def __init__(self, store: RagStore, settings: Settings, paths_home: Path,
-                 display_home: Path | None = None) -> None:
+    def __init__(
+        self,
+        store: RagStore,
+        settings: Settings,
+        paths_home: Path,
+        display_home: Path | None = None,
+    ) -> None:
         self._store = store
         self._s = settings
         self._monika_home = paths_home
@@ -133,8 +155,11 @@ class Indexer:
             return str(path)
 
     def _filter(self) -> PathFilter:
-        return PathFilter(self._s.rag_exclude_patterns(), self._s.rag_include_hidden,
-                          forbidden=[self._monika_home])
+        return PathFilter(
+            self._s.rag_exclude_patterns(),
+            self._s.rag_include_hidden,
+            forbidden=[self._monika_home],
+        )
 
     async def sync(self, roots: list[Path], progress: SyncProgress) -> SyncProgress:
         """Bring the index in line with the folders; counters are updated as it goes."""
@@ -142,19 +167,29 @@ class Indexer:
         progress.__init__()  # Fresh counters for this run
         progress.state, progress.started_at = "analyse", time.time()
         try:
-            candidates, excluded, secrets = await asyncio.to_thread(scan, roots, self._filter())
+            candidates, excluded, secrets = await asyncio.to_thread(
+                scan, roots, self._filter()
+            )
             progress.excluded, progress.secret_files = excluded, secrets[:50]
             known = manifest.all()
             seen = {str(c.path) for c in candidates}
             todo: list[Candidate] = []
             for c in candidates:
                 row = known.get(str(c.path))
-                if row and row.mtime_ns == c.mtime_ns and row.size == c.size and row.status != "error":
+                if (
+                    row
+                    and row.mtime_ns == c.mtime_ns
+                    and row.size == c.size
+                    and row.status != "error"
+                ):
                     progress.unchanged += 1
                 else:
                     todo.append(c)
-            gone = [row for p, row in known.items()
-                    if p not in seen and any(Path(p).is_relative_to(r) for r in roots)]
+            gone = [
+                row
+                for p, row in known.items()
+                if p not in seen and any(Path(p).is_relative_to(r) for r in roots)
+            ]
             progress.total, progress.state = len(todo), "indexation"
             for row in gone:
                 if row.status == "indexed":
@@ -177,38 +212,53 @@ class Indexer:
             progress.finished_at = time.time()
         return progress
 
-    async def _index_file(self, c: Candidate, previous: FileRow | None, progress: SyncProgress) -> None:
+    async def _index_file(
+        self, c: Candidate, previous: FileRow | None, progress: SyncProgress
+    ) -> None:
         path = str(c.path)
         file_id = file_id_for(path)
         had_vectors = bool(previous and previous.status == "indexed")
         # An interrupted update leaves an "error" row: its old passages may still be stored
         maybe_vectors = bool(previous and previous.status in ("indexed", "error"))
 
-        def record(status: str, chunks: int = 0, detail: str = "", sha: str = "") -> None:
-            self._store.manifest.upsert(FileRow(path, file_id, c.mtime_ns, c.size, sha, chunks, status, detail))
+        def record(
+            status: str, chunks: int = 0, detail: str = "", sha: str = ""
+        ) -> None:
+            self._store.manifest.upsert(
+                FileRow(path, file_id, c.mtime_ns, c.size, sha, chunks, status, detail)
+            )
 
         sha = ""
         try:
             sha = await asyncio.to_thread(_sha256, c.path)
-            if had_vectors and previous.sha256 == sha:  # Touched but identical: nothing to redo
+            if (
+                had_vectors and previous.sha256 == sha
+            ):  # Touched but identical: nothing to redo
                 record("indexed", previous.chunks, "", sha)
                 progress.unchanged += 1
                 return
-            loaded = await asyncio.to_thread(load, c.path, c.kind, self._s.rag_max_text_kb,
-                                             self._s.rag_max_doc_mb)
-            chunks = chunk_document(loaded, self._s.rag_chunk_chars, self._s.rag_chunk_overlap_chars)
+            loaded = await asyncio.to_thread(
+                load, c.path, c.kind, self._s.rag_max_text_kb, self._s.rag_max_doc_mb
+            )
+            chunks = chunk_document(
+                loaded, self._s.rag_chunk_chars, self._s.rag_chunk_overlap_chars
+            )
             if not chunks:
                 raise SkipFile("aucun passage exploitable")
             if len(chunks) > self._s.rag_max_chunks_per_file:
-                raise SkipFile(f"trop de passages ({len(chunks)}, limite RAG_MAX_CHUNKS_PER_FILE)")
-            from llama_index.core.schema import MetadataMode  # Heavy import, only when indexing
+                raise SkipFile(
+                    f"trop de passages ({len(chunks)}, limite RAG_MAX_CHUNKS_PER_FILE)"
+                )
+            from llama_index.core.schema import (
+                MetadataMode,  # Heavy import, only when indexing
+            )
 
             nodes = build_nodes(path, self.display(c.path), c.kind, chunks)
             texts = [n.get_content(MetadataMode.EMBED) for n in nodes]
             batch = self._s.rag_embed_batch
             vectors: list[list[float]] = []
             for i in range(0, len(texts), batch):
-                vectors += await self._store.embed_texts(texts[i:i + batch])
+                vectors += await self._store.embed_texts(texts[i : i + batch])
             for node, vec in zip(nodes, vectors):
                 node.embedding = vec
             # Swap old for new only now: a failure above leaves the previous version searchable.
@@ -229,7 +279,9 @@ class Indexer:
             progress.skipped[reason.split(" (")[0]] += 1
         except asyncio.CancelledError:
             raise
-        except Exception as exc:  # One broken file never stops the run; it is retried next time
+        except (
+            Exception
+        ) as exc:  # One broken file never stops the run; it is retried next time
             message = f"{self.display(c.path)} : {type(exc).__name__}: {exc}"[:300]
             record("error", 0, message, sha)
             progress.errors.append(message)

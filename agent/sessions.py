@@ -29,7 +29,9 @@ from security.masking import Masker
 log = logging.getLogger(__name__)
 
 TITLE_CHARS = 70
-HISTORY_PREVIEW_CHARS = 4000  # what a tool result keeps in the turn log (the snapshot keeps it all)
+HISTORY_PREVIEW_CHARS = (
+    4000  # what a tool result keeps in the turn log (the snapshot keeps it all)
+)
 STATUSES = ("open", "complete", "interrupted")
 
 _SCHEMA = """
@@ -141,8 +143,14 @@ def trim_history(history: list[dict[str, Any]], max_tokens: int) -> int:
         return 0
     cut = 0
     while total > max_tokens:
-        following = next((i for i in range(cut + 1, len(history))
-                          if history[i].get("role") == "user"), None)
+        following = next(
+            (
+                i
+                for i in range(cut + 1, len(history))
+                if history[i].get("role") == "user"
+            ),
+            None,
+        )
         if following is None:
             break
         total -= sum(message_tokens(m) for m in history[cut:following])
@@ -161,7 +169,9 @@ class SessionStore:
         self._masker = masker
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.parent.chmod(0o700)  # A data folder is private, like the home it lives in
+            path.parent.chmod(
+                0o700
+            )  # A data folder is private, like the home it lives in
             if not path.exists():  # Created here so it is private from its first byte
                 os.close(os.open(path, os.O_CREAT | os.O_WRONLY, 0o600))
             self._conn = sqlite3.connect(str(path))
@@ -173,10 +183,14 @@ class SessionStore:
             self._conn.commit()
             self._private()
             # A turn still open was interrupted by a crash or a `kill`: say so.
-            self._conn.execute("UPDATE turns SET status = 'interrupted' WHERE status = 'open'")
+            self._conn.execute(
+                "UPDATE turns SET status = 'interrupted' WHERE status = 'open'"
+            )
             self._conn.commit()
         except (OSError, sqlite3.Error) as exc:
-            raise SessionsError(f"Sessions indisponibles ({type(exc).__name__}: {exc}).") from exc
+            raise SessionsError(
+                f"Sessions indisponibles ({type(exc).__name__}: {exc})."
+            ) from exc
 
     def _private(self) -> None:
         """0600 for the database and its WAL companions."""
@@ -203,7 +217,9 @@ class SessionStore:
         with self._conn:
             self._conn.execute(
                 "INSERT INTO sessions (id, started_at, updated_at, mode, title, summary, history) "
-                "VALUES (?, ?, ?, ?, '', '', '[]')", (session_id, stamp, stamp, mode))
+                "VALUES (?, ?, ?, ?, '', '', '[]')",
+                (session_id, stamp, stamp, mode),
+            )
         return session_id
 
     def begin_turn(self, session_id: str, user_text: str) -> int:
@@ -212,45 +228,74 @@ class SessionStore:
         with self._conn:
             row = self._conn.execute(
                 "SELECT COALESCE(MAX(idx), 0) + 1 FROM turns WHERE session_id = ?",
-                (session_id,)).fetchone()
+                (session_id,),
+            ).fetchone()
             index = int(row[0])
             cursor = self._conn.execute(
                 "INSERT INTO turns (session_id, idx, at, user_text, reply, status) "
-                "VALUES (?, ?, ?, ?, '', 'open')", (session_id, index, _now(), clean))
+                "VALUES (?, ?, ?, ?, '', 'open')",
+                (session_id, index, _now(), clean),
+            )
             if index == 1:  # the first message names the session
-                self._conn.execute("UPDATE sessions SET title = ?, updated_at = ? WHERE id = ?",
-                                   (_one_line(clean, TITLE_CHARS), _now(), session_id))
+                self._conn.execute(
+                    "UPDATE sessions SET title = ?, updated_at = ? WHERE id = ?",
+                    (_one_line(clean, TITLE_CHARS), _now(), session_id),
+                )
             else:
-                self._conn.execute("UPDATE sessions SET updated_at = ? WHERE id = ?",
-                                   (_now(), session_id))
+                self._conn.execute(
+                    "UPDATE sessions SET updated_at = ? WHERE id = ?",
+                    (_now(), session_id),
+                )
         return int(cursor.lastrowid)
 
-    def tool_call(self, turn_id: int, name: str, arguments: str, ok: bool,
-                  duration_ms: float, result: str) -> None:
+    def tool_call(
+        self,
+        turn_id: int,
+        name: str,
+        arguments: str,
+        ok: bool,
+        duration_ms: float,
+        result: str,
+    ) -> None:
         with self._conn:
             self._conn.execute(
                 "INSERT INTO tool_calls (turn_id, at, name, arguments, result, ok, duration_ms) "
                 "VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (turn_id, _now(), self._masker.mask_text(str(name)),
-                 self._masker.mask_text(_one_line(arguments, 2000)),
-                 self._masker.mask_text(str(result)[:HISTORY_PREVIEW_CHARS]),
-                 1 if ok else 0, float(duration_ms or 0)))
+                (
+                    turn_id,
+                    _now(),
+                    self._masker.mask_text(str(name)),
+                    self._masker.mask_text(_one_line(arguments, 2000)),
+                    self._masker.mask_text(str(result)[:HISTORY_PREVIEW_CHARS]),
+                    1 if ok else 0,
+                    float(duration_ms or 0),
+                ),
+            )
 
     def end_turn(self, turn_id: int, reply: str, status: str = "complete") -> None:
         """Close a turn: `complete`, or `interrupted` when it never produced its answer."""
         if status not in STATUSES or status == "open":
             status = "complete"
         with self._conn:
-            self._conn.execute("UPDATE turns SET reply = ?, status = ? WHERE id = ?",
-                               (self._masker.mask_text(str(reply)), status, turn_id))
+            self._conn.execute(
+                "UPDATE turns SET reply = ?, status = ? WHERE id = ?",
+                (self._masker.mask_text(str(reply)), status, turn_id),
+            )
 
-    def save(self, session_id: str, history: list[dict[str, Any]], summary: str = "") -> None:
+    def save(
+        self, session_id: str, history: list[dict[str, Any]], summary: str = ""
+    ) -> None:
         """Store the conversation as the model sees it, and the summary of the older turns."""
         with self._conn:
             self._conn.execute(
                 "UPDATE sessions SET history = ?, summary = ?, updated_at = ? WHERE id = ?",
-                (json.dumps(self._mask_history(history), ensure_ascii=False),
-                 self._masker.mask_text(str(summary or "")), _now(), session_id))
+                (
+                    json.dumps(self._mask_history(history), ensure_ascii=False),
+                    self._masker.mask_text(str(summary or "")),
+                    _now(),
+                    session_id,
+                ),
+            )
 
     def _mask_history(self, history: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Mask every string inside the messages, keeping the structure intact."""
@@ -260,7 +305,9 @@ class SessionStore:
             if isinstance(copy.get("content"), str):
                 copy["content"] = self._masker.mask_text(copy["content"])
             if isinstance(copy.get("tool_calls"), list):
-                copy["tool_calls"] = [self._mask_call(call) for call in copy["tool_calls"]]
+                copy["tool_calls"] = [
+                    self._mask_call(call) for call in copy["tool_calls"]
+                ]
             out.append(copy)
         return out
 
@@ -270,7 +317,9 @@ class SessionStore:
             return call
         function = dict(call.get("function") or {})
         function["name"] = self._masker.mask_text(str(function.get("name", "")))
-        function["arguments"] = self._masker.mask_text(str(function.get("arguments", "")))
+        function["arguments"] = self._masker.mask_text(
+            str(function.get("arguments", ""))
+        )
         return {**call, "function": function}
 
     # ------------------------------------------------------------------ reading
@@ -280,59 +329,99 @@ class SessionStore:
             "SELECT s.id, s.started_at, s.updated_at, s.mode, s.title, "
             "       (s.summary != '') AS has_summary, "
             "       (SELECT COUNT(*) FROM turns t WHERE t.session_id = s.id) AS turns "
-            "FROM sessions s ORDER BY s.updated_at DESC LIMIT ?", (limit,)).fetchall()
-        return [SessionInfo(r["id"], r["started_at"], r["updated_at"], r["mode"], r["title"],
-                            int(r["turns"]), bool(r["has_summary"])) for r in rows]
+            "FROM sessions s ORDER BY s.updated_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+        return [
+            SessionInfo(
+                r["id"],
+                r["started_at"],
+                r["updated_at"],
+                r["mode"],
+                r["title"],
+                int(r["turns"]),
+                bool(r["has_summary"]),
+            )
+            for r in rows
+        ]
 
     def search(self, query: str, limit: int = 15) -> list[Hit]:
         """Full-text search over what was said (never over tool results, which stay out of the index)."""
         words = re.findall(r"\w+", query or "", re.UNICODE)
         if not words:
             return []
-        expression = " ".join(f'"{w}"' for w in words[:12])  # quoted: user text cannot inject operators
+        expression = " ".join(
+            f'"{w}"' for w in words[:12]
+        )  # quoted: user text cannot inject operators
         rows = self._conn.execute(
             "SELECT t.session_id, t.at, snippet(turns_fts, -1, '«', '»', '…', 14) AS excerpt "
             "FROM turns_fts JOIN turns t ON t.id = turns_fts.rowid "
-            "WHERE turns_fts MATCH ? ORDER BY rank LIMIT ?", (expression, limit)).fetchall()
+            "WHERE turns_fts MATCH ? ORDER BY rank LIMIT ?",
+            (expression, limit),
+        ).fetchall()
         return [Hit(r["session_id"], r["at"], r["excerpt"]) for r in rows]
 
     def load(self, session_id: str) -> Loaded | None:
         row = self._conn.execute(
             "SELECT id, started_at, mode, title, summary, history FROM sessions WHERE id = ?",
-            (session_id,)).fetchone()
+            (session_id,),
+        ).fetchone()
         if row is None:
             return None
         try:
             history = json.loads(row["history"] or "[]")
         except ValueError as exc:
-            raise SessionsError(f"L'historique de la session {session_id} est illisible "
-                                f"({exc.msg if hasattr(exc, 'msg') else exc}).") from exc
+            raise SessionsError(
+                f"L'historique de la session {session_id} est illisible "
+                f"({exc.msg if hasattr(exc, 'msg') else exc})."
+            ) from exc
         if not isinstance(history, list):
-            raise SessionsError(f"L'historique de la session {session_id} n'est pas une conversation.")
-        turns = self._conn.execute("SELECT COUNT(*) FROM turns WHERE session_id = ?",
-                                   (session_id,)).fetchone()[0]
-        return Loaded(row["id"], row["started_at"], row["mode"], row["title"], row["summary"],
-                      history, int(turns))
+            raise SessionsError(
+                f"L'historique de la session {session_id} n'est pas une conversation."
+            )
+        turns = self._conn.execute(
+            "SELECT COUNT(*) FROM turns WHERE session_id = ?", (session_id,)
+        ).fetchone()[0]
+        return Loaded(
+            row["id"],
+            row["started_at"],
+            row["mode"],
+            row["title"],
+            row["summary"],
+            history,
+            int(turns),
+        )
 
     def turn_statuses(self, session_id: str) -> list[str]:
         """Statuses in order: used by `/sessions` and the tests to show an interrupted turn."""
-        return [r[0] for r in self._conn.execute(
-            "SELECT status FROM turns WHERE session_id = ? ORDER BY idx", (session_id,))]
+        return [
+            r[0]
+            for r in self._conn.execute(
+                "SELECT status FROM turns WHERE session_id = ? ORDER BY idx",
+                (session_id,),
+            )
+        ]
 
     # ------------------------------------------------------------------ housekeeping
 
     def forget(self, session_id: str) -> bool:
         """Delete a session with its turns and tool calls (ON DELETE CASCADE)."""
         with self._conn:
-            cursor = self._conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
+            cursor = self._conn.execute(
+                "DELETE FROM sessions WHERE id = ?", (session_id,)
+            )
         return cursor.rowcount > 0
 
     def purge(self, keep_days: int | None = None) -> int:
         """Delete the sessions at least keep_days old; returns how many went away."""
         days = self.keep_days if keep_days is None else keep_days
-        cutoff = (datetime.now().astimezone() - timedelta(days=days)).isoformat(timespec="seconds")
+        cutoff = (datetime.now().astimezone() - timedelta(days=days)).isoformat(
+            timespec="seconds"
+        )
         with self._conn:
-            cursor = self._conn.execute("DELETE FROM sessions WHERE updated_at <= ?", (cutoff,))
+            cursor = self._conn.execute(
+                "DELETE FROM sessions WHERE updated_at <= ?", (cutoff,)
+            )
         return max(0, cursor.rowcount)
 
     def counts(self) -> dict[str, int]:
@@ -357,27 +446,40 @@ class SessionRecorder:
             if self.session_id is None:
                 self.session_id = self.store.start(self.mode)
             self._turn_id = self.store.begin_turn(self.session_id, user_text)
+
         self._guard(action)
 
-    def tool(self, name: str, arguments: str, ok: bool, duration_ms: float, result: str) -> None:
+    def tool(
+        self, name: str, arguments: str, ok: bool, duration_ms: float, result: str
+    ) -> None:
         if self._turn_id is None:
             return
-        self._guard(lambda: self.store.tool_call(self._turn_id, name, arguments, ok,
-                                                 duration_ms, result))
+        self._guard(
+            lambda: self.store.tool_call(
+                self._turn_id, name, arguments, ok, duration_ms, result
+            )
+        )
 
-    def finish(self, history: list[dict[str, Any]], summary: str, start: int,
-               complete: bool) -> None:
+    def finish(
+        self, history: list[dict[str, Any]], summary: str, start: int, complete: bool
+    ) -> None:
         """Close the turn, then store the conversation and its summary."""
+
         def action() -> None:
             reply = ""
             for message in history[start:]:
-                if message.get("role") == "assistant" and isinstance(message.get("content"), str):
+                if message.get("role") == "assistant" and isinstance(
+                    message.get("content"), str
+                ):
                     reply = message["content"]
             if self._turn_id is not None:
-                self.store.end_turn(self._turn_id, reply, "complete" if complete else "interrupted")
+                self.store.end_turn(
+                    self._turn_id, reply, "complete" if complete else "interrupted"
+                )
             if self.session_id is not None:
                 self.store.save(self.session_id, history, summary)
             self._turn_id = None
+
         self._guard(action)
 
     def close_session(self) -> None:
@@ -403,4 +505,6 @@ class SessionRecorder:
         except Exception as exc:  # noqa: BLE001 - sessions must never break a turn
             if not self._warned:
                 self._warned = True
-                log.warning("Sessions : écriture impossible (%s: %s)", type(exc).__name__, exc)
+                log.warning(
+                    "Sessions : écriture impossible (%s: %s)", type(exc).__name__, exc
+                )

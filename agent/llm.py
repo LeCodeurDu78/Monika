@@ -46,8 +46,11 @@ class Completion:
         message: dict[str, Any] = {"role": "assistant", "content": self.content or None}
         if self.tool_calls:
             message["tool_calls"] = [
-                {"id": c.id, "type": "function",
-                 "function": {"name": c.name, "arguments": c.arguments}}
+                {
+                    "id": c.id,
+                    "type": "function",
+                    "function": {"name": c.name, "arguments": c.arguments},
+                }
                 for c in self.tool_calls
             ]
         elif not self.content:
@@ -68,18 +71,24 @@ class LLMClient:
             max_retries=settings.llm_max_retries,
             http_client=http_client,
         )
-        self.last_call: dict[str, Any] | None = None  # "Last request worked / failed", for the health grid
+        self.last_call: dict[str, Any] | None = (
+            None  # "Last request worked / failed", for the health grid
+        )
 
-    async def stream(self, messages: list[dict[str, Any]],
-                     tools: list[dict[str, Any]] | None = None,
-                     temperature: float | None = None,
-                     model: str | None = None
-                     ) -> AsyncIterator[TextDelta | Completion]:
+    async def stream(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        temperature: float | None = None,
+        model: str | None = None,
+    ) -> AsyncIterator[TextDelta | Completion]:
         """Yield TextDelta pieces, then one final Completion."""
         kwargs: dict[str, Any] = {
             "model": model or self._settings.model_name,
             "messages": messages,
-            "temperature": self._settings.llm_temperature if temperature is None else temperature,
+            "temperature": self._settings.llm_temperature
+            if temperature is None
+            else temperature,
             "stream": True,
         }
         if tools:
@@ -110,14 +119,22 @@ class LLMClient:
         self.last_call = {"ok": True, "detail": f"{len(parts)} caractère(s) reçus"}
 
         tool_calls = [
-            ToolCall(id=c["id"] or f"call_{i}", name=c["name"], arguments=c["arguments"] or "{}")
+            ToolCall(
+                id=c["id"] or f"call_{i}",
+                name=c["name"],
+                arguments=c["arguments"] or "{}",
+            )
             for i, c in sorted(calls.items())
         ]
         yield Completion("".join(parts), tool_calls, finish)
 
-    async def ask(self, messages: list[dict[str, Any]],
-                  tools: list[dict[str, Any]] | None = None,
-                  temperature: float | None = None, model: str | None = None) -> Completion:
+    async def ask(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+        temperature: float | None = None,
+        model: str | None = None,
+    ) -> Completion:
         """Run a request to the end and return the final Completion."""
         final: Completion | None = None
         async for item in self.stream(messages, tools, temperature, model):
@@ -150,15 +167,23 @@ class LLMClient:
     def _translate(self, exc: openai.OpenAIError) -> LLMError:
         url, model = self._settings.llm_base_url, self._settings.model_name
         if isinstance(exc, openai.APITimeoutError):
-            return LLMError(f"Le LLM n'a pas répondu à temps (LLM_TIMEOUT_S={self._settings.llm_timeout_s:g}).")
+            return LLMError(
+                f"Le LLM n'a pas répondu à temps (LLM_TIMEOUT_S={self._settings.llm_timeout_s:g})."
+            )
         if isinstance(exc, openai.APIConnectionError):
-            return LLMError(f"Impossible de joindre le LLM à {url} (réseau, URL ou serveur arrêté).")
+            return LLMError(
+                f"Impossible de joindre le LLM à {url} (réseau, URL ou serveur arrêté)."
+            )
         if isinstance(exc, (openai.AuthenticationError, openai.PermissionDeniedError)):
             return LLMError(f"Clé API refusée par {url} : vérifie OPENAI_API_KEY.")
         if isinstance(exc, openai.NotFoundError):
-            return LLMError(f"Modèle ou adresse introuvable (MODEL_NAME={model}, LLM_BASE_URL={url}).")
+            return LLMError(
+                f"Modèle ou adresse introuvable (MODEL_NAME={model}, LLM_BASE_URL={url})."
+            )
         if isinstance(exc, openai.RateLimitError):
-            return LLMError("Limite de requêtes ou de crédit atteinte côté fournisseur. Réessaie plus tard.")
+            return LLMError(
+                "Limite de requêtes ou de crédit atteinte côté fournisseur. Réessaie plus tard."
+            )
         if isinstance(exc, openai.BadRequestError):
             return LLMError(f"Requête refusée par le LLM : {exc.message}")
         if isinstance(exc, openai.APIStatusError):

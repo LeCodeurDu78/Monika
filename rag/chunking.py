@@ -28,8 +28,13 @@ class Chunk:
     position: Position
 
 
-def chunk_lines(lines: list[str], size: int, overlap: int, kind: str = "lines",
-                number: int | None = None) -> list[Chunk]:
+def chunk_lines(
+    lines: list[str],
+    size: int,
+    overlap: int,
+    kind: str = "lines",
+    number: int | None = None,
+) -> list[Chunk]:
     """Greedy line-based chunks; prefers cutting at a blank line; consecutive chunks overlap.
 
     With `number` set, every chunk is positioned on that page instead of on line numbers.
@@ -52,19 +57,23 @@ def chunk_lines(lines: list[str], size: int, overlap: int, kind: str = "lines",
         return sum(len(t) + 1 for _, t in items)
 
     for idx, line in enumerate(lines):
-        if len(line) > size:  # One huge line: cut it in fixed windows on the same position
+        if (
+            len(line) > size
+        ):  # One huge line: cut it in fixed windows on the same position
             if fresh:
                 emit(buf)
             buf, fresh = [], False
             for start in range(0, len(line), size - overlap):
-                emit([(idx, line[start:start + size])])
+                emit([(idx, line[start : start + size])])
             continue
         buf.append((idx, line))
         fresh = True
         if length(buf) < size:
             continue
         cut = len(buf)
-        blanks = [k for k in range(len(buf) // 2, len(buf) - 1) if not buf[k][1].strip()]
+        blanks = [
+            k for k in range(len(buf) // 2, len(buf) - 1) if not buf[k][1].strip()
+        ]
         if blanks:  # Cut at the last blank line of the window to keep paragraphs/functions whole
             cut = blanks[-1] + 1
         emit(buf[:cut])
@@ -88,8 +97,12 @@ def chunk_paragraphs(paragraphs: list[str], size: int, overlap: int) -> list[Chu
     fresh = False
 
     def emit(items: list[tuple[int, str]]) -> None:
-        chunks.append(Chunk("\n".join(t for _, t in items),
-                            Position("paragraphs", items[0][0] + 1, items[-1][0] + 1)))
+        chunks.append(
+            Chunk(
+                "\n".join(t for _, t in items),
+                Position("paragraphs", items[0][0] + 1, items[-1][0] + 1),
+            )
+        )
 
     for idx, para in enumerate(paragraphs):
         if len(para) > size:
@@ -97,7 +110,12 @@ def chunk_paragraphs(paragraphs: list[str], size: int, overlap: int) -> list[Chu
                 emit(buf)
             buf, fresh = [], False
             for start in range(0, len(para), size - overlap):
-                chunks.append(Chunk(para[start:start + size], Position("paragraphs", idx + 1, idx + 1)))
+                chunks.append(
+                    Chunk(
+                        para[start : start + size],
+                        Position("paragraphs", idx + 1, idx + 1),
+                    )
+                )
             continue
         if buf and sum(len(t) + 1 for _, t in buf) + len(para) > size:
             emit(buf)
@@ -114,8 +132,11 @@ def chunk_paragraphs(paragraphs: list[str], size: int, overlap: int) -> list[Chu
 def chunk_document(doc: Loaded, size: int, overlap: int) -> list[Chunk]:
     """Chunk any loaded document with the strategy that suits its kind."""
     if doc.kind == "pdf":
-        return [c for number, text in doc.pages
-                for c in chunk_lines(text.splitlines(), size, overlap, number=number)]
+        return [
+            c
+            for number, text in doc.pages
+            for c in chunk_lines(text.splitlines(), size, overlap, number=number)
+        ]
     if doc.kind == "docx":
         return chunk_paragraphs(doc.paragraphs, size, overlap)
     return chunk_lines(doc.lines, size, overlap)

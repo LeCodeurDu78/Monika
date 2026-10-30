@@ -8,9 +8,11 @@ from typing import Any
 from character.emotion_spec import HALF_LIFE_S, INHIBITS
 from character.models import ACTIVE_EMOTIONS, EMOTIONS, clamp, finite
 
-MAX_STEP = 0.5               # no single message moves an emotion by more than this
-DOMINANT_THRESHOLD = 0.15    # below this, Monika is simply "neutre"
-MAX_NOTABLE = 3              # at most this many emotions above the threshold: a readable mood, not a mush
+MAX_STEP = 0.5  # no single message moves an emotion by more than this
+DOMINANT_THRESHOLD = 0.15  # below this, Monika is simply "neutre"
+MAX_NOTABLE = (
+    3  # at most this many emotions above the threshold: a readable mood, not a mush
+)
 # HALF_LIFE_S (time for an emotion to halve on its own) and INHIBITS (a rising emotion soothes these)
 # are derived from the emotion table in emotion_spec.py.
 
@@ -18,7 +20,9 @@ MAX_NOTABLE = 3              # at most this many emotions above the threshold: a
 class EmotionState:
     """Intensities in 0..1 for the active emotions. Time is always passed in, never read, so it stays testable."""
 
-    def __init__(self, values: dict[str, float] | None = None, updated_at: datetime | None = None) -> None:
+    def __init__(
+        self, values: dict[str, float] | None = None, updated_at: datetime | None = None
+    ) -> None:
         self.values: dict[str, float] = {name: 0.0 for name in ACTIVE_EMOTIONS}
         for name, value in (values or {}).items():
             if name in self.values and finite(value):
@@ -35,7 +39,12 @@ class EmotionState:
                     self.values[name] *= 0.5 ** (elapsed / half_life)
         self.updated_at = now
 
-    def apply(self, deltas: dict[str, float], now: datetime, ceilings: dict[str, float] | None = None) -> None:
+    def apply(
+        self,
+        deltas: dict[str, float],
+        now: datetime,
+        ceilings: dict[str, float] | None = None,
+    ) -> None:
         """Decay to `now`, then add bounded deltas. `ceilings` caps an emotion (teasing needs familiarity)."""
         self.decay(now)
         rises: dict[str, float] = {}
@@ -51,7 +60,9 @@ class EmotionState:
         for name, rise in rises.items():
             for other, factor in INHIBITS.get(name, {}).items():
                 if other not in rises:
-                    self.values[other] = clamp(self.values[other] - rise * factor, 0.0, 1.0)
+                    self.values[other] = clamp(
+                        self.values[other] - rise * factor, 0.0, 1.0
+                    )
         self._limit_notable()
 
     def _limit_notable(self) -> None:
@@ -60,7 +71,11 @@ class EmotionState:
         The weakest ones settle AT the threshold instead of being erased, so nothing is lost when the
         mood moves on, and they no longer count as a mood of their own.
         """
-        notable = sorted((value, name) for name, value in self.values.items() if value > DOMINANT_THRESHOLD)
+        notable = sorted(
+            (value, name)
+            for name, value in self.values.items()
+            if value > DOMINANT_THRESHOLD
+        )
         for _value, name in notable[:-MAX_NOTABLE]:
             self.values[name] = DOMINANT_THRESHOLD
 
@@ -72,8 +87,14 @@ class EmotionState:
 
     def top(self, limit: int = MAX_NOTABLE) -> list[tuple[str, float]]:
         """The strongest emotions above the threshold, heaviest first (what colours the tone right now)."""
-        notable = sorted(((value, name) for name, value in self.values.items() if value > DOMINANT_THRESHOLD),
-                         reverse=True)
+        notable = sorted(
+            (
+                (value, name)
+                for name, value in self.values.items()
+                if value > DOMINANT_THRESHOLD
+            ),
+            reverse=True,
+        )
         return [(name, round(value, 3)) for value, name in notable[:limit]]
 
     def dominant(self) -> tuple[str, float]:
@@ -83,8 +104,10 @@ class EmotionState:
         return name, round(value, 3)
 
     def to_dict(self) -> dict[str, Any]:
-        return {"values": {k: round(v, 4) for k, v in self.values.items()},
-                "updated_at": self.updated_at.isoformat() if self.updated_at else None}
+        return {
+            "values": {k: round(v, 4) for k, v in self.values.items()},
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
 
     @classmethod
     def from_dict(cls, data: Any) -> EmotionState:
@@ -94,7 +117,9 @@ class EmotionState:
         updated = None
         if isinstance(data.get("updated_at"), str):
             try:
-                updated = datetime.fromisoformat(data["updated_at"]).astimezone()  # naive text is read as local time
+                updated = datetime.fromisoformat(
+                    data["updated_at"]
+                ).astimezone()  # naive text is read as local time
             except ValueError:
                 updated = None
         values = data.get("values")

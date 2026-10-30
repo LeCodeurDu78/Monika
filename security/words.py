@@ -29,13 +29,17 @@ from character.models import fold_text
 TIERS: tuple[str, ...] = ("mild", "bad", "severe")
 MAX_WORD_CHARS = 64
 MAX_WORDS_PER_TIER = 500
-NOTE = ("Une entrée par ligne, trois niveaux. Aucun mot n'est livré avec le projet : cette liste est la "
-        "tienne (SENSITIVE_WORDS_ENABLED=false pour couper le filtre).")
+NOTE = (
+    "Une entrée par ligne, trois niveaux. Aucun mot n'est livré avec le projet : cette liste est la "
+    "tienne (SENSITIVE_WORDS_ENABLED=false pour couper le filtre)."
+)
 
 _ZERO_WIDTH = re.compile(r"[\u200B-\u200D\uFEFF\u2060]")
 # `@` at a word boundary is a mention prefix (separator); inside a word it is leetspeak for `a`.
 _SEP_AT = re.compile(r"(^|\W)@")
-_LEETSPEAK = str.maketrans({"1": "i", "0": "o", "3": "e", "4": "a", "@": "a", "$": "s", "5": "s"})
+_LEETSPEAK = str.maketrans(
+    {"1": "i", "0": "o", "3": "e", "4": "a", "@": "a", "$": "s", "5": "s"}
+)
 _GLUE_TO_SPACE = re.compile(r"[_\-+.]")
 
 
@@ -47,7 +51,9 @@ def normalize(text: str) -> str:
     """Fold a message the way the bank is folded: no accents, no case, no leetspeak, no glue."""
     folded = fold_text(unicodedata.normalize("NFKC", text or ""))
     folded = _ZERO_WIDTH.sub("", folded)
-    folded = _SEP_AT.sub(r"\1 ", folded)  # "@clanker" -> " clanker", "cl@nker" untouched
+    folded = _SEP_AT.sub(
+        r"\1 ", folded
+    )  # "@clanker" -> " clanker", "cl@nker" untouched
     folded = folded.translate(_LEETSPEAK)  # remaining @ (mid-word) becomes 'a'
     folded = folded.replace("'", " ")  # French elision: l'idiot -> l idiot
     return _GLUE_TO_SPACE.sub(" ", folded)
@@ -61,14 +67,22 @@ def clean_word(raw: str) -> str:
 def validate_tiers(raw: Any) -> dict[str, list[str]]:
     """Strict validation of what the page sends or what words.json holds. French error, nothing partial."""
     if not isinstance(raw, dict):
-        raise WordsError("La liste doit être un objet JSON avec les niveaux mild, bad et severe.")
+        raise WordsError(
+            "La liste doit être un objet JSON avec les niveaux mild, bad et severe."
+        )
     unknown = set(raw) - set(TIERS) - {"_note"}
     if unknown:
-        raise WordsError("Niveaux inconnus : " + ", ".join(sorted(unknown)) + ". Attendu : mild, bad, severe.")
+        raise WordsError(
+            "Niveaux inconnus : "
+            + ", ".join(sorted(unknown))
+            + ". Attendu : mild, bad, severe."
+        )
     cleaned: dict[str, list[str]] = {}
     for tier in TIERS:
         values = raw.get(tier) or []
-        if isinstance(values, str):  # One word per line, as typed in the page's textarea
+        if isinstance(
+            values, str
+        ):  # One word per line, as typed in the page's textarea
             values = values.splitlines()
         if not isinstance(values, list):
             raise WordsError(f"« {tier} » doit être une liste de mots.")
@@ -83,8 +97,10 @@ def validate_tiers(raw: Any) -> dict[str, list[str]]:
                 if not word:
                     continue
                 if len(word) > MAX_WORD_CHARS:
-                    raise WordsError(f"Mot trop long dans « {tier} » ({MAX_WORD_CHARS} caractères au "
-                                     f"maximum) : {word[:20]}…")
+                    raise WordsError(
+                        f"Mot trop long dans « {tier} » ({MAX_WORD_CHARS} caractères au "
+                        f"maximum) : {word[:20]}…"
+                    )
                 if word not in words:
                     words.append(word)
         cleaned[tier] = words
@@ -102,7 +118,9 @@ def read_words(path: Path) -> dict[str, list[str]]:
     except FileNotFoundError:
         return {tier: [] for tier in TIERS}
     except (OSError, ValueError) as exc:
-        raise WordsError(f"{path} est illisible ({exc}) : corrige ou supprime-le.") from exc
+        raise WordsError(
+            f"{path} est illisible ({exc}) : corrige ou supprime-le."
+        ) from exc
     return validate_tiers(data)
 
 
@@ -111,14 +129,18 @@ def write_words(path: Path, tiers: dict[str, list[str]]) -> None:
     payload = {"_note": NOTE, **{tier: list(tiers.get(tier, [])) for tier in TIERS}}
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        handle, temporary = tempfile.mkstemp(dir=str(path.parent), prefix=".words-", suffix=".tmp")
+        handle, temporary = tempfile.mkstemp(
+            dir=str(path.parent), prefix=".words-", suffix=".tmp"
+        )
         with os.fdopen(handle, "w", encoding="utf-8") as stream:
             json.dump(payload, stream, ensure_ascii=False, indent=2)
             stream.write("\n")
         os.chmod(temporary, 0o600)
         os.replace(temporary, path)
     except OSError as exc:
-        raise WordsError(f"Impossible d'écrire {path} : {exc.strerror or exc}.") from exc
+        raise WordsError(
+            f"Impossible d'écrire {path} : {exc.strerror or exc}."
+        ) from exc
 
 
 class WordBank:
@@ -134,8 +156,12 @@ class WordBank:
             self._words[tier] = tuple(words)
             self._counts[tier] = len(words)
             self._patterns[tier] = (
-                re.compile(rf"\b(?:{'|'.join(re.escape(w) for w in words)})s?\b", re.IGNORECASE)
-                if words else None)
+                re.compile(
+                    rf"\b(?:{'|'.join(re.escape(w) for w in words)})s?\b", re.IGNORECASE
+                )
+                if words
+                else None
+            )
 
     @classmethod
     def load(cls, path: Path) -> WordBank:

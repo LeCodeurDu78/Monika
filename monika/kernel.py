@@ -42,7 +42,7 @@ from typing import Any
 log = logging.getLogger(__name__)
 
 MAX_LINE_CHARS = 200_000  # a pasted message, not a file dump
-MAX_SOCKET_PATH = 100     # Linux allows 108 bytes for sun_path, terminator included
+MAX_SOCKET_PATH = 100  # Linux allows 108 bytes for sun_path, terminator included
 
 
 class KernelError(Exception):
@@ -65,7 +65,9 @@ class InstanceLock:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             handle = open(self.path, "a+", encoding="utf-8")
         except OSError as exc:
-            raise KernelError(f"Verrou du noyau inaccessible ({self.path}) : {exc}") from exc
+            raise KernelError(
+                f"Verrou du noyau inaccessible ({self.path}) : {exc}"
+            ) from exc
         try:
             fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError as exc:
@@ -124,36 +126,47 @@ class KernelServer:
 
     def __init__(self, socket_path: Path) -> None:
         self.socket_path = socket_path
-        self.session: Any = None            # modes.text.TextSession
+        self.session: Any = None  # modes.text.TextSession
         self._server: asyncio.AbstractServer | None = None
         self._clients: set[asyncio.StreamWriter] = set()
         self._stop = asyncio.Event()
         self._turn_task: asyncio.Task | None = None
         self._voice_task: asyncio.Task | None = None
-        self._voice_factory = None          # async () -> VoiceListener | None
+        self._voice_factory = None  # async () -> VoiceListener | None
         self._listener: Any = None
         self._speaker: Any = None
         self._hub: Any = None
         self._out = _Broadcast(self)
 
     # ------------------------------------------------------------------ serving
-    async def serve(self, *, session: Any, hub: Any = None, speaker: Any = None,
-                    voice_factory=None) -> None:
+    async def serve(
+        self, *, session: Any, hub: Any = None, speaker: Any = None, voice_factory=None
+    ) -> None:
         """Serve until stop(); returns once the socket is closed and the clients said goodbye."""
         if len(str(self.socket_path)) >= MAX_SOCKET_PATH:
-            raise KernelError(f"Chemin de socket trop long pour Unix ({self.socket_path}) : "
-                              "choisis un KERNEL_SOCKET plus court.")
+            raise KernelError(
+                f"Chemin de socket trop long pour Unix ({self.socket_path}) : "
+                "choisis un KERNEL_SOCKET plus court."
+            )
         self.session, self._hub, self._speaker, self._voice_factory = (
-            session, hub, speaker, voice_factory)
+            session,
+            hub,
+            speaker,
+            voice_factory,
+        )
         session.set_output(self._out)
         try:
             self.socket_path.parent.mkdir(parents=True, exist_ok=True)
             if self.socket_path.exists():
                 self.socket_path.unlink()  # the instance lock guarantees a stale file is a leftover
-            self._server = await asyncio.start_unix_server(self._handle, path=str(self.socket_path))
+            self._server = await asyncio.start_unix_server(
+                self._handle, path=str(self.socket_path)
+            )
             os.chmod(self.socket_path, 0o600)
         except OSError as exc:
-            raise KernelError(f"Le noyau n'a pas pu ouvrir {self.socket_path} : {exc}") from exc
+            raise KernelError(
+                f"Le noyau n'a pas pu ouvrir {self.socket_path} : {exc}"
+            ) from exc
         self._install_signals()
         print(f"Noyau prêt : {self.socket_path} (terminal : python -m monika --attach)")
         try:
@@ -189,11 +202,16 @@ class KernelServer:
         for sig in (signal.SIGTERM, signal.SIGINT):
             try:
                 loop.add_signal_handler(sig, self.stop)
-            except (NotImplementedError, RuntimeError):  # not the main thread, or unsupported
+            except (
+                NotImplementedError,
+                RuntimeError,
+            ):  # not the main thread, or unsupported
                 continue
 
     # ------------------------------------------------------------------ connections
-    async def _handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    async def _handle(
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
         if not self._same_user(writer):
             writer.close()
             return
@@ -205,12 +223,17 @@ class KernelServer:
                 if not line:
                     break
                 if len(line) > MAX_LINE_CHARS:
-                    self._send(writer, {"type": "error", "text": "Ligne trop longue, ignorée."})
+                    self._send(
+                        writer, {"type": "error", "text": "Ligne trop longue, ignorée."}
+                    )
                     continue
                 try:
                     message = json.loads(line)
                 except ValueError:
-                    self._send(writer, {"type": "error", "text": "Message illisible (JSON attendu)."})
+                    self._send(
+                        writer,
+                        {"type": "error", "text": "Message illisible (JSON attendu)."},
+                    )
                     continue
                 if not isinstance(message, dict):
                     self._send(writer, {"type": "error", "text": "Message inattendu."})
@@ -220,10 +243,19 @@ class KernelServer:
                 except (ConnectionError, asyncio.CancelledError):
                     raise
                 except Exception as exc:  # noqa: BLE001 - a client message must not drop the client
-                    log.warning("requête %r en échec (%s: %s)", message.get("op"),
-                                type(exc).__name__, exc)
-                    self._send(writer, {"type": "error",
-                                        "text": f"Requête impossible : {type(exc).__name__}: {exc}"})
+                    log.warning(
+                        "requête %r en échec (%s: %s)",
+                        message.get("op"),
+                        type(exc).__name__,
+                        exc,
+                    )
+                    self._send(
+                        writer,
+                        {
+                            "type": "error",
+                            "text": f"Requête impossible : {type(exc).__name__}: {exc}",
+                        },
+                    )
         except (ConnectionError, asyncio.IncompleteReadError):
             pass
         except asyncio.CancelledError:
@@ -243,16 +275,21 @@ class KernelServer:
             return True  # not Linux: the file permissions are the only guarantee
         try:
             _pid, uid, _gid = struct.unpack(
-                "3i", sock.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12))
+                "3i", sock.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, 12)
+            )
         except OSError:
             return True
         return uid == os.getuid()
 
-    async def _dispatch(self, writer: asyncio.StreamWriter, message: dict[str, Any]) -> None:
+    async def _dispatch(
+        self, writer: asyncio.StreamWriter, message: dict[str, Any]
+    ) -> None:
         op = message.get("op")
         if op == "line":
             text = str(message.get("text", ""))
-            if text.strip() == "/stop":  # Works even while a turn runs: that is the point
+            if (
+                text.strip() == "/stop"
+            ):  # Works even while a turn runs: that is the point
                 await self.stop_everything(writer)
             else:
                 self._run_line(writer, text)
@@ -265,7 +302,9 @@ class KernelServer:
         elif op == "detach":
             self._send(writer, {"type": "bye"})
         else:
-            self._send(writer, {"type": "error", "text": f"Opération inconnue : {op!r}."})
+            self._send(
+                writer, {"type": "error", "text": f"Opération inconnue : {op!r}."}
+            )
 
     # ------------------------------------------------------------------ turns and commands
     def _run_line(self, writer: asyncio.StreamWriter, line: str) -> None:
@@ -275,31 +314,48 @@ class KernelServer:
             return
         self._start_turn(line, writer)
 
-    def _start_turn(self, line: str, writer: asyncio.StreamWriter | None = None,
-                    source: str = "user") -> asyncio.Task | None:
+    def _start_turn(
+        self,
+        line: str,
+        writer: asyncio.StreamWriter | None = None,
+        source: str = "user",
+    ) -> asyncio.Task | None:
         """Run the turn in the background: the client must stay able to send `cancel`."""
         if self._turn_task is not None and not self._turn_task.done():
             if writer is not None:
                 self._send(writer, {"type": "busy"})
             else:
-                self.broadcast({"type": "info", "text": "Je suis déjà en train de répondre : je "
-                                                           "n'ai pas retenu la dernière phrase."})
+                self.broadcast(
+                    {
+                        "type": "info",
+                        "text": "Je suis déjà en train de répondre : je "
+                        "n'ai pas retenu la dernière phrase.",
+                    }
+                )
             return None
         task = asyncio.create_task(self._turn(line, writer, source))
         self._turn_task = task
         return task
 
-    async def _turn(self, line: str, writer: asyncio.StreamWriter | None,
-                    source: str = "user") -> None:
+    async def _turn(
+        self, line: str, writer: asyncio.StreamWriter | None, source: str = "user"
+    ) -> None:
         """One turn: the session writes to the client that asked, then everything is rolled back."""
-        self.session.set_output(_ClientOut(self, writer) if writer is not None else self._out)
+        self.session.set_output(
+            _ClientOut(self, writer) if writer is not None else self._out
+        )
         try:
             await self._execute(line, source)
         except asyncio.CancelledError:
             pass  # cut on purpose (client cancel or shutdown); the session already said so
         except Exception as exc:  # noqa: BLE001 - a turn must never take the kernel down
-            log.warning("tour interrompu par une erreur (%s: %s)", type(exc).__name__, exc)
-            message = {"type": "error", "text": f"Le tour a échoué : {type(exc).__name__}: {exc}"}
+            log.warning(
+                "tour interrompu par une erreur (%s: %s)", type(exc).__name__, exc
+            )
+            message = {
+                "type": "error",
+                "text": f"Le tour a échoué : {type(exc).__name__}: {exc}",
+            }
             if writer is not None:
                 self._send(writer, message)
             else:
@@ -326,7 +382,9 @@ class KernelServer:
     def submit_task(self, text: str) -> asyncio.Task | None:
         """The same, as the task that runs it: the page's voice mode waits for it before listening."""
         line = (text or "").strip()
-        if line.startswith("/"):  # A /command goes through the same code as the terminal's
+        if line.startswith(
+            "/"
+        ):  # A /command goes through the same code as the terminal's
             if self._turn_task is not None and not self._turn_task.done():
                 return None
             self._turn_task = asyncio.create_task(self._page_command(line))
@@ -341,10 +399,16 @@ class KernelServer:
             pass  # cut on purpose (shutdown, or the task was stopped)
         except Exception as exc:  # noqa: BLE001 - a command must never take the kernel down
             log.warning("Commande depuis la page (%s) : %s", line.split()[0], exc)
-            self.broadcast({"type": "info",
-                            "text": f"La commande a échoué ({type(exc).__name__})."})
+            self.broadcast(
+                {
+                    "type": "info",
+                    "text": f"La commande a échoué ({type(exc).__name__}).",
+                }
+            )
 
-    async def stop_everything(self, writer: asyncio.StreamWriter | None = None) -> list[str]:
+    async def stop_everything(
+        self, writer: asyncio.StreamWriter | None = None
+    ) -> list[str]:
         """Ctrl+C, `cancel` and `/stop`: the turn, the voice, the indexing.
 
         With a writer (an explicit `/stop`), the report goes back to the client that asked. Without
@@ -354,9 +418,17 @@ class KernelServer:
         self.cancel()
         if self._turn_task is not None:
             await asyncio.gather(self._turn_task, return_exceptions=True)
-        stopped = await self.session.stop_all(turn=had_turn) if self.session is not None else []
+        stopped = (
+            await self.session.stop_all(turn=had_turn)
+            if self.session is not None
+            else []
+        )
         if writer is not None:
-            report = "Arrêté : " + ", ".join(stopped) + "." if stopped else "Rien ne tournait."
+            report = (
+                "Arrêté : " + ", ".join(stopped) + "."
+                if stopped
+                else "Rien ne tournait."
+            )
             # `stopped` closes the request: the client gets its report and its prompt back
             self._send(writer, {"type": "stopped", "text": report})
         return stopped
@@ -379,17 +451,33 @@ class KernelServer:
             self._send(writer, {"type": "voice", "on": True})
             return
         if self._voice_factory is None:
-            self._send(writer, {"type": "error", "text": "La voix n'est pas disponible ici."})
+            self._send(
+                writer, {"type": "error", "text": "La voix n'est pas disponible ici."}
+            )
             return
-        self.broadcast({"type": "info", "text": "Ouverture du microphone (le modèle peut prendre " "quelques secondes)…"})
+        self.broadcast(
+            {
+                "type": "info",
+                "text": "Ouverture du microphone (le modèle peut prendre "
+                "quelques secondes)…",
+            }
+        )
         try:
             listener = await self._voice_factory()
         except Exception as exc:  # noqa: BLE001
-            self._send(writer, {"type": "error",
-                                "text": f"Microphone indisponible : {type(exc).__name__}: {exc}"})
+            self._send(
+                writer,
+                {
+                    "type": "error",
+                    "text": f"Microphone indisponible : {type(exc).__name__}: {exc}",
+                },
+            )
             return
         if listener is None:
-            self._send(writer, {"type": "error", "text": "Microphone indisponible (voir le journal)."})
+            self._send(
+                writer,
+                {"type": "error", "text": "Microphone indisponible (voir le journal)."},
+            )
             return
         self._listener = listener
         self._voice_task = asyncio.create_task(self._voice_loop(listener))
@@ -411,12 +499,18 @@ class KernelServer:
             raise
         except Exception as exc:  # noqa: BLE001 - the chat keeps working without the microphone
             log.warning("écoute interrompue (%s: %s)", type(exc).__name__, exc)
-            self.broadcast({"type": "info",
-                            "text": f"Écoute arrêtée ({type(exc).__name__} : {exc})."})
+            self.broadcast(
+                {
+                    "type": "info",
+                    "text": f"Écoute arrêtée ({type(exc).__name__} : {exc}).",
+                }
+            )
         finally:
             self._voice_task = None
             listener, self._listener = self._listener, None
-            if listener is not None:  # a loop that ended on its own must release the microphone
+            if (
+                listener is not None
+            ):  # a loop that ended on its own must release the microphone
                 try:
                     await listener.close()
                 except Exception:  # noqa: BLE001
@@ -453,6 +547,8 @@ class KernelServer:
         if writer.is_closing():
             return
         try:
-            writer.write((json.dumps(message, ensure_ascii=False) + "\n").encode("utf-8"))
+            writer.write(
+                (json.dumps(message, ensure_ascii=False) + "\n").encode("utf-8")
+            )
         except (ConnectionError, RuntimeError):
             pass

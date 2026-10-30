@@ -42,7 +42,9 @@ def message_tokens(msg: dict[str, Any]) -> int:
     total = 4
     content = msg.get("content")
     if content:
-        total += estimate_tokens(content if isinstance(content, str) else json.dumps(content))
+        total += estimate_tokens(
+            content if isinstance(content, str) else json.dumps(content)
+        )
     for call in msg.get("tool_calls") or []:
         fn = call["function"]
         total += estimate_tokens(fn["name"] + fn["arguments"]) + 8
@@ -74,9 +76,11 @@ class ToolOutputStore:
         except OSError as exc:
             note = f"[… {omitted} caractères omis sur {len(text)} ; sauvegarde impossible ({exc}) …]"
         else:
-            note = (f"[… {omitted} caractères omis sur {len(text)}. Résultat complet sauvegardé, "
-                    f'id="{result_id}". La suite reprend au caractère {len(text) - tail_len}. '
-                    f'Lis un passage avec lire_resultat(id="{result_id}", debut=N, longueur=M). …]')
+            note = (
+                f"[… {omitted} caractères omis sur {len(text)}. Résultat complet sauvegardé, "
+                f'id="{result_id}". La suite reprend au caractère {len(text) - tail_len}. '
+                f'Lis un passage avec lire_resultat(id="{result_id}", debut=N, longueur=M). …]'
+            )
         return f"{head}\n\n{note}\n\n{tail}"
 
     def read(self, result_id: str, start: int, length: int) -> tuple[str, int]:
@@ -85,11 +89,15 @@ class ToolOutputStore:
             raise ToolFailure(f"Identifiant invalide : {result_id!r}.")
         path = self.directory / f"{result_id}.txt"
         if not path.is_file():
-            raise ToolFailure(f"Aucun résultat sauvegardé avec l'id {result_id!r} (purgé ou inexistant).")
+            raise ToolFailure(
+                f"Aucun résultat sauvegardé avec l'id {result_id!r} (purgé ou inexistant)."
+            )
         text = path.read_text(encoding="utf-8")
         if start < 0 or start >= max(len(text), 1):
-            raise ToolFailure(f"debut={start} hors limites (le résultat fait {len(text)} caractères).")
-        return text[start:start + max(1, min(length, self.max_chars))], len(text)
+            raise ToolFailure(
+                f"debut={start} hors limites (le résultat fait {len(text)} caractères)."
+            )
+        return text[start : start + max(1, min(length, self.max_chars))], len(text)
 
     def purge(self, keep_days: int) -> int:
         """Delete saved results older than keep_days; return how many were removed."""
@@ -108,7 +116,9 @@ class ToolOutputStore:
 
 
 class _LLM(Protocol):
-    def stream(self, messages: list[dict[str, Any]], tools: Any = None, **kw: Any) -> Any: ...
+    def stream(
+        self, messages: list[dict[str, Any]], tools: Any = None, **kw: Any
+    ) -> Any: ...
 
 
 @dataclass
@@ -134,9 +144,15 @@ class ContextManager:
         self._summary_failed = False
 
     def total(self, base_tokens: int, history: list[dict[str, Any]]) -> int:
-        return base_tokens + estimate_tokens(self.summary) + sum(message_tokens(m) for m in history)
+        return (
+            base_tokens
+            + estimate_tokens(self.summary)
+            + sum(message_tokens(m) for m in history)
+        )
 
-    async def fit(self, history: list[dict[str, Any]], start: int, base_tokens: int) -> FitResult:
+    async def fit(
+        self, history: list[dict[str, Any]], start: int, base_tokens: int
+    ) -> FitResult:
         """Bring history under budget; start is the index of the current turn's user message."""
         result = FitResult()
         budget = self._s.context_budget_tokens
@@ -153,11 +169,15 @@ class ContextManager:
                 else:
                     del history[:cut]
                     result.removed = cut
-                    result.notices.append(f"Contexte compacté : {cut} anciens messages résumés.")
+                    result.notices.append(
+                        f"Contexte compacté : {cut} anciens messages résumés."
+                    )
         if self.total(base_tokens, history) > budget:
             count = self._elide(history, max(0, start - result.removed), base_tokens)
             if count:
-                result.notices.append(f"{count} ancien(s) résultat(s) d'outil retiré(s) du contexte.")
+                result.notices.append(
+                    f"{count} ancien(s) résultat(s) d'outil retiré(s) du contexte."
+                )
         return result
 
     def _cut_point(self, history: list[dict[str, Any]]) -> int | None:
@@ -165,7 +185,10 @@ class ContextManager:
         acc = 0
         for i in range(len(history) - 1, 0, -1):
             acc += message_tokens(history[i])
-            if history[i]["role"] == "user" and acc >= self._s.context_keep_recent_tokens:
+            if (
+                history[i]["role"] == "user"
+                and acc >= self._s.context_keep_recent_tokens
+            ):
                 # Too little to compress is not worth an LLM call
                 prefix = sum(message_tokens(m) for m in history[:i])
                 return i if prefix >= 1000 else None
@@ -176,8 +199,11 @@ class ContextManager:
         previous = self.summary or "(aucun)"
         messages = [
             {"role": "system", "content": SUMMARY_SYSTEM},
-            {"role": "user", "content": f"Résumé précédent :\n{previous}\n\n"
-                                        f"Nouveaux échanges à intégrer :\n{transcript}"},
+            {
+                "role": "user",
+                "content": f"Résumé précédent :\n{previous}\n\n"
+                f"Nouveaux échanges à intégrer :\n{transcript}",
+            },
         ]
         text = ""
         async for item in self._llm.stream(messages, None, temperature=0.2):
@@ -194,22 +220,38 @@ class ContextManager:
         content = msg.get("content") or ""
         if len(content) > limit:
             content = content[:limit] + f"… [{len(content) - limit} caractères omis]"
-        role = {"user": "Utilisateur", "assistant": "Monika", "tool": "Résultat d'outil"}[msg["role"]]
-        calls = "".join(f"\n  Appel d'outil : {c['function']['name']}({c['function']['arguments'][:300]})"
-                        for c in msg.get("tool_calls") or [])
+        role = {
+            "user": "Utilisateur",
+            "assistant": "Monika",
+            "tool": "Résultat d'outil",
+        }[msg["role"]]
+        calls = "".join(
+            f"\n  Appel d'outil : {c['function']['name']}({c['function']['arguments'][:300]})"
+            for c in msg.get("tool_calls") or []
+        )
         return f"{role} : {content}{calls}"
 
-    def _elide(self, history: list[dict[str, Any]], from_index: int, base_tokens: int,
-               keep_recent: int = 3) -> int:
+    def _elide(
+        self,
+        history: list[dict[str, Any]],
+        from_index: int,
+        base_tokens: int,
+        keep_recent: int = 3,
+    ) -> int:
         """Replace the oldest big tool results of the current turn, keeping the latest ones."""
-        tools = [i for i in range(from_index, len(history))
-                 if history[i]["role"] == "tool"
-                 and len(history[i]["content"]) > 800
-                 and not history[i]["content"].startswith(ELIDED_PREFIX)]
+        tools = [
+            i
+            for i in range(from_index, len(history))
+            if history[i]["role"] == "tool"
+            and len(history[i]["content"]) > 800
+            and not history[i]["content"].startswith(ELIDED_PREFIX)
+        ]
         count = 0
         for i in tools[:-keep_recent] if keep_recent else tools:
             size = len(history[i]["content"])
-            history[i]["content"] = f"{ELIDED_PREFIX} ({size} caractères) pour économiser de la place.]"
+            history[i]["content"] = (
+                f"{ELIDED_PREFIX} ({size} caractères) pour économiser de la place.]"
+            )
             count += 1
             if self.total(base_tokens, history) <= self._s.context_budget_tokens:
                 break

@@ -35,29 +35,64 @@ from security.masking import Masker
 
 log = logging.getLogger(__name__)
 
-POLL_S = 20.0                # How often the running process looks for due tasks
-LATE_AFTER = timedelta(minutes=2)  # Past this, the fired turn is told the reminder is late
+POLL_S = 20.0  # How often the running process looks for due tasks
+LATE_AFTER = timedelta(
+    minutes=2
+)  # Past this, the fired turn is told the reminder is late
 MAX_DELAY = timedelta(days=365)
 
 MINUTE = 60
 HOUR = 60 * MINUTE
 DAY = 24 * HOUR
 
-_UNITS = {"m": MINUTE, "min": MINUTE, "mins": MINUTE, "minute": MINUTE, "minutes": MINUTE,
-          "h": HOUR, "heure": HOUR, "heures": HOUR,
-          "j": DAY, "jour": DAY, "jours": DAY}
-_EVERY = re.compile(r"^(?:tous\s+les|toutes\s+les|chaque)\s+(\d{1,4})\s*([a-zé]+)\b",
-                    re.IGNORECASE)
+_UNITS = {
+    "m": MINUTE,
+    "min": MINUTE,
+    "mins": MINUTE,
+    "minute": MINUTE,
+    "minutes": MINUTE,
+    "h": HOUR,
+    "heure": HOUR,
+    "heures": HOUR,
+    "j": DAY,
+    "jour": DAY,
+    "jours": DAY,
+}
+_EVERY = re.compile(
+    r"^(?:tous\s+les|toutes\s+les|chaque)\s+(\d{1,4})\s*([a-zé]+)\b", re.IGNORECASE
+)
 _DELAY = re.compile(r"^dans\s+(\d{1,4})\s*([a-zé]+)\b", re.IGNORECASE)
-_CLOCK = re.compile(r"^(?:(demain)\s+)?(\d{1,2})\s*(?:h|:)\s*(\d{1,2})?$", re.IGNORECASE)
-_DAILY = re.compile(r"^(?:tous\s+les\s+jours|chaque\s+jour)(?:\s*,?\s*(?:à|a))?\s+"
-                    r"(\d{1,2})\s*(?:h|:)\s*(\d{1,2})?$", re.IGNORECASE)
+_CLOCK = re.compile(
+    r"^(?:(demain)\s+)?(\d{1,2})\s*(?:h|:)\s*(\d{1,2})?$", re.IGNORECASE
+)
+_DAILY = re.compile(
+    r"^(?:tous\s+les\s+jours|chaque\s+jour)(?:\s*,?\s*(?:à|a))?\s+"
+    r"(\d{1,2})\s*(?:h|:)\s*(\d{1,2})?$",
+    re.IGNORECASE,
+)
 # Python's Monday is 0; these are the names one says
-_WEEKDAYS = {"lundi": 0, "mardi": 1, "mercredi": 2, "jeudi": 3, "vendredi": 4,
-             "samedi": 5, "dimanche": 6}
-_WEEKDAY_NAMES = ("lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche")
+_WEEKDAYS = {
+    "lundi": 0,
+    "mardi": 1,
+    "mercredi": 2,
+    "jeudi": 3,
+    "vendredi": 4,
+    "samedi": 5,
+    "dimanche": 6,
+}
+_WEEKDAY_NAMES = (
+    "lundi",
+    "mardi",
+    "mercredi",
+    "jeudi",
+    "vendredi",
+    "samedi",
+    "dimanche",
+)
 _DAY_WORD = r"(lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche)s?"
-_TIME_TAIL = re.compile(r"\s*(?:,?\s*(?:à|a))?\s*(\d{1,2})\s*(?:h|:)\s*(\d{1,2})?$", re.IGNORECASE)
+_TIME_TAIL = re.compile(
+    r"\s*(?:,?\s*(?:à|a))?\s*(\d{1,2})\s*(?:h|:)\s*(\d{1,2})?$", re.IGNORECASE
+)
 _DAY_RANGE = re.compile(rf"^du\s+{_DAY_WORD}\s+au\s+{_DAY_WORD}$", re.IGNORECASE)
 _DAY_PREFIX = re.compile(r"^(?:tous\s+les|toutes\s+les|chaque)\s+(.+)$", re.IGNORECASE)
 _DAY_LIST_SEP = re.compile(r"\s*(?:,|&|\bet\b)\s*")
@@ -75,7 +110,9 @@ class When:
     every_s: int | None
     says: str  # What to show back, in French ("demain à 08:00", "toutes les 2 heures…")
     daily_at: str | None = None  # "08:00": a fixed time, not a 24 h delay that drifts
-    days: tuple[int, ...] | None = None  # « chaque lundi et jeudi à 9h »: 0 = lundi, sorted
+    days: tuple[int, ...] | None = (
+        None  # « chaque lundi et jeudi à 9h »: 0 = lundi, sorted
+    )
 
 
 @dataclass(frozen=True)
@@ -89,7 +126,9 @@ class Task:
     created_at: datetime
     runs: int = 0
     daily_at: str | None = None  # "08:00": fires every day at that time
-    days: tuple[int, ...] | None = None  # 0 = lundi: every week, on those days, at `daily_at`
+    days: tuple[int, ...] | None = (
+        None  # 0 = lundi: every week, on those days, at `daily_at`
+    )
 
     @property
     def recurring(self) -> bool:
@@ -107,10 +146,16 @@ class Task:
         return f"  [{self.id}] {when} · {self.prompt}"
 
     def to_json(self) -> dict[str, Any]:
-        return {"id": self.id, "prompt": self.prompt, "next_at": self.next_at.isoformat(),
-                "every_s": self.every_s, "created_at": self.created_at.isoformat(), "runs": self.runs,
-                "daily_at": self.daily_at,
-                "days": list(self.days) if self.days else None}
+        return {
+            "id": self.id,
+            "prompt": self.prompt,
+            "next_at": self.next_at.isoformat(),
+            "every_s": self.every_s,
+            "created_at": self.created_at.isoformat(),
+            "runs": self.runs,
+            "daily_at": self.daily_at,
+            "days": list(self.days) if self.days else None,
+        }
 
     @classmethod
     def from_json(cls, data: dict[str, Any]) -> Task:
@@ -119,7 +164,9 @@ class Task:
             prompt=str(data.get("prompt", "")),
             next_at=datetime.fromisoformat(str(data["next_at"])),
             every_s=int(data["every_s"]) if data.get("every_s") else None,
-            created_at=datetime.fromisoformat(str(data.get("created_at", data["next_at"]))),
+            created_at=datetime.fromisoformat(
+                str(data.get("created_at", data["next_at"]))
+            ),
             runs=int(data.get("runs", 0)),
             daily_at=str(data["daily_at"]) if data.get("daily_at") else None,
             days=_read_days(data),
@@ -140,7 +187,9 @@ def _duration(seconds: int) -> str:
 def _unit(token: str) -> int:
     seconds = _UNITS.get(token)
     if seconds is None:
-        raise TasksError(f"Je ne comprends pas « {token} » : écris minutes, heures ou jours.")
+        raise TasksError(
+            f"Je ne comprends pas « {token} » : écris minutes, heures ou jours."
+        )
     return seconds
 
 
@@ -149,8 +198,10 @@ def parse_when(text: str, now: datetime | None = None) -> When:
     now = now or datetime.now()
     raw = " ".join(text.strip().lower().split())
     if not raw:
-        raise TasksError("Quand ? « dans 20 minutes », « 18h30 », « demain 8h », "
-                         "« toutes les 2 heures », « chaque jour à 8h »…")
+        raise TasksError(
+            "Quand ? « dans 20 minutes », « 18h30 », « demain 8h », "
+            "« toutes les 2 heures », « chaque jour à 8h »…"
+        )
 
     weekly = _parse_weekly(raw, text, now)
     if weekly is not None:
@@ -163,8 +214,12 @@ def parse_when(text: str, now: datetime | None = None) -> When:
             raise TasksError(f"« {text.strip()} » n'est pas une heure valide.")
         at_time = f"{hour:02d}:{minute:02d}"
         at = _next_daily(at_time, now)
-        return When(at, None, f"chaque jour à {at_time} (prochaine fois {_human_when(at, now)})",
-                    daily_at=at_time)
+        return When(
+            at,
+            None,
+            f"chaque jour à {at_time} (prochaine fois {_human_when(at, now)})",
+            daily_at=at_time,
+        )
 
     every = _EVERY.match(raw)
     if every:
@@ -174,7 +229,11 @@ def parse_when(text: str, now: datetime | None = None) -> When:
         if seconds > MAX_DELAY.total_seconds():
             raise TasksError("L'intervalle dépasse un an.")
         at = now + timedelta(seconds=seconds)
-        return When(at, seconds, f"toutes les {_duration(seconds)} (prochaine fois {_human_when(at, now)})")
+        return When(
+            at,
+            seconds,
+            f"toutes les {_duration(seconds)} (prochaine fois {_human_when(at, now)})",
+        )
 
     delay = _DELAY.match(raw)
     if delay:
@@ -183,7 +242,11 @@ def parse_when(text: str, now: datetime | None = None) -> When:
             raise TasksError("Le délai doit être d'au moins 1 minute.")
         if seconds > MAX_DELAY.total_seconds():
             raise TasksError("Le délai dépasse un an.")
-        return When(now + timedelta(seconds=seconds), None, _human_when(now + timedelta(seconds=seconds), now))
+        return When(
+            now + timedelta(seconds=seconds),
+            None,
+            _human_when(now + timedelta(seconds=seconds), now),
+        )
 
     clock = _CLOCK.match(raw)
     if clock:
@@ -199,9 +262,11 @@ def parse_when(text: str, now: datetime | None = None) -> When:
             at += timedelta(days=1)
         return When(at, None, _human_when(at, now))
 
-    raise TasksError(f"Je ne comprends pas « {text.strip()} ». Dis : « dans 20 minutes », "
-                     "« 18h30 », « demain 8h », « toutes les 2 heures », « chaque jour à 8h », "
-                     "« chaque lundi à 9h », « du lundi au vendredi à 9h ».")
+    raise TasksError(
+        f"Je ne comprends pas « {text.strip()} ». Dis : « dans 20 minutes », "
+        "« 18h30 », « demain 8h », « toutes les 2 heures », « chaque jour à 8h », "
+        "« chaque lundi à 9h », « du lundi au vendredi à 9h »."
+    )
 
 
 def _at_that_time(at_time: str, now: datetime) -> datetime:
@@ -250,7 +315,7 @@ def _parse_weekly(raw: str, original: str, now: datetime) -> When | None:
     tail = _TIME_TAIL.search(raw)
     if tail is None:
         return None
-    days = _parse_days(raw[:tail.start()])
+    days = _parse_days(raw[: tail.start()])
     if not days:
         return None
     hour, minute = int(tail.group(1)), int(tail.group(2) or 0)
@@ -258,9 +323,13 @@ def _parse_weekly(raw: str, original: str, now: datetime) -> When | None:
         raise TasksError(f"« {original.strip()} » n'est pas une heure valide.")
     at_time = f"{hour:02d}:{minute:02d}"
     at = _next_weekly(days, at_time, now)
-    return When(at, None, f"{_days_phrase(days)} à {at_time} "
-                          f"(prochaine fois {_human_when(at, now)})",
-                daily_at=at_time, days=days)
+    return When(
+        at,
+        None,
+        f"{_days_phrase(days)} à {at_time} (prochaine fois {_human_when(at, now)})",
+        daily_at=at_time,
+        days=days,
+    )
 
 
 def _parse_days(text: str) -> tuple[int, ...] | None:
@@ -307,7 +376,9 @@ def _human_when(at: datetime, now: datetime | None = None) -> str:
 class TaskStore:
     """The tasks of one data folder: a small JSON file, rewritten atomically on every change."""
 
-    def __init__(self, path: Path, masker: Masker | None = None, max_tasks: int = 50) -> None:
+    def __init__(
+        self, path: Path, masker: Masker | None = None, max_tasks: int = 50
+    ) -> None:
         self.path = path
         self._masker = masker or Masker()
         self.max_tasks = max(1, max_tasks)
@@ -330,7 +401,11 @@ class TaskStore:
             for item in data.get("tasks", []):
                 self._tasks.append(Task.from_json(item))
         except (ValueError, KeyError, TypeError) as exc:
-            log.warning("Fichier de tâches illisible (%s: %s) : je repars de zéro", type(exc).__name__, exc)
+            log.warning(
+                "Fichier de tâches illisible (%s: %s) : je repars de zéro",
+                type(exc).__name__,
+                exc,
+            )
             self._tasks = []
         self._tasks.sort(key=lambda t: t.next_at)
         return list(self._tasks)
@@ -352,15 +427,25 @@ class TaskStore:
     def add(self, prompt: str, when: When, now: datetime | None = None) -> Task:
         prompt = " ".join(prompt.split())
         if not prompt:
-            raise TasksError("Il manque le texte de la tâche : « /rappel dans 20 minutes : boire de l'eau ».")
+            raise TasksError(
+                "Il manque le texte de la tâche : « /rappel dans 20 minutes : boire de l'eau »."
+            )
         if len(prompt) > 500:
             raise TasksError("La tâche dépasse 500 caractères : résume-la.")
         if len(self._tasks) >= self.max_tasks:
-            raise TasksError(f"Trop de tâches ({self.max_tasks}) : annule-en une avec "
-                             "« /tache annuler ID ».")
-        task = Task(id=secrets.token_hex(4), prompt=self._masker.mask_text(prompt), next_at=when.at,
-                    every_s=when.every_s, created_at=now or datetime.now(), daily_at=when.daily_at,
-                    days=when.days)
+            raise TasksError(
+                f"Trop de tâches ({self.max_tasks}) : annule-en une avec "
+                "« /tache annuler ID »."
+            )
+        task = Task(
+            id=secrets.token_hex(4),
+            prompt=self._masker.mask_text(prompt),
+            next_at=when.at,
+            every_s=when.every_s,
+            created_at=now or datetime.now(),
+            daily_at=when.daily_at,
+            days=when.days,
+        )
         self._tasks.append(task)
         self._tasks.sort(key=lambda t: t.next_at)
         self._save()
@@ -380,20 +465,34 @@ class TaskStore:
         current = self.get(task.id)
         if current is None:
             return None
-        if current.daily_at is not None:  # Fixed time of day: no drift from the moment it ran
-            next_at = (_next_weekly(current.days, current.daily_at, moment)
-                       if current.days else _next_daily(current.daily_at, moment))
+        if (
+            current.daily_at is not None
+        ):  # Fixed time of day: no drift from the moment it ran
+            next_at = (
+                _next_weekly(current.days, current.daily_at, moment)
+                if current.days
+                else _next_daily(current.daily_at, moment)
+            )
         elif current.every_s is not None:
             next_at = moment + timedelta(seconds=current.every_s)
         else:
             self._tasks = [t for t in self._tasks if t.id != task.id]
             self._save()
             return None
-        moved = Task(id=current.id, prompt=current.prompt, next_at=next_at,
-                     every_s=current.every_s, created_at=current.created_at, runs=current.runs + 1,
-                     daily_at=current.daily_at, days=current.days)
-        self._tasks = sorted((moved if t.id == task.id else t for t in self._tasks),
-                             key=lambda t: t.next_at)
+        moved = Task(
+            id=current.id,
+            prompt=current.prompt,
+            next_at=next_at,
+            every_s=current.every_s,
+            created_at=current.created_at,
+            runs=current.runs + 1,
+            daily_at=current.daily_at,
+            days=current.days,
+        )
+        self._tasks = sorted(
+            (moved if t.id == task.id else t for t in self._tasks),
+            key=lambda t: t.next_at,
+        )
         self._save()
         return moved
 
@@ -414,16 +513,22 @@ class TaskStore:
 def task_prompt(task: Task, late: timedelta) -> str:
     """What the model is asked when a task fires; a late one is told to say so."""
     if late > LATE_AFTER:
-        return (f"(Rappel prévu à {task.next_at:%H:%M}, il est {datetime.now():%H:%M} : dis en une "
-                f"phrase que tu es en retard.) {task.prompt}")
+        return (
+            f"(Rappel prévu à {task.next_at:%H:%M}, il est {datetime.now():%H:%M} : dis en une "
+            f"phrase que tu es en retard.) {task.prompt}"
+        )
     return task.prompt
 
 
 class Scheduler:
     """Fires what is due, one task at a time, and reschedules the recurring ones."""
 
-    def __init__(self, store: TaskStore, fire: Callable[[str], Awaitable[None]],
-                 poll_s: float = POLL_S) -> None:
+    def __init__(
+        self,
+        store: TaskStore,
+        fire: Callable[[str], Awaitable[None]],
+        poll_s: float = POLL_S,
+    ) -> None:
         self.store = store
         self._fire = fire
         self._poll_s = max(1.0, poll_s)
@@ -455,7 +560,9 @@ class Scheduler:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001 - a failed task must not stop the others
-                log.warning("Tâche %s en échec (%s: %s)", task.id, type(exc).__name__, exc)
+                log.warning(
+                    "Tâche %s en échec (%s: %s)", task.id, type(exc).__name__, exc
+                )
             finally:
                 self.store.finished(task)
             fired.append(task)

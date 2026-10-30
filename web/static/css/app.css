@@ -48,7 +48,10 @@ body {
 @keyframes pulse { 50% { opacity: .35; } }
 @media (prefers-reduced-motion: reduce) { .chip::before { animation: none !important; } }
 
-.layout { flex: 1; display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 0; min-height: 0; }
+.layout {
+  flex: 1; display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 0; min-height: 0;
+  transition: grid-template-columns .28s ease;   /* folding the dashboard: the column closes, the stage grows */
+}
 .stage {
   position: relative; min-height: 420px;
   background: radial-gradient(120% 90% at 50% 0%, var(--stage-top), var(--stage-bottom));
@@ -59,9 +62,28 @@ body {
   position: absolute; left: 16px; right: 16px; bottom: 16px; margin: 0; padding: 10px 14px;
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); color: var(--muted);
 }
-.panels {
+.panels { position: relative; min-width: 0; display: flex; flex-direction: column; }
+.panels-scroll {
   padding: 16px; display: flex; flex-direction: column; gap: 12px;
   overflow-y: auto; max-height: calc(100vh - 56px);
+  transition: opacity .2s ease, visibility 0s linear;
+}
+/* The dashboard's edge tab, as on OpenSakura (#panels-toggle): a vertical tab glued outside the panel's
+   left edge — '❯' folds the dashboard away, '❮' brings it back. Folded, the stage takes the whole width. */
+.layout { position: relative; }
+.panels-tab {
+  position: absolute; left: -34px; top: 50%; transform: translateY(-50%); z-index: 6;
+  width: 34px; height: 72px; padding: 0; font-size: 15px; line-height: 1;
+  color: var(--muted); background: var(--surface); border: 1px solid var(--border); border-right: 0;
+  border-radius: 12px 0 0 12px;
+}
+.panels-tab:hover { color: var(--text); background: var(--surface-2); }
+/* Folded: the column closes to nothing, the contents fade, and the tab rides to the screen edge — where it
+   stays, one click from bringing the dashboard back. */
+body.panels-hidden .layout { grid-template-columns: minmax(0, 1fr) minmax(0, 0fr); }
+body.panels-hidden .panels-scroll {
+  opacity: 0; visibility: hidden; overflow: hidden;
+  transition: opacity .2s ease, visibility 0s linear .2s;
 }
 .panel {
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px;
@@ -137,9 +159,16 @@ textarea {
 .chat-note { margin: 0; min-height: 1em; font-size: 13px; color: var(--muted); }
 
 @media (max-width: 900px) {
-  .layout { grid-template-columns: 1fr; }
+  .layout { grid-template-columns: 1fr; transition: none; }
   .stage { min-height: 46vh; }
-  .panels { max-height: none; }
+  .panels-scroll { max-height: none; }
+  /* stacked, the dashboard folds at once and the tab floats in the corner, where it stays reachable */
+  .panels-tab {
+    position: fixed; left: auto; right: 12px; bottom: 12px; top: auto; transform: none;
+    width: 44px; height: 44px; border: 1px solid var(--border); border-radius: 12px;
+  }
+  body.panels-hidden .layout { grid-template-columns: 1fr; }
+  body.panels-hidden .panels { position: absolute; inset: auto 0 0 0; height: 0; overflow: hidden; }
 }
 
 /* Debug panel (?debug) */
@@ -193,3 +222,19 @@ textarea {
 }
 .fields.words { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
 .fields.words textarea { min-height: 90px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
+
+/* Loading screen: from the first paint until the avatar can show (dashboard.js drives the bar) */
+#loading {
+  position: fixed; inset: 0; z-index: 40; display: grid; place-items: center;
+  background: radial-gradient(120% 90% at 50% 0%, var(--stage-top), var(--bg));
+  opacity: 1; transition: opacity .45s ease;
+}
+#loading.done { opacity: 0; pointer-events: none; }
+.loading-card { width: min(320px, calc(100vw - 48px)); text-align: center; }
+.loading-title { margin: 0 0 6px; font-size: 20px; letter-spacing: .02em; }
+.loading-step { margin: 0 0 10px; min-height: 1.2em; color: var(--muted); font-size: 13px; }
+.loading-bar { height: 6px; border-radius: 99px; background: var(--surface-2); overflow: hidden; }
+.loading-bar > i { display: block; width: 0; height: 100%; background: var(--accent); transition: width .2s ease; }
+@media (prefers-reduced-motion: reduce) {
+  .layout, .panels-scroll, #loading, .loading-bar > i { transition: none !important; }
+}

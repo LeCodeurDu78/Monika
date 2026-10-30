@@ -18,8 +18,11 @@ _SENSITIVE_KEY = re.compile(
 
 # Free-text patterns that look like credentials
 _PATTERNS: list[re.Pattern[str]] = [
-    re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----", re.S),
-    re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{8,}", re.I),
+    re.compile(
+        r"-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----",
+        re.DOTALL,
+    ),
+    re.compile(r"\bBearer\s+[A-Za-z0-9._~+/=-]{8,}", re.IGNORECASE),
     re.compile(r"\bsk-[A-Za-z0-9_-]{16,}"),
     re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}"),
     re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
@@ -55,7 +58,9 @@ class Masker:
             return self.mask_text(obj)
         if isinstance(obj, dict):
             return {
-                k: MASK if isinstance(k, str) and _SENSITIVE_KEY.search(k) else self.mask(v)
+                k: MASK
+                if isinstance(k, str) and _SENSITIVE_KEY.search(k)
+                else self.mask(v)
                 for k, v in obj.items()
             }
         if isinstance(obj, (list, tuple)):

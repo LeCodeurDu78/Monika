@@ -10,21 +10,41 @@ from voice.listener import VoiceListener
 from voice.stt import normalize_text
 
 # Whole-sentence goodbyes only (normalized): a sentence merely containing "quitte" does not match
-EXIT_PHRASES = frozenset({
-    "au revoir", "au revoir monika", "quitte", "quitte monika", "ferme toi", "arrete toi",
-    "arrete toi monika", "on arrete", "a plus tard", "a plus tard monika",
-})
+EXIT_PHRASES = frozenset(
+    {
+        "au revoir",
+        "au revoir monika",
+        "quitte",
+        "quitte monika",
+        "ferme toi",
+        "arrete toi",
+        "arrete toi monika",
+        "on arrete",
+        "a plus tard",
+        "a plus tard monika",
+    }
+)
 
-BANNER = ("Monika t'écoute. Dis « au revoir » pour quitter (Ctrl+C aussi). Ses réponses "
-          "s'affichent à l'écran : elle ne parle pas (voir le message de chargement de la voix).")
-BANNER_SPOKEN = ("Monika t'écoute et te répond à voix haute. Dis « au revoir » pour quitter. "
-                 "Ctrl+C coupe sa parole ; quand elle t'écoute, il quitte la session.")
+BANNER = (
+    "Monika t'écoute. Dis « au revoir » pour quitter (Ctrl+C aussi). Ses réponses "
+    "s'affichent à l'écran : elle ne parle pas (voir le message de chargement de la voix)."
+)
+BANNER_SPOKEN = (
+    "Monika t'écoute et te répond à voix haute. Dis « au revoir » pour quitter. "
+    "Ctrl+C coupe sa parole ; quand elle t'écoute, il quitte la session."
+)
 
 
 class VoiceReader:
     """Callable that replaces the keyboard prompt: returns the next thing the user says."""
 
-    def __init__(self, listener: VoiceListener, write: Callable[[str], None], speaker=None, hub=None) -> None:
+    def __init__(
+        self,
+        listener: VoiceListener,
+        write: Callable[[str], None],
+        speaker=None,
+        hub=None,
+    ) -> None:
         self._hub = hub  # Live state for the web page (optional)
         self._listener = listener
         self._write = write

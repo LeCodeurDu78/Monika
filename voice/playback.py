@@ -14,7 +14,9 @@ from voice.errors import PlaybackError
 
 log = logging.getLogger(__name__)
 
-LevelCallback = Callable[[float], None]  # Loudness 0..1 of the sound being heard right now
+LevelCallback = Callable[
+    [float], None
+]  # Loudness 0..1 of the sound being heard right now
 LEVEL_WINDOW_MS = 20
 
 
@@ -22,7 +24,7 @@ def levels_of(pcm: np.ndarray, window_samples: int) -> list[float]:
     """RMS loudness (0..1) of each window of int16 samples; the last window may be shorter."""
     out = []
     for start in range(0, len(pcm), window_samples):
-        part = pcm[start:start + window_samples].astype(np.float32) / 32768.0
+        part = pcm[start : start + window_samples].astype(np.float32) / 32768.0
         out.append(float(np.sqrt(np.mean(part * part))) if part.size else 0.0)
     return out
 
@@ -30,8 +32,14 @@ def levels_of(pcm: np.ndarray, window_samples: int) -> list[float]:
 class PacatSink:
     """One playback stream: open, write PCM chunks, then close (waits for the sound to finish)."""
 
-    def __init__(self, sample_rate: int = 24000, device: str = "", command: str = "pacat",
-                 latency_ms: int = 100, on_level: LevelCallback | None = None) -> None:
+    def __init__(
+        self,
+        sample_rate: int = 24000,
+        device: str = "",
+        command: str = "pacat",
+        latency_ms: int = 100,
+        on_level: LevelCallback | None = None,
+    ) -> None:
         self._rate = sample_rate
         self._device = device
         self._command = command
@@ -44,7 +52,9 @@ class PacatSink:
         self._emitter: asyncio.Task | None = None
         self._timeline: deque[tuple[float, float]] = deque()
         self._wake = asyncio.Event()
-        self._clock_end = 0.0  # Loop time at which everything written so far has been played
+        self._clock_end = (
+            0.0  # Loop time at which everything written so far has been played
+        )
 
     @property
     def is_open(self) -> bool:
@@ -53,15 +63,29 @@ class PacatSink:
     async def open(self) -> None:
         exe = shutil.which(self._command)
         if exe is None:
-            raise PlaybackError(f"{self._command} est introuvable : installe libpulse "
-                                "(sudo pacman -S libpulse) puis vérifie que `pactl info` répond.")
-        args = [exe, "--playback", "--raw", "--format=s16le", f"--rate={self._rate}", "--channels=1",
-                f"--latency-msec={int(self._latency * 1000)}", "--client-name=Monika", "--stream-name=Voix"]
+            raise PlaybackError(
+                f"{self._command} est introuvable : installe libpulse "
+                "(sudo pacman -S libpulse) puis vérifie que `pactl info` répond."
+            )
+        args = [
+            exe,
+            "--playback",
+            "--raw",
+            "--format=s16le",
+            f"--rate={self._rate}",
+            "--channels=1",
+            f"--latency-msec={int(self._latency * 1000)}",
+            "--client-name=Monika",
+            "--stream-name=Voix",
+        ]
         if self._device:
             args.append(f"--device={self._device}")
         self._proc = await asyncio.create_subprocess_exec(
-            *args, stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.PIPE)
+            *args,
+            stdin=asyncio.subprocess.PIPE,
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,
+        )
         self._stderr = b""
         self._timeline.clear()
         self._clock_end = 0.0
@@ -81,7 +105,8 @@ class PacatSink:
         where = f"sortie « {self._device} »" if self._device else "sortie par défaut"
         return PlaybackError(
             f"La sortie audio ne répond plus ({where}) : {reason[-1] if reason else 'pacat s’est arrêté'}. "
-            "Vérifie la sortie avec `pactl list short sinks` (réglage AUDIO_OUTPUT_DEVICE).")
+            "Vérifie la sortie avec `pactl list short sinks` (réglage AUDIO_OUTPUT_DEVICE)."
+        )
 
     async def write(self, pcm: np.ndarray) -> None:
         """Send int16 mono samples; waits when the audio server has enough to play."""
@@ -103,7 +128,9 @@ class PacatSink:
         if self._on_level is None:
             return
         now = asyncio.get_running_loop().time()
-        start = max(self._clock_end, now + self._latency)  # After an underrun, the sound starts late
+        start = max(
+            self._clock_end, now + self._latency
+        )  # After an underrun, the sound starts late
         for i, level in enumerate(levels_of(pcm, self._window)):
             self._timeline.append((start + i * LEVEL_WINDOW_MS / 1000, level))
         self._clock_end = start + len(pcm) / self._rate

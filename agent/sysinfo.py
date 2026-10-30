@@ -10,8 +10,20 @@ from datetime import datetime
 from pathlib import Path
 
 DAYS = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
-MONTHS = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août",
-          "septembre", "octobre", "novembre", "décembre"]
+MONTHS = [
+    "janvier",
+    "février",
+    "mars",
+    "avril",
+    "mai",
+    "juin",
+    "juillet",
+    "août",
+    "septembre",
+    "octobre",
+    "novembre",
+    "décembre",
+]
 
 
 def format_date_fr(now: datetime) -> str:
@@ -32,16 +44,31 @@ def _os_name() -> str:
 
 def system_context() -> list[str]:
     """Return short factual lines about the machine (best effort, never raises)."""
-    lines = [f"Système : {_os_name()}, noyau {platform.release()}, machine {socket.gethostname()}."]
+    lines = [
+        f"Système : {_os_name()}, noyau {platform.release()}, machine {socket.gethostname()}."
+    ]
     try:
-        lines.append(f"Utilisateur du système : {getpass.getuser()}, dossier personnel {Path.home()}.")
+        lines.append(
+            f"Utilisateur du système : {getpass.getuser()}, dossier personnel {Path.home()}."
+        )
     except (KeyError, OSError):
         lines.append(f"Dossier personnel : {Path.home()}.")
     lines.append(f"Dossier de travail actuel : {os.getcwd()}.")
-    session = " / ".join(filter(None, (os.environ.get("XDG_CURRENT_DESKTOP"),
-                                       os.environ.get("XDG_SESSION_TYPE"))))
+    session = " / ".join(
+        filter(
+            None,
+            (os.environ.get("XDG_CURRENT_DESKTOP"), os.environ.get("XDG_SESSION_TYPE")),
+        )
+    )
     shell = os.environ.get("SHELL")
-    extras = [x for x in (f"bureau {session}" if session else "", f"shell {shell}" if shell else "") if x]
+    extras = [
+        x
+        for x in (
+            f"bureau {session}" if session else "",
+            f"shell {shell}" if shell else "",
+        )
+        if x
+    ]
     if extras:
         lines.append("Environnement : " + ", ".join(extras) + ".")
     return lines

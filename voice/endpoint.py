@@ -24,12 +24,21 @@ class Utterance:
 class Endpointer:
     """Hysteresis state machine: speech starts after a few confident frames and ends after a pause."""
 
-    def __init__(self, speech_threshold: float = 0.5, silence_threshold: float | None = None,
-                 min_speech_ms: int = 250, end_silence_ms: int = 700, pre_roll_ms: int = 300,
-                 max_utterance_s: float = 30.0, onset_frames: int = 3) -> None:
+    def __init__(
+        self,
+        speech_threshold: float = 0.5,
+        silence_threshold: float | None = None,
+        min_speech_ms: int = 250,
+        end_silence_ms: int = 700,
+        pre_roll_ms: int = 300,
+        max_utterance_s: float = 30.0,
+        onset_frames: int = 3,
+    ) -> None:
         self._speech = speech_threshold
         # Between the two thresholds a frame neither starts nor ends anything
-        self._silence = speech_threshold - 0.15 if silence_threshold is None else silence_threshold
+        self._silence = (
+            speech_threshold - 0.15 if silence_threshold is None else silence_threshold
+        )
         self._min_speech_frames = math.ceil(min_speech_ms / FRAME_MS)
         self._end_frames = math.ceil(end_silence_ms / FRAME_MS)
         self._max_frames = math.ceil(max_utterance_s * 1000 / FRAME_MS)
@@ -39,7 +48,9 @@ class Endpointer:
         self.reset()
 
     def reset(self) -> None:
-        self._pre_roll: deque[np.ndarray] = deque(maxlen=self._pre_roll_frames + self._onset_needed)
+        self._pre_roll: deque[np.ndarray] = deque(
+            maxlen=self._pre_roll_frames + self._onset_needed
+        )
         self._onset = 0
         self._in_speech = False
         self._frames: list[np.ndarray] = []
@@ -57,7 +68,9 @@ class Endpointer:
             self._onset = self._onset + 1 if probability >= self._speech else 0
             if self._onset >= self._onset_needed:
                 self._in_speech = True
-                self._frames = list(self._pre_roll)  # Includes the audio just before the onset
+                self._frames = list(
+                    self._pre_roll
+                )  # Includes the audio just before the onset
                 self._speech_frames = self._onset
                 self._silence_run = 0
             return None
@@ -72,7 +85,11 @@ class Endpointer:
         return None
 
     def _finish(self, truncated: bool) -> Utterance | None:
-        frames, speech_frames, silence = self._frames, self._speech_frames, self._silence_run
+        frames, speech_frames, silence = (
+            self._frames,
+            self._speech_frames,
+            self._silence_run,
+        )
         self.reset()
         if speech_frames < self._min_speech_frames:
             return None  # A click or cough, not a sentence

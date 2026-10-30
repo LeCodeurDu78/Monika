@@ -5,6 +5,58 @@
 const TARGET_RATE = 16000;
 const FRAME_BYTES = 1024;  // 512 samples, the window the server's VAD expects
 
+// The AudioWorklet's source lives here rather than in a file of its own: the page then ships a single voice
+// module. It turns the microphone (Float32, the browser's own rate) into 16 kHz Int16, 512 samples per
+// message — the frame size the server's voice activity detector expects (see voice/audio.py) — so the page
+// feeds the very same pipeline as `parec`. Linear interpolation is enough for speech.
+const WORKLET_SRC = `
+const TARGET_RATE = 16000;
+const FRAME_SAMPLES = 512;
+
+class MonikaCapture extends AudioWorkletProcessor {
+  constructor() {
+    super();
+    this.ratio = sampleRate / TARGET_RATE;  // sampleRate is global in the worklet scope
+    this.frame = new Int16Array(FRAME_SAMPLES);
+    this.filled = 0;
+    this.carry = 0;  // position between two input samples, kept from one block to the next
+  }
+
+  process(inputs) {
+    const channel = inputs[0] && inputs[0][0];
+    if (!channel || !channel.length) return true;
+    let position = this.carry;
+    while (position < channel.length) {
+      const index = Math.floor(position);
+      const weight = position - index;
+      const first = channel[index] ?? 0;
+      const second = channel[index + 1] ?? first;
+      const value = first + (second - first) * weight;
+      this.frame[this.filled] = Math.max(-1, Math.min(1, value)) * 32767;
+      this.filled += 1;
+      if (this.filled === FRAME_SAMPLES) {
+        this.port.postMessage(this.frame.buffer, [this.frame.buffer]);
+        this.frame = new Int16Array(FRAME_SAMPLES);
+        this.filled = 0;
+      }
+      position += this.ratio;
+    }
+    this.carry = position - channel.length;
+    return true;
+  }
+}
+
+registerProcessor('monika-capture', MonikaCapture);
+`;
+
+let workletUrl = null;
+
+/** The worklet module's URL. A Blob keeps it in this file: same origin, no extra request to maintain. */
+function workletModule() {
+  if (!workletUrl) workletUrl = URL.createObjectURL(new Blob([WORKLET_SRC], { type: 'text/javascript' }));
+  return workletUrl;
+}
+
 const MIC_ERRORS = {
   NotAllowedError: 'Micro refusé : autorise-le dans le navigateur (icône à gauche de l’adresse).',
   NotFoundError: 'Aucun micro détecté sur cet appareil.',
@@ -69,7 +121,7 @@ export function mountVoice({ status = () => {} } = {}) {
     }
     mic = new AudioContext();
     try {
-      await mic.audioWorklet.addModule('/static/js/voice-worklet.js');
+      await mic.audioWorklet.addModule(workletModule());
     } catch (err) {
       status('Capture audio impossible : ce navigateur ne charge pas l’AudioWorklet.');
       await closeMic();

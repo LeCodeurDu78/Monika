@@ -24,7 +24,9 @@ class AudioSource(Protocol):
 class ParecSource:
     """Reads fixed-size int16 frames from a parec subprocess."""
 
-    def __init__(self, device: str = "@DEFAULT_SOURCE@", command: str = "parec") -> None:
+    def __init__(
+        self, device: str = "@DEFAULT_SOURCE@", command: str = "parec"
+    ) -> None:
         self._device = device
         self._command = command
         self._proc: asyncio.subprocess.Process | None = None
@@ -34,12 +36,20 @@ class ParecSource:
     async def start(self) -> None:
         exe = shutil.which(self._command)
         if exe is None:
-            raise AudioError(f"{self._command} est introuvable : installe libpulse "
-                             "(sudo pacman -S libpulse) puis vérifie que `pactl info` répond.")
+            raise AudioError(
+                f"{self._command} est introuvable : installe libpulse "
+                "(sudo pacman -S libpulse) puis vérifie que `pactl info` répond."
+            )
         self._proc = await asyncio.create_subprocess_exec(
-            exe, "--format=s16le", f"--rate={SAMPLE_RATE}", "--channels=1",
-            f"--device={self._device}", "--latency-msec=30",
-            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+            exe,
+            "--format=s16le",
+            f"--rate={SAMPLE_RATE}",
+            "--channels=1",
+            f"--device={self._device}",
+            "--latency-msec=30",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
         self._drain = asyncio.get_running_loop().create_task(self._drain_stderr())
 
     async def _drain_stderr(self) -> None:
@@ -49,7 +59,9 @@ class ParecSource:
             self._stderr = (self._stderr + chunk)[-2000:]
 
     async def read_frame(self) -> np.ndarray:
-        assert self._proc is not None and self._proc.stdout is not None, "start() d'abord"
+        assert self._proc is not None and self._proc.stdout is not None, (
+            "start() d'abord"
+        )
         try:
             data = await self._proc.stdout.readexactly(FRAME_BYTES)
         except asyncio.IncompleteReadError:
@@ -58,7 +70,8 @@ class ParecSource:
             raise AudioError(
                 f"Le micro ne répond plus (source « {self._device} ») : "
                 f"{reason[-1] if reason else 'parec s’est arrêté'}. "
-                "Vérifie la source avec `pactl list short sources` (réglage AUDIO_INPUT_DEVICE).") from None
+                "Vérifie la source avec `pactl list short sources` (réglage AUDIO_INPUT_DEVICE)."
+            ) from None
         return np.frombuffer(data, dtype=np.int16)
 
     async def close(self) -> None:

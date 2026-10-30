@@ -32,8 +32,14 @@ class Tool:
 
     def schema(self) -> dict[str, Any]:
         """Return the OpenAI function-calling definition."""
-        return {"type": "function", "function": {
-            "name": self.name, "description": self.description, "parameters": self.parameters}}
+        return {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": self.description,
+                "parameters": self.parameters,
+            },
+        }
 
 
 @dataclass(frozen=True)
@@ -84,7 +90,9 @@ class ToolRegistry:
             return [t.schema() for t in self._tools.values()]
         return [t.schema() for name, t in self._tools.items() if name in names]
 
-    async def call(self, name: str, raw_arguments: str | dict[str, Any] | None) -> ToolResult:
+    async def call(
+        self, name: str, raw_arguments: str | dict[str, Any] | None
+    ) -> ToolResult:
         """Run a tool and return its text result or a text error."""
         tool = self._tools.get(name)
         if tool is None:
@@ -92,7 +100,9 @@ class ToolRegistry:
         try:
             args = self._parse_args(raw_arguments)
         except ValueError as exc:
-            self._log(name, {"arguments_bruts": str(raw_arguments)}, "error", 0.0, str(exc))
+            self._log(
+                name, {"arguments_bruts": str(raw_arguments)}, "error", 0.0, str(exc)
+            )
             return ToolResult(name, f"Arguments invalides pour {name} : {exc}", True)
 
         loop = asyncio.get_running_loop()
@@ -105,9 +115,18 @@ class ToolRegistry:
             self._log(name, args, "interrupted", (loop.time() - start) * 1000, None)
             raise
         except Exception as exc:  # Any handler bug becomes a message the model can read
-            text, is_error = f"Erreur interne de l'outil {name} : {type(exc).__name__}: {exc}", True
+            text, is_error = (
+                f"Erreur interne de l'outil {name} : {type(exc).__name__}: {exc}",
+                True,
+            )
         elapsed = (loop.time() - start) * 1000
-        self._log(name, args, "error" if is_error else "ok", elapsed, text if is_error else None)
+        self._log(
+            name,
+            args,
+            "error" if is_error else "ok",
+            elapsed,
+            text if is_error else None,
+        )
         return ToolResult(name, text, is_error, elapsed)
 
     def audit_event(self, event: str, data: dict[str, Any] | None = None) -> None:
@@ -115,8 +134,14 @@ class ToolRegistry:
         if self._audit is not None:
             self._audit.record(event, data or {}, "ok", 0.0)
 
-    def _log(self, name: str, args: dict[str, Any], status: str, ms: float,
-             detail: str | None) -> None:
+    def _log(
+        self,
+        name: str,
+        args: dict[str, Any],
+        status: str,
+        ms: float,
+        detail: str | None,
+    ) -> None:
         if self._audit:
             self._audit.record(name, args, status, ms, detail)
 

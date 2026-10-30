@@ -19,14 +19,21 @@ class SearchOutcome:
     warning: str = ""
     index_empty: bool = False
     filtered: int = 0  # Passages dropped for scoring below RAG_MIN_SCORE
-    min_score: float | None = None  # Threshold actually applied (None: no filter was applied)
+    min_score: float | None = (
+        None  # Threshold actually applied (None: no filter was applied)
+    )
 
 
 class RagService:
     """Hybrid search with reranking, plus a background sync job."""
 
-    def __init__(self, store: RagStore, settings: Settings, paths: Paths,
-                 display_home: Path | None = None) -> None:
+    def __init__(
+        self,
+        store: RagStore,
+        settings: Settings,
+        paths: Paths,
+        display_home: Path | None = None,
+    ) -> None:
         self._store = store
         self._s = settings
         self._indexer = Indexer(store, settings, paths.home, display_home)
@@ -34,9 +41,19 @@ class RagService:
         self._job: asyncio.Task | None = None
 
     @classmethod
-    def create(cls, settings: Settings, paths: Paths, display_home: Path | None = None,
-               **store_kwargs) -> RagService:
-        return cls(RagStore.create(settings, paths, **store_kwargs), settings, paths, display_home)
+    def create(
+        cls,
+        settings: Settings,
+        paths: Paths,
+        display_home: Path | None = None,
+        **store_kwargs,
+    ) -> RagService:
+        return cls(
+            RagStore.create(settings, paths, **store_kwargs),
+            settings,
+            paths,
+            display_home,
+        )
 
     @property
     def default_top_k(self) -> int:
@@ -78,8 +95,9 @@ class RagService:
         if counts["indexed"] == 0:
             return SearchOutcome(index_empty=True)
         vector = await self._store.embed_query(query)
-        hits = await self._store.query(query, vector, max(self._s.rag_candidates, top_k),
-                                       self._s.rag_hybrid_alpha)
+        hits = await self._store.query(
+            query, vector, max(self._s.rag_candidates, top_k), self._s.rag_hybrid_alpha
+        )
         outcome = SearchOutcome(hits=hits)
         if self._s.rag_rerank_enabled and hits:
             try:
@@ -93,9 +111,13 @@ class RagService:
                 kept = [h for h in outcome.hits if h.score >= outcome.min_score]
                 outcome.filtered = len(outcome.hits) - len(kept)
                 outcome.hits = kept
-            except Exception as exc:  # Offline or model missing: fall back to the hybrid order
-                outcome.warning = (f"reranking indisponible ({type(exc).__name__}: {str(exc)[:120]}) : "
-                                   "classement par la recherche hybride seule, sans filtre de score")
+            except (
+                Exception
+            ) as exc:  # Offline or model missing: fall back to the hybrid order
+                outcome.warning = (
+                    f"reranking indisponible ({type(exc).__name__}: {str(exc)[:120]}) : "
+                    "classement par la recherche hybride seule, sans filtre de score"
+                )
         outcome.hits = outcome.hits[:top_k]
         return outcome
 
@@ -105,14 +127,29 @@ class RagService:
 
     async def status_text(self) -> str:
         counts = self._store.manifest.counts()
-        lines = [f"Documents indexés : {counts['indexed']} fichier(s), {counts['chunks']} passages ; "
-                 f"{counts['skipped']} ignoré(s), {counts['error']} en erreur."]
+        lines = [
+            (
+                f"Documents indexés : {counts['indexed']} fichier(s), {counts['chunks']} passages ; "
+                f"{counts['skipped']} ignoré(s), {counts['error']} en erreur."
+            )
+        ]
         reasons = self._store.manifest.skipped_reasons(5)
         if reasons:
-            lines.append("Raisons d'exclusion : " + ", ".join(f"{n} {r}" for r, n in reasons) + ".")
-        lines.append("Dernière indexation : " + self.progress.summary()
-                     if self.progress.state != "inactif" else "Aucune indexation lancée dans cette session.")
-        lines.append("Dossiers surveillés : " + ", ".join(str(p) for p in self._s.rag_root_paths()) + ".")
+            lines.append(
+                "Raisons d'exclusion : "
+                + ", ".join(f"{n} {r}" for r, n in reasons)
+                + "."
+            )
+        lines.append(
+            "Dernière indexation : " + self.progress.summary()
+            if self.progress.state != "inactif"
+            else "Aucune indexation lancée dans cette session."
+        )
+        lines.append(
+            "Dossiers surveillés : "
+            + ", ".join(str(p) for p in self._s.rag_root_paths())
+            + "."
+        )
         return "\n".join(lines)
 
     async def reset(self) -> None:
@@ -124,4 +161,4 @@ class RagService:
         await self._store.close()
 
 
-__all__ = ["RagService", "SearchOutcome", "RagError"]
+__all__ = ["RagError", "RagService", "SearchOutcome"]

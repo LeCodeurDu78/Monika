@@ -60,4 +60,4 @@ class ChatView:
     def _add(self, item: dict[str, str]) -> None:
         self._items.append(item)
         if len(self._items) > self._limit:
-            self._items = self._items[-self._limit:]
+            self._items = self._items[-self._limit :]

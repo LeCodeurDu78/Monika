@@ -22,9 +22,9 @@ import re
 
 from character.emotion_spec import BY_NAME
 
-DEFAULT_TAG = "neutral1"      # The tag every GPT-SoVITS voice pack understands
-MIN_SPLIT_LENGTH = 30         # Shorter texts stay on one tag: no room for a transition
-MIN_HALF_LENGTH = 10          # Neither half of a split text may be shorter than this
+DEFAULT_TAG = "neutral1"  # The tag every GPT-SoVITS voice pack understands
+MIN_SPLIT_LENGTH = 30  # Shorter texts stay on one tag: no room for a transition
+MIN_HALF_LENGTH = 10  # Neither half of a split text may be shorter than this
 
 # Step 2: sigmoid shifted right, so most emotions stay low-mid and only a strong one reaches the top.
 S_CURVE_STEEPNESS = 10.0
@@ -36,8 +36,9 @@ ADJACENT_STEP = 0.35
 DIAGONAL_INITIAL_MULT = 0.0
 DIAGONAL_STEP = 0.25
 
-DIAGONAL_PAIRS: frozenset[frozenset[str]] = frozenset({frozenset({"HAP", "LAN"}),
-                                                       frozenset({"HAN", "LAP"})})
+DIAGONAL_PAIRS: frozenset[frozenset[str]] = frozenset(
+    {frozenset({"HAP", "LAN"}), frozenset({"HAN", "LAP"})}
+)
 
 _SENTENCE_BREAKS = re.compile(r"(?<=[.!?])\s+")
 _CLAUSE_BREAKS = re.compile(r"(?<=[,;])\s+|(?<=\s)--\s+")
@@ -62,7 +63,9 @@ def find_split_point(text: str) -> int | None:
     for pattern, weight in ((_SENTENCE_BREAKS, 2.0), (_CLAUSE_BREAKS, 1.0)):
         for match in pattern.finditer(text):
             distance = abs(match.end() - center) / len(text)
-            candidates.append((math.exp(-(distance * 4.0) ** 2) * weight, match.end()))
+            candidates.append(
+                (math.exp(-((distance * 4.0) ** 2)) * weight, match.end())
+            )
     if not candidates:
         return None
     candidates.sort(reverse=True)
@@ -72,7 +75,9 @@ def find_split_point(text: str) -> int | None:
     return best
 
 
-def emotion_state(variants: tuple[str, ...] | list[str], curved: float) -> tuple[str, str | None]:
+def emotion_state(
+    variants: tuple[str, ...] | list[str], curved: float
+) -> tuple[str, str | None]:
     """(tag, second tag or None) for N variants: neutral, neutral+v1, v1, v1+v2, …, vN."""
     n = len(variants)
     if n == 0:
@@ -108,11 +113,15 @@ class TtsEmotionMapper:
     def _lag(self, emotion: str, intensity: float) -> float:
         """Effective intensity after softening the jump between quadrants; also advances the ramp."""
         quadrant = BY_NAME[emotion].quadrant if emotion in BY_NAME else ""
-        if not quadrant:  # Neutral, surprise or an unknown name: no lag, and the ramp is forgotten
+        if (
+            not quadrant
+        ):  # Neutral, surprise or an unknown name: no lag, and the ramp is forgotten
             self.reset()
             return max(0.0, min(1.0, intensity))
         if quadrant == self._quadrant:
-            self._multiplier = min(1.0, self._multiplier + self._step)   # Ramp back up turn after turn
+            self._multiplier = min(
+                1.0, self._multiplier + self._step
+            )  # Ramp back up turn after turn
         elif not self._quadrant:
             self._multiplier, self._step = 1.0, 0.0
         elif frozenset({self._quadrant, quadrant}) in DIAGONAL_PAIRS:
@@ -122,8 +131,13 @@ class TtsEmotionMapper:
         self._quadrant = quadrant
         return max(0.0, min(1.0, intensity)) * self._multiplier
 
-    def tagged(self, text: str, emotion: str = "", intensity: float = 0.0,
-               available: set[str] | frozenset[str] | None = None) -> str:
+    def tagged(
+        self,
+        text: str,
+        emotion: str = "",
+        intensity: float = 0.0,
+        available: set[str] | frozenset[str] | None = None,
+    ) -> str:
         """The text with 【tag】 prefixes; `available` limits them to what the voice really has."""
         text = " ".join(str(text).split())
         if not text:
@@ -139,9 +153,17 @@ class TtsEmotionMapper:
         if second is None:
             return f"【{first}】{text}"
         cut = find_split_point(text)
-        if cut is None:  # Too short or no natural pause: the whole phrase takes the higher tag
+        if (
+            cut is None
+        ):  # Too short or no natural pause: the whole phrase takes the higher tag
             return f"【{second}】{text}"
         return f"【{first}】{text[:cut].rstrip()} 【{second}】{text[cut:].lstrip()}"
 
 
-__all__ = ["TtsEmotionMapper", "DEFAULT_TAG", "s_curve", "emotion_state", "find_split_point"]
+__all__ = [
+    "DEFAULT_TAG",
+    "TtsEmotionMapper",
+    "emotion_state",
+    "find_split_point",
+    "s_curve",
+]

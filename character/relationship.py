@@ -17,23 +17,40 @@ from character.emotion_spec import CEILINGS
 from character.models import Appraisal, clamp, finite
 
 LEVELS: tuple[str, ...] = ("reservee", "cordiale", "complice", "proche")
-LEVEL_LABELS_FR: dict[str, str] = {"reservee": "Réservée", "cordiale": "Cordiale", "complice": "Complice", "proche": "Proche"}
-THRESHOLDS: tuple[float, ...] = (0.0, 0.25, 0.50, 0.75)      # favorability needed for each level
-MIN_MESSAGES: tuple[int, ...] = (0, 0, 30, 100)              # ...and enough shared conversation
-MIN_ACTIVE_DAYS: tuple[int, ...] = (0, 0, 4, 14)             # ...and enough different days: closeness takes time
-HYSTERESIS = 0.03            # fall this far under a threshold before losing the level (no flapping)
+LEVEL_LABELS_FR: dict[str, str] = {
+    "reservee": "Réservée",
+    "cordiale": "Cordiale",
+    "complice": "Complice",
+    "proche": "Proche",
+}
+THRESHOLDS: tuple[float, ...] = (
+    0.0,
+    0.25,
+    0.50,
+    0.75,
+)  # favorability needed for each level
+MIN_MESSAGES: tuple[int, ...] = (0, 0, 30, 100)  # ...and enough shared conversation
+MIN_ACTIVE_DAYS: tuple[int, ...] = (
+    0,
+    0,
+    4,
+    14,
+)  # ...and enough different days: closeness takes time
+HYSTERESIS = (
+    0.03  # fall this far under a threshold before losing the level (no flapping)
+)
 
 START = 0.30
 FLOOR = 0.15
-TONE_STEP = 0.012            # favorability per message at |valence| = 1
-INSULT_FACTOR = 1.5          # unkindness weighs a little more than kindness
+TONE_STEP = 0.012  # favorability per message at |valence| = 1
+INSULT_FACTOR = 1.5  # unkindness weighs a little more than kindness
 PRESENCE_PER_MESSAGE = 0.0015
 DAILY_BONUS = 0.01
-STREAK_BONUS = 0.002         # per streak day, up to 5
+STREAK_BONUS = 0.002  # per streak day, up to 5
 DAILY_GAIN_CAP = 0.06
 DAILY_LOSS_CAP = 0.05
 ABSENCE_GRACE_DAYS = 3
-ABSENCE_RATE = 0.004         # per day beyond the grace period
+ABSENCE_RATE = 0.004  # per day beyond the grace period
 ABSENCE_MAX = 0.05
 
 # How freely each emotion may rise at each level (teasing and sulking need familiarity).
@@ -79,7 +96,9 @@ class RelationshipState:
         if finite(data.get("level")):
             state.level = int(clamp(int(data["level"]), 0, len(LEVELS) - 1))
         else:
-            state.level = max(i for i, t in enumerate(THRESHOLDS) if state.favorability >= t)
+            state.level = max(
+                i for i, t in enumerate(THRESHOLDS) if state.favorability >= t
+            )
         return state
 
 
@@ -128,9 +147,13 @@ class Relationship:
             s.streak = s.streak + 1 if gap == 1 else 1
             s.best_streak = max(s.best_streak, s.streak)
             s.last_day = today.isoformat()
-            if gap > ABSENCE_GRACE_DAYS:   # a gentle drift, never below the current level's floor
+            if (
+                gap > ABSENCE_GRACE_DAYS
+            ):  # a gentle drift, never below the current level's floor
                 drift = min(ABSENCE_MAX, ABSENCE_RATE * (gap - ABSENCE_GRACE_DAYS))
-                s.favorability = max(max(FLOOR, THRESHOLDS[s.level]), s.favorability - drift)
+                s.favorability = max(
+                    max(FLOOR, THRESHOLDS[s.level]), s.favorability - drift
+                )
             gain += DAILY_BONUS + STREAK_BONUS * min(s.streak, 5)
 
         s.message_count += 1
@@ -148,10 +171,15 @@ class Relationship:
         s.day_loss += loss
         s.favorability = clamp(s.favorability + gain - loss, 0.0, 1.0)
         self._settle_level()
-        return RelationshipChange(round(before, 4), round(s.favorability, 4), level_before, s.level)
+        return RelationshipChange(
+            round(before, 4), round(s.favorability, 4), level_before, s.level
+        )
 
     def _gate_open(self, level: int) -> bool:
-        return self.state.message_count >= MIN_MESSAGES[level] and self.state.active_days >= MIN_ACTIVE_DAYS[level]
+        return (
+            self.state.message_count >= MIN_MESSAGES[level]
+            and self.state.active_days >= MIN_ACTIVE_DAYS[level]
+        )
 
     def _settle_level(self) -> None:
         s = self.state
@@ -160,7 +188,7 @@ class Relationship:
             if s.favorability >= THRESHOLDS[nxt]:
                 if self._gate_open(nxt):
                     s.level = nxt
-                else:   # closeness takes time: hold just under the threshold until the conversation has matured
+                else:  # closeness takes time: hold just under the threshold until the conversation has matured
                     s.favorability = min(s.favorability, THRESHOLDS[nxt] - 0.001)
         if s.level > 0 and s.favorability < THRESHOLDS[s.level] - HYSTERESIS:
             s.level -= 1

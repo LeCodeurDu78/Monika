@@ -43,9 +43,15 @@ class ActionError(Exception):
         self.status = status
 
 
-def create_app(hub: Hub, snapshot: Snapshot, static_dir: Path = STATIC_DIR,
-               actions: Actions | None = None, settings_api: Any | None = None,
-               chat: Any = None, voice_factory: Any = None) -> Any:
+def create_app(
+    hub: Hub,
+    snapshot: Snapshot,
+    static_dir: Path = STATIC_DIR,
+    actions: Actions | None = None,
+    settings_api: Any | None = None,
+    chat: Any = None,
+    voice_factory: Any = None,
+) -> Any:
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     actions = actions or {}
     if settings_api is not None:
@@ -53,8 +59,10 @@ def create_app(hub: Hub, snapshot: Snapshot, static_dir: Path = STATIC_DIR,
 
     @app.get("/")
     async def index() -> HTMLResponse:
-        return HTMLResponse((static_dir / "index.html").read_text(encoding="utf-8"),
-                            headers={"Cache-Control": "no-store"})
+        return HTMLResponse(
+            (static_dir / "index.html").read_text(encoding="utf-8"),
+            headers={"Cache-Control": "no-store"},
+        )
 
     @app.get("/api/status")
     async def status() -> JSONResponse:
@@ -63,20 +71,28 @@ def create_app(hub: Hub, snapshot: Snapshot, static_dir: Path = STATIC_DIR,
     @app.get("/api/emotions")
     async def emotions() -> JSONResponse:
         """The emotion table (labels, expression weights, fallback clips): static, no secrets."""
-        return JSONResponse(emotion_spec.payload(), headers={"Cache-Control": "no-store"})
+        return JSONResponse(
+            emotion_spec.payload(), headers={"Cache-Control": "no-store"}
+        )
 
     async def act(name: str, *args: Any) -> JSONResponse:
         action = actions.get(name)
         if action is None:
-            return JSONResponse({"error": "Cette action n'est pas disponible."}, status_code=404)
+            return JSONResponse(
+                {"error": "Cette action n'est pas disponible."}, status_code=404
+            )
         try:
             result = await action(*args)
         except ActionError as exc:
             return JSONResponse({"error": str(exc)}, status_code=exc.status)
         except Exception as exc:
-            return JSONResponse({"error": f"L'action a échoué : {type(exc).__name__}"}, status_code=500)
+            return JSONResponse(
+                {"error": f"L'action a échoué : {type(exc).__name__}"}, status_code=500
+            )
         # Actions may describe what changed (e.g. the keys that need a restart); None means just "ok"
-        return JSONResponse({"ok": True, **(result if isinstance(result, dict) else {})})
+        return JSONResponse(
+            {"ok": True, **(result if isinstance(result, dict) else {})}
+        )
 
     @app.put("/api/memory/{memory_id}")
     async def memory_update(memory_id: str, request: Request) -> JSONResponse:
@@ -86,8 +102,12 @@ def create_app(hub: Hub, snapshot: Snapshot, static_dir: Path = STATIC_DIR,
             body = None
         text = body.get("text") if isinstance(body, dict) else None
         if not isinstance(text, str) or not text.strip() or len(text) > MAX_TEXT_CHARS:
-            return JSONResponse({"error": f"Le souvenir doit faire entre 1 et {MAX_TEXT_CHARS} caractères."},
-                                status_code=400)
+            return JSONResponse(
+                {
+                    "error": f"Le souvenir doit faire entre 1 et {MAX_TEXT_CHARS} caractères."
+                },
+                status_code=400,
+            )
         return await act("memory_update", memory_id, text.strip())
 
     @app.delete("/api/memory/{memory_id}")
@@ -106,8 +126,12 @@ def create_app(hub: Hub, snapshot: Snapshot, static_dir: Path = STATIC_DIR,
     async def journal_update(note_id: str, request: Request) -> JSONResponse:
         text = await read_text(request)
         if text is None or not text.strip() or len(text) > MAX_NOTE_CHARS:
-            return JSONResponse({"error": f"La note doit faire entre 1 et {MAX_NOTE_CHARS} caractères."},
-                                status_code=400)
+            return JSONResponse(
+                {
+                    "error": f"La note doit faire entre 1 et {MAX_NOTE_CHARS} caractères."
+                },
+                status_code=400,
+            )
         return await act("journal_update", note_id, text.strip())
 
     @app.delete("/api/journal/{note_id}")
@@ -120,10 +144,16 @@ def create_app(hub: Hub, snapshot: Snapshot, static_dir: Path = STATIC_DIR,
 
     @app.put("/api/impression")
     async def impression_update(request: Request) -> JSONResponse:
-        text = await read_text(request)   # An empty text is allowed: it clears the impression
+        text = await read_text(
+            request
+        )  # An empty text is allowed: it clears the impression
         if text is None or len(text) > MAX_IMPRESSION_CHARS:
-            return JSONResponse({"error": f"L'impression doit faire au plus {MAX_IMPRESSION_CHARS} caractères."},
-                                status_code=400)
+            return JSONResponse(
+                {
+                    "error": f"L'impression doit faire au plus {MAX_IMPRESSION_CHARS} caractères."
+                },
+                status_code=400,
+            )
         return await act("impression_update", text.strip())
 
     @app.post("/api/relation/reset")
@@ -143,14 +173,17 @@ def create_app(hub: Hub, snapshot: Snapshot, static_dir: Path = STATIC_DIR,
         """The conversation so far, for a page that opens or reloads (then the WebSocket keeps it live)."""
         if chat is None:
             return JSONResponse({"enabled": False, "busy": False, "items": []})
-        return JSONResponse({"enabled": True, **chat.snapshot()},
-                            headers={"Cache-Control": "no-store"})
+        return JSONResponse(
+            {"enabled": True, **chat.snapshot()}, headers={"Cache-Control": "no-store"}
+        )
 
     @app.post("/api/chat")
     async def chat_send(request: Request) -> JSONResponse:
         text = await read_text(request)
         if text is None:
-            return JSONResponse({"error": "Message attendu (champ « text »)."}, status_code=400)
+            return JSONResponse(
+                {"error": "Message attendu (champ « text »)."}, status_code=400
+            )
         return await act("chat_send", text)
 
     @app.post("/api/chat/stop")
@@ -158,18 +191,25 @@ def create_app(hub: Hub, snapshot: Snapshot, static_dir: Path = STATIC_DIR,
         return await act("chat_stop")
 
     if settings_api is not None:
+
         @app.get("/settings")
         async def settings_page() -> HTMLResponse:
-            return HTMLResponse((static_dir / "settings.html").read_text(encoding="utf-8"),
-                                headers={"Cache-Control": "no-store"})
+            return HTMLResponse(
+                (static_dir / "settings.html").read_text(encoding="utf-8"),
+                headers={"Cache-Control": "no-store"},
+            )
 
         @app.get("/api/settings")
         async def settings_read() -> JSONResponse:
-            return JSONResponse(settings_api.read(), headers={"Cache-Control": "no-store"})
+            return JSONResponse(
+                settings_api.read(), headers={"Cache-Control": "no-store"}
+            )
 
         @app.get("/api/health")
         async def health_grid() -> JSONResponse:
-            return JSONResponse(await settings_api.health(), headers={"Cache-Control": "no-store"})
+            return JSONResponse(
+                await settings_api.health(), headers={"Cache-Control": "no-store"}
+            )
 
         @app.post("/api/settings")
         async def settings_write(request: Request) -> JSONResponse:
@@ -178,7 +218,10 @@ def create_app(hub: Hub, snapshot: Snapshot, static_dir: Path = STATIC_DIR,
             except ValueError:
                 body = None
             if not isinstance(body, dict):
-                return JSONResponse({"error": "Réglages attendus sous forme d'objet JSON."}, status_code=400)
+                return JSONResponse(
+                    {"error": "Réglages attendus sous forme d'objet JSON."},
+                    status_code=400,
+                )
             return await act("settings_update", body)
 
         @app.post("/api/settings/words")
@@ -188,7 +231,10 @@ def create_app(hub: Hub, snapshot: Snapshot, static_dir: Path = STATIC_DIR,
             except ValueError:
                 body = None
             if not isinstance(body, dict):
-                return JSONResponse({"error": "Liste de mots attendue sous forme d'objet JSON."}, status_code=400)
+                return JSONResponse(
+                    {"error": "Liste de mots attendue sous forme d'objet JSON."},
+                    status_code=400,
+                )
             return await act("settings_words", body)
 
         @app.post("/api/settings/secret")
@@ -200,14 +246,20 @@ def create_app(hub: Hub, snapshot: Snapshot, static_dir: Path = STATIC_DIR,
             name = body.get("name") if isinstance(body, dict) else None
             value = body.get("value") if isinstance(body, dict) else None
             if not isinstance(name, str) or not isinstance(value, str):
-                return JSONResponse({"error": "Nom et valeur du secret attendus."}, status_code=400)
+                return JSONResponse(
+                    {"error": "Nom et valeur du secret attendus."}, status_code=400
+                )
             return await act("settings_secret", name, value)
 
     @app.websocket("/ws")
     async def live(ws: WebSocket) -> None:
         await ws.accept()
         queue = hub.subscribe()
-        voice = voice_factory(ws.send_json, ws.send_bytes) if voice_factory is not None else None
+        voice = (
+            voice_factory(ws.send_json, ws.send_bytes)
+            if voice_factory is not None
+            else None
+        )
         try:
             await ws.send_json(hub.hello())
 
@@ -221,7 +273,9 @@ def create_app(hub: Hub, snapshot: Snapshot, static_dir: Path = STATIC_DIR,
                     if message.get("type") == "websocket.disconnect":
                         return
                     data = message.get("bytes")
-                    if data:  # microphone audio from the page (16 kHz PCM, see web/voice.py)
+                    if (
+                        data
+                    ):  # microphone audio from the page (16 kHz PCM, see web/voice.py)
                         if voice is not None:
                             voice.feed(data)
                         continue
@@ -267,9 +321,17 @@ class _Server(uvicorn.Server):
 class WebServer:
     """Runs the app inside the current event loop, next to the chat."""
 
-    def __init__(self, hub: Hub, snapshot: Snapshot, port: int, static_dir: Path = STATIC_DIR,
-                 actions: Actions | None = None, settings_api: Any | None = None,
-                 chat: Any = None, voice_factory: Any = None) -> None:
+    def __init__(
+        self,
+        hub: Hub,
+        snapshot: Snapshot,
+        port: int,
+        static_dir: Path = STATIC_DIR,
+        actions: Actions | None = None,
+        settings_api: Any | None = None,
+        chat: Any = None,
+        voice_factory: Any = None,
+    ) -> None:
         self._actions = actions
         self._settings_api = settings_api
         self._chat = chat
@@ -291,14 +353,30 @@ class WebServer:
         try:
             probe.bind((HOST, self.port))
         except OSError as exc:
-            raise WebError(f"Le port {self.port} est déjà utilisé ({exc.strerror}) : une autre instance de Monika "
-                           "tourne peut-être ; change WEB_PORT ou ferme-la.") from exc
+            raise WebError(
+                f"Le port {self.port} est déjà utilisé ({exc.strerror}) : une autre instance de Monika "
+                "tourne peut-être ; change WEB_PORT ou ferme-la."
+            ) from exc
         finally:
             probe.close()
-        app = create_app(self._hub, self._snapshot, self._static, self._actions,
-                         self._settings_api, self._chat, self._voice_factory)
-        config = uvicorn.Config(app, host=HOST, port=self.port, log_level="warning", access_log=False,
-                                lifespan="off", timeout_graceful_shutdown=2)
+        app = create_app(
+            self._hub,
+            self._snapshot,
+            self._static,
+            self._actions,
+            self._settings_api,
+            self._chat,
+            self._voice_factory,
+        )
+        config = uvicorn.Config(
+            app,
+            host=HOST,
+            port=self.port,
+            log_level="warning",
+            access_log=False,
+            lifespan="off",
+            timeout_graceful_shutdown=2,
+        )
         self._server = _Server(config)
         self._task = asyncio.get_running_loop().create_task(self._run(self._server))
         for _ in range(100):
@@ -307,9 +385,15 @@ class WebServer:
             if self._task.done():
                 break
             await asyncio.sleep(0.05)
-        error = self._task.exception() if self._task.done() and not self._task.cancelled() else None
+        error = (
+            self._task.exception()
+            if self._task.done() and not self._task.cancelled()
+            else None
+        )
         await self.stop()
-        raise WebError(f"Le serveur web n'a pas démarré{f' : {error}' if error else ''}.")
+        raise WebError(
+            f"Le serveur web n'a pas démarré{f' : {error}' if error else ''}."
+        )
 
     @staticmethod
     async def _run(server: _Server) -> None:

@@ -31,10 +31,19 @@ def settings_json_path() -> Path:
     """Where the settings page writes: <MONIKA_HOME>/settings.json."""
     return _home_from_environment() / "settings.json"
 
+
 # GPT-SoVITS text front-ends; French is read by the English one, hence the aliases.
 _LANGUAGES = frozenset({"auto", "en", "zh", "ja", "ko", "yue"})
-_LANGUAGE_NAMES = {"chinese": "zh", "english": "en", "japanese": "ja", "korean": "ko",
-                   "cantonese": "yue", "french": "en", "français": "en", "fr": "en"}
+_LANGUAGE_NAMES = {
+    "chinese": "zh",
+    "english": "en",
+    "japanese": "ja",
+    "korean": "ko",
+    "cantonese": "yue",
+    "french": "en",
+    "français": "en",
+    "fr": "en",
+}
 
 
 class SettingsError(Exception):
@@ -55,12 +64,22 @@ class Settings(BaseSettings):
     )
 
     @classmethod
-    def settings_customise_sources(cls, settings_cls: type[Settings], init_settings: Any,
-                                   env_settings: Any, dotenv_settings: Any,
-                                   file_secret_settings: Any) -> tuple[Any, ...]:
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[Settings],
+        init_settings: Any,
+        env_settings: Any,
+        dotenv_settings: Any,
+        file_secret_settings: Any,
+    ) -> tuple[Any, ...]:
         """Order: init > environment > .env > settings.json (the page never overrides the .env)."""
-        return (init_settings, env_settings, dotenv_settings,
-                JsonConfigSettingsSource(settings_cls), file_secret_settings)
+        return (
+            init_settings,
+            env_settings,
+            dotenv_settings,
+            JsonConfigSettingsSource(settings_cls),
+            file_secret_settings,
+        )
 
     # LLM (OpenAI-compatible API)
     llm_base_url: str = "https://api.libertai.io/v1"
@@ -84,7 +103,9 @@ class Settings(BaseSettings):
     loop_stop_after: int = Field(5, ge=3)
 
     # Roles: two optional model calls, both off by default and both outside the critical path of a turn
-    director_enabled: bool = False  # Before the turn: keep only the useful tools and add one short hint
+    director_enabled: bool = (
+        False  # Before the turn: keep only the useful tools and add one short hint
+    )
     director_llm_model: str = ""  # Empty means MODEL_NAME
     director_timeout_s: float = Field(1.5, gt=0)
     action_llm_enabled: bool = False  # After the turn: a short avatar action chain
@@ -116,7 +137,9 @@ class Settings(BaseSettings):
     fast_memory_enabled: bool = True
     embedding_model: str = "sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
     memory_llm_model: str = ""  # Extraction model; empty means MODEL_NAME
-    memory_inject_all_max: int = Field(30, ge=0)  # At most this many facts: inject them all
+    memory_inject_all_max: int = Field(
+        30, ge=0
+    )  # At most this many facts: inject them all
     memory_recall_limit: int = Field(8, ge=1, le=30)
     memory_recall_threshold: float = Field(0.25, ge=0.0, le=1.0)
     memory_recall_timeout_s: float = Field(5.0, gt=0)
@@ -132,24 +155,32 @@ class Settings(BaseSettings):
     journal_enabled: bool = True
     journal_every_turns: int = Field(8, ge=2, le=100)
     journal_llm_model: str = ""  # Empty means MODEL_NAME
-    journal_max_chars: int = Field(1800, ge=300, le=8000)  # Size of the journal section in her prompt
+    journal_max_chars: int = Field(
+        1800, ge=300, le=8000
+    )  # Size of the journal section in her prompt
 
     # Document index (RAG): llama-index + local Qdrant, fastembed on CPU
     rag_enabled: bool = True
     rag_roots: str = "~"  # Comma-separated folders to index
     rag_exclude: str = ""  # Extra comma-separated name/path globs to skip
     rag_include_hidden: bool = False
-    rag_embedding_model: str = "sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
+    rag_embedding_model: str = (
+        "sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
+    )
     rag_chunk_chars: int = Field(500, ge=100, le=8000)
     rag_chunk_overlap_chars: int = Field(80, ge=0)
     rag_max_text_kb: int = Field(1024, ge=1)
     rag_max_doc_mb: int = Field(50, ge=1)
     rag_max_chunks_per_file: int = Field(5000, ge=1)
     rag_embed_batch: int = Field(16, ge=1, le=256)
-    rag_threads: int = Field(0, ge=0)  # ONNX threads for embeddings; 0 = half of the CPU cores
+    rag_threads: int = Field(
+        0, ge=0
+    )  # ONNX threads for embeddings; 0 = half of the CPU cores
     rag_candidates: int = Field(24, ge=1, le=200)
     rag_top_k: int = Field(5, ge=1, le=30)
-    rag_hybrid_alpha: float = Field(0.5, ge=0.0, le=1.0)  # 1 = meaning only, 0 = keywords only
+    rag_hybrid_alpha: float = Field(
+        0.5, ge=0.0, le=1.0
+    )  # 1 = meaning only, 0 = keywords only
     rag_rerank_enabled: bool = True
     # Passages whose reranker score is below this are dropped (only when reranking worked: the hybrid
     # score has another scale). Raise it to be stricter; -100 keeps everything (useful to see scores).
@@ -158,41 +189,69 @@ class Settings(BaseSettings):
 
     # Speech recognition: faster-whisper (CPU by default) + Silero voice activity detection
     stt_model: str = "small"
-    stt_device: str = "auto"  # auto = cpu, to keep the GPU memory for the voice synthesis
+    stt_device: str = (
+        "auto"  # auto = cpu, to keep the GPU memory for the voice synthesis
+    )
     stt_compute_type: str = "int8"
     stt_language: str = "fr"
     stt_beam_size: int = Field(2, ge=1, le=10)
     stt_cpu_threads: int = Field(0, ge=0)  # 0 = half of the CPU cores
-    stt_prompt: str = "Conversation en français avec Monika, une assistante personnelle."
-    audio_input_device: str = "@DEFAULT_SOURCE@"  # PulseAudio/PipeWire source name for parec
+    stt_prompt: str = (
+        "Conversation en français avec Monika, une assistante personnelle."
+    )
+    audio_input_device: str = (
+        "@DEFAULT_SOURCE@"  # PulseAudio/PipeWire source name for parec
+    )
     vad_speech_threshold: float = Field(0.5, gt=0.0, lt=1.0)
-    vad_end_silence_ms: int = Field(700, ge=200, le=3000)  # Silence that ends a sentence
+    vad_end_silence_ms: int = Field(
+        700, ge=200, le=3000
+    )  # Silence that ends a sentence
     vad_min_speech_ms: int = Field(250, ge=64)
     vad_pre_roll_ms: int = Field(300, ge=0)
     vad_max_utterance_s: int = Field(30, ge=3)
-    voice_resume_delay_ms: int = Field(400, ge=0)  # Deaf period after Monika stops talking
+    voice_resume_delay_ms: int = Field(
+        400, ge=0
+    )  # Deaf period after Monika stops talking
 
     # Speech synthesis: GPT-SoVITS through its own HTTP API (api_v2.py), with a voice pack that holds
     # one reference recording per emotion tag (see voice/gptsovits.py)
     tts_enabled: bool = True
     tts_text_mode: bool = True  # Speak in text mode too
-    tts_url: str = "http://127.0.0.1:9880"  # api_v2.py address; 127.0.0.1 only, never proxied
-    tts_speakers_dir: Path | None = None  # Root of the voice packs; None means MONIKA_HOME/voice
-    tts_character_id: str = ""  # Pack to use when the folder holds several; empty = the only one
-    tts_prompt_lang: str = "zh"  # Language of the reference transcripts when character.json is silent
+    tts_url: str = (
+        "http://127.0.0.1:9880"  # api_v2.py address; 127.0.0.1 only, never proxied
+    )
+    tts_speakers_dir: Path | None = (
+        None  # Root of the voice packs; None means MONIKA_HOME/voice
+    )
+    tts_character_id: str = (
+        ""  # Pack to use when the folder holds several; empty = the only one
+    )
+    tts_prompt_lang: str = (
+        "zh"  # Language of the reference transcripts when character.json is silent
+    )
     tts_emotion_tags: str = "auto"  # auto = only the tags the voice pack has, on = trust the mapper, off = never
-    tts_render: str = "auto"  # auto = one sentence per request, or force block | sentence
-    tts_block_max_chars: int = Field(600, ge=60, le=4000)  # One request = one audio; bounds the wait
+    tts_render: str = (
+        "auto"  # auto = one sentence per request, or force block | sentence
+    )
+    tts_block_max_chars: int = Field(
+        600, ge=60, le=4000
+    )  # One request = one audio; bounds the wait
     tts_timeout_s: float = Field(45.0, gt=0)  # Longest wait for one spoken sentence
-    tts_language: str = "en"  # Text front-end: en, zh, ja, ko, yue or auto (French is read as en)
+    tts_language: str = (
+        "en"  # Text front-end: en, zh, ja, ko, yue or auto (French is read as en)
+    )
     tts_speed: float = Field(1.0, ge=0.5, le=2.0)
     tts_max_sentence_chars: int = Field(200, ge=60, le=240)
     # Pauses between sentences (see voice/pauses.py). neutre = nothing added, as before; naturel = a
     # short silence after the punctuation, a little longer in a slow mood, shorter when excited.
     tts_pause_style: str = "neutre"
-    tts_pause_scale: float = Field(1.0, ge=0.0, le=3.0)  # multiplier on the computed pause
+    tts_pause_scale: float = Field(
+        1.0, ge=0.0, le=3.0
+    )  # multiplier on the computed pause
     tts_pause_max_s: float = Field(1.2, ge=0.0, le=5.0)  # never longer than this
-    audio_output_device: str = ""  # PulseAudio/PipeWire sink for pacat; empty = default output
+    audio_output_device: str = (
+        ""  # PulseAudio/PipeWire sink for pacat; empty = default output
+    )
 
     # Local web page: 3D avatar and dashboard (reachable from this computer only)
     web_enabled: bool = True
@@ -233,7 +292,9 @@ class Settings(BaseSettings):
         # KERNEL_SOCKET= (empty) means the default path, not "." (which pydantic would make of "")
         if value is None or (isinstance(value, str) and not value.strip()):
             return None
-        return Path(value).expanduser() if isinstance(value, str) else value.expanduser()
+        return (
+            Path(value).expanduser() if isinstance(value, str) else value.expanduser()
+        )
 
     @field_validator("persona_text")
     @classmethod
@@ -280,8 +341,10 @@ class Settings(BaseSettings):
     def _tts_language(cls, value: str) -> str:
         code = _LANGUAGE_NAMES.get(value.strip().lower(), value.strip().lower())
         if code not in _LANGUAGES:
-            raise ValueError("TTS_LANGUAGE et TTS_PROMPT_LANG valent auto, en, zh, ja, ko ou yue "
-                             "(GPT-SoVITS n'a pas de frontal français : fr est lu comme en)")
+            raise ValueError(
+                "TTS_LANGUAGE et TTS_PROMPT_LANG valent auto, en, zh, ja, ko ou yue "
+                "(GPT-SoVITS n'a pas de frontal français : fr est lu comme en)"
+            )
         return code
 
     @field_validator("tts_emotion_tags")
@@ -313,10 +376,18 @@ class Settings(BaseSettings):
         if self.loop_stop_after <= self.loop_warn_after:
             raise ValueError("LOOP_STOP_AFTER doit être supérieur à LOOP_WARN_AFTER")
         if self.rag_chunk_overlap_chars >= self.rag_chunk_chars // 2:
-            raise ValueError("RAG_CHUNK_OVERLAP_CHARS doit rester sous la moitié de RAG_CHUNK_CHARS")
-        if not self.context_keep_recent_tokens < self.context_budget_tokens < self.context_window_tokens:
-            raise ValueError("il faut CONTEXT_KEEP_RECENT_TOKENS < CONTEXT_BUDGET_TOKENS "
-                             "< CONTEXT_WINDOW_TOKENS")
+            raise ValueError(
+                "RAG_CHUNK_OVERLAP_CHARS doit rester sous la moitié de RAG_CHUNK_CHARS"
+            )
+        if (
+            not self.context_keep_recent_tokens
+            < self.context_budget_tokens
+            < self.context_window_tokens
+        ):
+            raise ValueError(
+                "il faut CONTEXT_KEEP_RECENT_TOKENS < CONTEXT_BUDGET_TOKENS "
+                "< CONTEXT_WINDOW_TOKENS"
+            )
         return self
 
     def tts_render_mode(self) -> str:
@@ -327,7 +398,11 @@ class Settings(BaseSettings):
 
     def rag_root_paths(self) -> list[Path]:
         """Expanded folders to index."""
-        return [Path(p.strip()).expanduser().resolve() for p in self.rag_roots.split(",") if p.strip()]
+        return [
+            Path(p.strip()).expanduser().resolve()
+            for p in self.rag_roots.split(",")
+            if p.strip()
+        ]
 
     def rag_exclude_patterns(self) -> list[str]:
         return [p.strip() for p in self.rag_exclude.split(",") if p.strip()]
@@ -370,7 +445,9 @@ def _settings_file_problem(path: Path) -> str:
     if not isinstance(data, dict):
         return "le contenu n'est pas un objet JSON"
     try:
-        Settings(**data)  # The same constructor the app uses: out-of-range values are caught here too
+        Settings(
+            **data
+        )  # The same constructor the app uses: out-of-range values are caught here too
     except ValidationError as exc:
         return _first_problem(exc, written=False)
     except Exception as exc:  # noqa: BLE001 - anything unusable is put aside rather than crashing the launch
@@ -392,8 +469,10 @@ def quarantine_unusable_settings(path: Path | None = None) -> str:
     except OSError as exc:
         message = f"{path} est inutilisable ({problem}) et n'a pas pu être mis de côté : {exc}"
     else:
-        message = (f"{path.name} était inutilisable ({problem}) : mis de côté dans {backup.name}. "
-                   "Je repartis des réglages par défaut ; corrige-le et renomme-le si tu y tiens.")
+        message = (
+            f"{path.name} était inutilisable ({problem}) : mis de côté dans {backup.name}. "
+            "Je repartis des réglages par défaut ; corrige-le et renomme-le si tu y tiens."
+        )
     _problems.append(message)
     return message
 
@@ -409,36 +488,88 @@ def get_settings() -> Settings:
 
 # Paths and secrets are edited by hand: writing one from the browser would turn the page into a way of
 # making Monika read arbitrary folders. OPENAI_API_KEY has its own one-line path below.
-NOT_EDITABLE = frozenset({"monika_home", "rag_roots", "mcp_servers_file", "openai_api_key",
-                          "tts_speakers_dir", "kernel_socket"})
+NOT_EDITABLE = frozenset(
+    {
+        "monika_home",
+        "rag_roots",
+        "mcp_servers_file",
+        "openai_api_key",
+        "tts_speakers_dir",
+        "kernel_socket",
+    }
+)
 
 # Values a component reads once at startup (models, clients, devices, ports, index settings): saving them
 # works, but they only take effect after a restart and the page says so.
-RESTART_REQUIRED = frozenset({
-    "llm_base_url", "llm_timeout_s", "llm_max_retries",
-    "mcp_start_timeout_s", "mcp_call_timeout_s",
-    "fast_memory_enabled", "embedding_model", "memory_llm_model", "memory_capture_enabled",
-    "memory_capture_min_chars",
-    "rag_enabled", "rag_include_hidden", "rag_embedding_model", "rag_chunk_chars",
-    "rag_chunk_overlap_chars", "rag_reranker_model", "rag_embed_batch", "rag_threads",
-    "rag_exclude",
-    "stt_model", "stt_device", "stt_compute_type", "stt_cpu_threads", "stt_language",
-    "audio_input_device", "audio_output_device",
-    "tts_enabled", "tts_url", "tts_character_id", "tts_prompt_lang", "tts_emotion_tags",
-    "tts_render", "tts_block_max_chars", "tts_language", "tts_timeout_s", "tts_text_mode",
-    "character_enabled", "affect_llm_enabled", "affect_llm_model", "affect_timeout_s",
-    "journal_enabled", "journal_every_turns", "journal_max_chars",
-    "action_llm_enabled", "action_llm_model",
-    "tool_result_max_chars", "tool_results_keep_days", "audit_enabled", "audit_max_chars",
-    "sessions_enabled", "sessions_keep_days",
-    "kernel_enabled", "tasks_enabled", "tasks_max",
-    "log_level",
-    "web_enabled", "web_port",
-})
+RESTART_REQUIRED = frozenset(
+    {
+        "llm_base_url",
+        "llm_timeout_s",
+        "llm_max_retries",
+        "mcp_start_timeout_s",
+        "mcp_call_timeout_s",
+        "fast_memory_enabled",
+        "embedding_model",
+        "memory_llm_model",
+        "memory_capture_enabled",
+        "memory_capture_min_chars",
+        "rag_enabled",
+        "rag_include_hidden",
+        "rag_embedding_model",
+        "rag_chunk_chars",
+        "rag_chunk_overlap_chars",
+        "rag_reranker_model",
+        "rag_embed_batch",
+        "rag_threads",
+        "rag_exclude",
+        "stt_model",
+        "stt_device",
+        "stt_compute_type",
+        "stt_cpu_threads",
+        "stt_language",
+        "audio_input_device",
+        "audio_output_device",
+        "tts_enabled",
+        "tts_url",
+        "tts_character_id",
+        "tts_prompt_lang",
+        "tts_emotion_tags",
+        "tts_render",
+        "tts_block_max_chars",
+        "tts_language",
+        "tts_timeout_s",
+        "tts_text_mode",
+        "character_enabled",
+        "affect_llm_enabled",
+        "affect_llm_model",
+        "affect_timeout_s",
+        "journal_enabled",
+        "journal_every_turns",
+        "journal_max_chars",
+        "action_llm_enabled",
+        "action_llm_model",
+        "tool_result_max_chars",
+        "tool_results_keep_days",
+        "audit_enabled",
+        "audit_max_chars",
+        "sessions_enabled",
+        "sessions_keep_days",
+        "kernel_enabled",
+        "tasks_enabled",
+        "tasks_max",
+        "log_level",
+        "web_enabled",
+        "web_port",
+    }
+)
 
 EDITABLE = frozenset(Settings.model_fields) - NOT_EDITABLE
-ENV_WRITABLE = frozenset({"OPENAI_API_KEY"})  # The only secret the page may write, one line in .env
-_BOUNDS = frozenset({"less_than", "less_than_equal", "greater_than", "greater_than_equal"})
+ENV_WRITABLE = frozenset(
+    {"OPENAI_API_KEY"}
+)  # The only secret the page may write, one line in .env
+_BOUNDS = frozenset(
+    {"less_than", "less_than_equal", "greater_than", "greater_than_equal"}
+)
 
 
 def editable_settings(live: Settings | None = None) -> dict[str, Any]:
@@ -461,8 +592,9 @@ def restart_required_fields() -> list[str]:
     return sorted(RESTART_REQUIRED & EDITABLE)
 
 
-def apply_settings_changes(patch: dict[str, Any], live: Settings | None = None,
-                           path: Path | None = None) -> list[str]:
+def apply_settings_changes(
+    patch: dict[str, Any], live: Settings | None = None, path: Path | None = None
+) -> list[str]:
     """Validate, write settings.json, then update the live instance. Returns the keys needing a restart.
 
     All or nothing: a value out of range writes nothing and changes nothing on the running instance.
@@ -471,27 +603,46 @@ def apply_settings_changes(patch: dict[str, Any], live: Settings | None = None,
         raise SettingsError("Aucun réglage à enregistrer.")
     refused = sorted(set(patch) - EDITABLE)
     if refused:
-        raise SettingsError("Ces réglages ne s'éditent pas depuis la page : " + ", ".join(refused) + ".")
+        raise SettingsError(
+            "Ces réglages ne s'éditent pas depuis la page : " + ", ".join(refused) + "."
+        )
     pinned = sorted(set(patch) & pinned_fields())
     if pinned:
         # The .env wins over settings.json: writing them would look like it worked until the next launch
-        raise SettingsError("Figés par l'environnement ou le fichier .env (aucun effet depuis la page) : "
-                            + ", ".join(pinned) + ". Modifie-les à la main dans .env.")
+        raise SettingsError(
+            "Figés par l'environnement ou le fichier .env (aucun effet depuis la page) : "
+            + ", ".join(pinned)
+            + ". Modifie-les à la main dans .env."
+        )
     live = live or get_settings()
     merged = {**_read_json(path), **patch}
     try:
-        candidate = Settings(**merged)  # init wins: the values as typed are what gets validated
+        candidate = Settings(
+            **merged
+        )  # init wins: the values as typed are what gets validated
     except ValidationError as exc:
         raise SettingsError(_first_problem(exc)) from exc
-    except ValueError as exc:  # settings.json broken by hand while Monika runs (JSONDecodeError)
-        raise SettingsError(f"settings.json est illisible ({exc}) : corrige ou supprime-le.") from exc
+    except (
+        ValueError
+    ) as exc:  # settings.json broken by hand while Monika runs (JSONDecodeError)
+        raise SettingsError(
+            f"settings.json est illisible ({exc}) : corrige ou supprime-le."
+        ) from exc
     values = {name: _jsonable(getattr(candidate, name)) for name in merged}
     before = {name: _jsonable(getattr(live, name)) for name in values}
-    _write_json(values, path)  # Disk first: if this fails, the running instance keeps its old values
+    _write_json(
+        values, path
+    )  # Disk first: if this fails, the running instance keeps its old values
     for name in values:
-        if name in EDITABLE:  # A hand-written key the page must not touch (a path, a secret) stays on disk
+        if (
+            name in EDITABLE
+        ):  # A hand-written key the page must not touch (a path, a secret) stays on disk
             setattr(live, name, getattr(candidate, name))
-    changed = {name for name, value in values.items() if name in EDITABLE and before[name] != value}
+    changed = {
+        name
+        for name, value in values.items()
+        if name in EDITABLE and before[name] != value
+    }
     return sorted(changed & RESTART_REQUIRED)
 
 
@@ -504,9 +655,15 @@ def write_env_secret(name: str, value: str) -> None:
     if not value or "\n" in value or "\r" in value:
         raise SettingsError("La valeur doit tenir sur une seule ligne.")
     try:
-        lines = ENV_FILE.read_text(encoding="utf-8").splitlines() if ENV_FILE.exists() else []
+        lines = (
+            ENV_FILE.read_text(encoding="utf-8").splitlines()
+            if ENV_FILE.exists()
+            else []
+        )
     except OSError as exc:
-        raise SettingsError(f"Impossible de lire {ENV_FILE} : {exc.strerror or exc}.") from exc
+        raise SettingsError(
+            f"Impossible de lire {ENV_FILE} : {exc.strerror or exc}."
+        ) from exc
     out: list[str] = []
     replaced = False
     for line in lines:
@@ -519,7 +676,7 @@ def write_env_secret(name: str, value: str) -> None:
     if not replaced:
         out.append(f"{key}={value}")
     _atomic_write(ENV_FILE, "\n".join(out) + "\n")
-    setattr(get_settings(), "openai_api_key", SecretStr(value))
+    get_settings().openai_api_key = SecretStr(value)
 
 
 def _read_json(path: Path | None = None) -> dict[str, Any]:
@@ -529,26 +686,34 @@ def _read_json(path: Path | None = None) -> dict[str, Any]:
     except FileNotFoundError:
         return {}
     except (OSError, ValueError) as exc:
-        raise SettingsError(f"{path} est illisible ({exc}) : corrige ou supprime-le.") from exc
+        raise SettingsError(
+            f"{path} est illisible ({exc}) : corrige ou supprime-le."
+        ) from exc
     return data if isinstance(data, dict) else {}
 
 
 def _write_json(values: dict[str, Any], path: Path | None = None) -> None:
-    _atomic_write(path or settings_json_path(),
-                  json.dumps(values, ensure_ascii=False, indent=2, sort_keys=True) + "\n")
+    _atomic_write(
+        path or settings_json_path(),
+        json.dumps(values, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+    )
 
 
 def _atomic_write(path: Path, text: str) -> None:
     """Write a private file in one go: no reader ever sees half of it."""
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        handle, temporary = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}-", suffix=".tmp")
+        handle, temporary = tempfile.mkstemp(
+            dir=str(path.parent), prefix=f".{path.name}-", suffix=".tmp"
+        )
         with os.fdopen(handle, "w", encoding="utf-8") as stream:
             stream.write(text)
         os.chmod(temporary, 0o600)
         os.replace(temporary, path)
     except OSError as exc:
-        raise SettingsError(f"Impossible d'écrire {path} : {exc.strerror or exc}.") from exc
+        raise SettingsError(
+            f"Impossible d'écrire {path} : {exc.strerror or exc}."
+        ) from exc
 
 
 def _jsonable(value: Any) -> Any:

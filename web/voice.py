@@ -21,7 +21,7 @@ import numpy as np
 
 from monika.config import Settings
 from monika.paths import Paths
-from voice.audio import FRAME_BYTES, FRAME_SAMPLES
+from voice.audio import FRAME_BYTES
 from voice.listener import VoiceListener
 from voice.playback import levels_of
 from voice.stt import Transcriber
@@ -30,7 +30,9 @@ from voice.vad import SileroStreamingVAD
 log = logging.getLogger(__name__)
 
 LEVEL_WINDOW_MS = 20
-MAX_QUEUED_FRAMES = 50  # ~1.6 s: more than that and the microphone is ahead of us anyway
+MAX_QUEUED_FRAMES = (
+    50  # ~1.6 s: more than that and the microphone is ahead of us anyway
+)
 
 
 class WebAudioSource:
@@ -60,8 +62,13 @@ class WebAudioSource:
             return
         self._leftover += data
         while len(self._leftover) >= FRAME_BYTES:
-            frame, self._leftover = self._leftover[:FRAME_BYTES], self._leftover[FRAME_BYTES:]
-            if self._frames.full():  # a slow reader loses the oldest audio, never blocks the page
+            frame, self._leftover = (
+                self._leftover[:FRAME_BYTES],
+                self._leftover[FRAME_BYTES:],
+            )
+            if (
+                self._frames.full()
+            ):  # a slow reader loses the oldest audio, never blocks the page
                 self._frames.get_nowait()
             self._frames.put_nowait(frame)
 
@@ -77,9 +84,13 @@ class WebAudioSink:
     conversation half-duplex: Monika only starts listening again once she has finished speaking.
     """
 
-    def __init__(self, send_json: Callable[[dict[str, Any]], Awaitable[None]],
-                 send_bytes: Callable[[bytes], Awaitable[None]], sample_rate: int = 24000,
-                 on_level: Callable[[float], None] | None = None) -> None:
+    def __init__(
+        self,
+        send_json: Callable[[dict[str, Any]], Awaitable[None]],
+        send_bytes: Callable[[bytes], Awaitable[None]],
+        sample_rate: int = 24000,
+        on_level: Callable[[float], None] | None = None,
+    ) -> None:
         self._send_json = send_json
         self._send_bytes = send_bytes
         self._rate = max(1, int(sample_rate))
@@ -97,7 +108,9 @@ class WebAudioSink:
         self._open = True
         self._written = 0
         self._start = asyncio.get_running_loop().time()
-        await self._send_quietly({"type": "audio", "event": "start", "rate": self._rate})
+        await self._send_quietly(
+            {"type": "audio", "event": "start", "rate": self._rate}
+        )
 
     async def write(self, pcm: np.ndarray) -> None:
         pcm = np.asarray(pcm, dtype=np.int16)
@@ -105,7 +118,9 @@ class WebAudioSink:
             return
         try:
             await self._send_bytes(pcm.tobytes())
-        except Exception:  # the page went away mid-sentence: the sound is lost, the turn is not
+        except (
+            Exception
+        ):  # the page went away mid-sentence: the sound is lost, the turn is not
             log.debug("page absente, audio de la voix perdu", exc_info=True)
             self._open = False
             return
@@ -136,7 +151,9 @@ class WebAudioSink:
 
     async def stop(self) -> None:
         self._open = False
-        await self._send_quietly({"type": "audio", "event": "stop"})  # the page cuts what it plays
+        await self._send_quietly(
+            {"type": "audio", "event": "stop"}
+        )  # the page cuts what it plays
 
     async def _send_quietly(self, message: dict[str, Any]) -> None:
         try:
@@ -148,13 +165,20 @@ class WebAudioSink:
 class PageVoice:
     """One browser conversation: microphone, transcription, and the voice routed back to that page."""
 
-    def __init__(self, settings: Settings, paths: Paths, hub: Any,
-                 send_json: Callable[[dict[str, Any]], Awaitable[None]],
-                 send_bytes: Callable[[bytes], Awaitable[None]],
-                 targets: dict[str, Any] | None = None,
-                 listener_factory: Callable[[WebAudioSource], Any] | None = None) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        paths: Paths,
+        hub: Any,
+        send_json: Callable[[dict[str, Any]], Awaitable[None]],
+        send_bytes: Callable[[bytes], Awaitable[None]],
+        targets: dict[str, Any] | None = None,
+        listener_factory: Callable[[WebAudioSource], Any] | None = None,
+    ) -> None:
         self._s = settings
-        self._listener_factory = listener_factory  # tests inject one: Silero + Whisper are heavy
+        self._listener_factory = (
+            listener_factory  # tests inject one: Silero + Whisper are heavy
+        )
         self._paths = paths
         self._hub = hub
         self._send_json = send_json
@@ -208,13 +232,20 @@ class PageVoice:
             await self._say("on")
             return
         if self._ask is None:
-            await self._say("error", "La conversation n'est pas encore prête : réessaie dans un instant.")
+            await self._say(
+                "error",
+                "La conversation n'est pas encore prête : réessaie dans un instant.",
+            )
             return
         self.on = True  # A second click while loading must not open a second microphone
         try:
-            self._listener = (self._listener_factory(self._source) if self._listener_factory is not None
-                              else VoiceListener(self._source, SileroStreamingVAD(),
-                                                 self._transcriber, self._s))
+            self._listener = (
+                self._listener_factory(self._source)
+                if self._listener_factory is not None
+                else VoiceListener(
+                    self._source, SileroStreamingVAD(), self._transcriber, self._s
+                )
+            )
             await self._listener.start()
         except Exception as exc:  # noqa: BLE001 - missing model, no onnxruntime…
             self.on = False
@@ -224,9 +255,15 @@ class PageVoice:
             return
         if self._speaker is not None:
             rate = int(getattr(self._speaker.engine, "sample_rate", 24000) or 24000)
-            self._sink = WebAudioSink(self._send_json, self._send_bytes, rate,
-                                      on_level=self._hub.on_level if self._hub is not None else None)
-            if self._speaker.busy:  # her voice would otherwise be split between the two outputs
+            self._sink = WebAudioSink(
+                self._send_json,
+                self._send_bytes,
+                rate,
+                on_level=self._hub.on_level if self._hub is not None else None,
+            )
+            if (
+                self._speaker.busy
+            ):  # her voice would otherwise be split between the two outputs
                 await self._speaker.cancel()
             self._speaker.use_sink(self._sink)
         self._task = asyncio.get_running_loop().create_task(self._loop())
@@ -268,7 +305,9 @@ class PageVoice:
                     continue
                 await self._say("text", text)
                 if speaker is not None and speaker.busy:
-                    await speaker.wait_idle()  # half duplex: no listening over her own voice
+                    await (
+                        speaker.wait_idle()
+                    )  # half duplex: no listening over her own voice
                 await ask(text)
                 if speaker is not None:
                     await speaker.wait_idle()
@@ -277,10 +316,14 @@ class PageVoice:
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 - the page must hear about it, not the exception
-            log.warning("écoute de la page interrompue (%s: %s)", type(exc).__name__, exc)
+            log.warning(
+                "écoute de la page interrompue (%s: %s)", type(exc).__name__, exc
+            )
             await self._stop(announce=False)
             await self._say("error", f"Écoute arrêtée : {exc}")
 
     def _state(self, state: str) -> None:
         if self._hub is not None and self.on:
-            self._hub.set_state("listening" if state in ("ecoute", "parole") else "thinking")
+            self._hub.set_state(
+                "listening" if state in ("ecoute", "parole") else "thinking"
+            )

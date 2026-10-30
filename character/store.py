@@ -37,7 +37,11 @@ class CharacterStore:
             aside = self.path.with_name(f"{self.path.name}.corrupt-{int(time.time())}")
             try:
                 os.replace(self.path, aside)
-                log.warning("character state damaged (%s); kept as %s and starting fresh", err, aside.name)
+                log.warning(
+                    "character state damaged (%s); kept as %s and starting fresh",
+                    err,
+                    aside.name,
+                )
             except OSError:
                 log.warning("character state damaged (%s); starting fresh", err)
             return None

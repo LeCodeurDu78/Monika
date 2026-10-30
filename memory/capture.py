@@ -53,12 +53,16 @@ class MemoryCapture:
                     try:
                         await sink(user_text, assistant_text)
                         self.captured += 1
-                    except Exception as exc:  # A failing backend must not stop the others
+                    except (
+                        Exception
+                    ) as exc:  # A failing backend must not stop the others
                         self.failures += 1
                         self.last_error = f"{type(exc).__name__}: {exc}"[:300]
                         if self.last_error not in self._seen_errors:
                             self._seen_errors.add(self.last_error)
-                            log.warning("Capture mémoire impossible : %s", self.last_error)
+                            log.warning(
+                                "Capture mémoire impossible : %s", self.last_error
+                            )
             finally:
                 self._busy = False
                 self._queue.task_done()
@@ -71,7 +75,9 @@ class MemoryCapture:
                 await asyncio.wait_for(self._queue.join(), timeout)
             except TimeoutError:
                 left = self.pending
-                log.warning("Capture interrompue : %d échange(s) non mémorisé(s).", left)
+                log.warning(
+                    "Capture interrompue : %d échange(s) non mémorisé(s).", left
+                )
             self._worker.cancel()
             await asyncio.gather(self._worker, return_exceptions=True)
         return left

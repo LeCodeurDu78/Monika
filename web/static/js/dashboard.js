@@ -5,6 +5,30 @@ import { mountVoice } from './voice.js';
 
 const STATE_TEXT = { idle: 'Au repos', listening: 'J’écoute', thinking: 'Je réfléchis', speaking: 'Je parle' };
 const SPEAKING_LEVEL = 0.02;
+// The server sends 20 ms RMS windows (speech sits around 0.02–0.15). OpenSakura's engine expects the 0..1
+// shape its own player produces, so the same curve is applied here; the animation stays its own.
+const mouthLevel = (rms) => Math.min(1, Math.pow(Math.min(1, rms * 4.5), 0.85));
+const PANELS_KEY = 'monika.panelsHidden';   // remembered, so the folded dashboard stays folded
+
+// The loading screen (index.html): real progress while the model downloads, then a fade.
+const LOADING = {
+  box: document.getElementById('loading'),
+  step: document.getElementById('loading-step'),
+  fill: document.getElementById('loading-fill'),
+};
+
+function setLoading(fraction, text) {
+  if (text && LOADING.step) LOADING.step.textContent = text;
+  if (LOADING.fill) LOADING.fill.style.width = `${Math.round(Math.min(1, Math.max(0, fraction)) * 100)}%`;
+}
+
+function doneLoading() {
+  const box = LOADING.box;
+  if (!box || box.classList.contains('done')) return;
+  box.classList.add('done');
+  box.addEventListener('transitionend', () => box.remove(), { once: true });
+  setTimeout(() => box.remove(), 900);   // reduced motion: there is no transition to wait for
+}
 
 class Page {
   constructor() {
@@ -40,7 +64,7 @@ class Page {
     else if (msg.type === 'chat') this.chat?.receive(msg);
     else if (msg.type === 'voice' || msg.type === 'audio') this.voice?.onEvent(msg);
     else if (msg.type === 'level') {
-      this.avatar?.setMouth(msg.value);
+      this.avatar?.setMouth(mouthLevel(msg.value));
       if (msg.value > SPEAKING_LEVEL) { this.lastSound = performance.now(); this.chip(); }
     } else if (msg.type === 'avatar') this.avatar?.cue(msg);
     else if (msg.type === 'avatar_chain') this.avatar?.chain(msg.actions);
@@ -82,7 +106,7 @@ class Page {
   }
 
   async loadAvatar(note) {
-    const fail = (text) => { note.hidden = false; note.textContent = text; };
+    const fail = (text) => { note.hidden = false; note.textContent = text; doneLoading(); };
     try {
       const { Avatar } = await import('./avatar.js');
       this.avatar = new Avatar(document.getElementById('avatar'));
@@ -94,12 +118,15 @@ class Page {
     if (!this.avatar.init()) { fail(this.avatar.error); return; }
     this.avatar.setState(this.state);
     await this.loadEmotionSpecs();
+    setLoading(0, 'Téléchargement du modèle…');
     try {
-      this.modelInfo = await this.avatar.load('/static/avatar.vrm', '/static/clips.json');
+      this.modelInfo = await this.avatar.load('/static/assets/avatar.vrm', '/static/assets/clips.json',
+        (fraction) => setLoading(fraction));
     } catch (err) {
       fail(`Le modèle 3D n’a pas pu être chargé : ${err.message || err}`);
       return;
     }
+    doneLoading();
     if (new URLSearchParams(location.search).has('debug')) {
       import('./debug.js').then((m) => m.mountDebugPanel(this.avatar)).catch((err) => console.error('[debug]', err));
     }
@@ -111,8 +138,7 @@ class Page {
       const response = await fetch('/api/emotions', { cache: 'no-store' });
       if (!response.ok) return;
       const specs = await response.json();
-      this.avatar?.setSpecs(specs);
-      setEmotionLabels(specs);
+      setEmotionLabels(specs);   // names for the panels only: the face comes from OpenSakura's table
     } catch (err) {
       console.warn('[emotions] table indisponible, table interne utilisée', err);
     }
@@ -123,6 +149,7 @@ class Page {
     window.monika = this;  // Handy in the browser console, and for the automated checks
     this.chat = mountChat();
     this.voice = mountVoice({ status: (text) => this.chat?.status(text) });
+    setLoading(0, 'Chargement de Monika…');
     await this.loadAvatar(note);
     this.connect();
     this.refresh();
@@ -131,4 +158,27 @@ class Page {
   }
 }
 
+/** Fold the dashboard away: the stage takes the whole width and the avatar reframes itself on its own. */
+function mountPanelsToggle() {
+  const button = document.getElementById('panels-toggle');
+  if (!button) return;
+  const paint = (hidden) => {
+    document.body.classList.toggle('panels-hidden', hidden);
+    button.setAttribute('aria-expanded', String(!hidden));
+    button.textContent = hidden ? '❮' : '❯';   // glyph only, like OpenSakura's tab
+    const label = hidden ? 'Afficher le tableau de bord' : 'Replier le tableau de bord';
+    button.title = label;
+    button.setAttribute('aria-label', label);
+  };
+  button.addEventListener('click', () => {
+    const hidden = !document.body.classList.contains('panels-hidden');
+    paint(hidden);
+    try { localStorage.setItem(PANELS_KEY, hidden ? '1' : '0'); } catch (err) { /* private mode */ }
+  });
+  let hidden = false;
+  try { hidden = localStorage.getItem(PANELS_KEY) === '1'; } catch (err) { /* private mode */ }
+  paint(hidden);
+}
+
+mountPanelsToggle();
 new Page().start();

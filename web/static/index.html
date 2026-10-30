@@ -31,14 +31,26 @@
       <p id="stage-note" class="stage-note" hidden></p>
     </section>
 
-    <section class="panels" aria-label="Tableau de bord">
-      <article class="panel" id="p-chat"><h2>Conversation</h2><div class="body"></div></article>
-      <article class="panel" id="p-context"><h2>Contexte</h2><div class="body"></div></article>
-      <article class="panel" id="p-relation"><h2>Relation</h2><div class="body"></div></article>
-      <article class="panel" id="p-memory"><h2>Mémoire</h2><div class="body"></div></article>
-      <article class="panel" id="p-sessions"><h2>Sessions</h2><div class="body"></div></article>
+    <section class="panels" id="panels" aria-label="Tableau de bord">
+      <button type="button" id="panels-toggle" class="panels-tab" aria-controls="panels" aria-expanded="true"
+              aria-label="Replier le tableau de bord" title="Replier le tableau de bord">❯</button>
+      <div class="panels-scroll">
+        <article class="panel" id="p-chat"><h2>Conversation</h2><div class="body"></div></article>
+        <article class="panel" id="p-context"><h2>Contexte</h2><div class="body"></div></article>
+        <article class="panel" id="p-relation"><h2>Relation</h2><div class="body"></div></article>
+        <article class="panel" id="p-memory"><h2>Mémoire</h2><div class="body"></div></article>
+        <article class="panel" id="p-sessions"><h2>Sessions</h2><div class="body"></div></article>
+      </div>
     </section>
   </main>
+
+  <div id="loading" role="status" aria-live="polite">
+    <div class="loading-card">
+      <p class="loading-title">Monika</p>
+      <p id="loading-step" class="loading-step">Chargement…</p>
+      <div class="loading-bar"><i id="loading-fill"></i></div>
+    </div>
+  </div>
 
   <script type="module" src="/static/js/dashboard.js"></script>
 </body>

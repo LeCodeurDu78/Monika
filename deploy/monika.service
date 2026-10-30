@@ -7,8 +7,8 @@ Wants=network-online.target
 [Service]
 Type=simple
 # Adapte ces deux chemins si le projet n'est pas dans ~/monika.
-WorkingDirectory=%h/monika
-ExecStart=%h/monika/.venv/bin/python -m monika --serve
+WorkingDirectory=~/Documents/Code/Monika
+ExecStart=~/Documents/Code/Monika/.venv/bin/python -m monika --serve
 Environment=PYTHONUNBUFFERED=1
 
 # on-abnormal : une erreur de configuration (KERNEL_ENABLED=false, port pris, clé absente) sort en

@@ -8,22 +8,86 @@ from pathlib import Path
 
 # Always skipped, even when hidden files are included
 SECRET_FILE_PATTERNS = (
-    ".env", ".env.*", "*.env", "*.pem", "*.key", "*.p12", "*.pfx", "*.jks", "*.keystore",
-    "id_rsa*", "id_dsa*", "id_ecdsa*", "id_ed25519*", "*.kdbx", "*.kdb", "*.gpg", "*.pgp",
-    ".netrc", "_netrc", ".npmrc", ".pypirc", ".git-credentials", ".pgpass", ".htpasswd",
-    "credentials", "credentials.*", "secrets.*", "secret.*", "*.secret", "*.secrets",
-    "passwords.*", "password.*", "*.ovpn", "wallet.dat", "*.tfstate", "*.tfvars",
-    "service-account*.json", "*.sqlite-wal",
+    ".env",
+    ".env.*",
+    "*.env",
+    "*.pem",
+    "*.key",
+    "*.p12",
+    "*.pfx",
+    "*.jks",
+    "*.keystore",
+    "id_rsa*",
+    "id_dsa*",
+    "id_ecdsa*",
+    "id_ed25519*",
+    "*.kdbx",
+    "*.kdb",
+    "*.gpg",
+    "*.pgp",
+    ".netrc",
+    "_netrc",
+    ".npmrc",
+    ".pypirc",
+    ".git-credentials",
+    ".pgpass",
+    ".htpasswd",
+    "credentials",
+    "credentials.*",
+    "secrets.*",
+    "secret.*",
+    "*.secret",
+    "*.secrets",
+    "passwords.*",
+    "password.*",
+    "*.ovpn",
+    "wallet.dat",
+    "*.tfstate",
+    "*.tfvars",
+    "service-account*.json",
+    "*.sqlite-wal",
 )
-SECRET_DIRS = frozenset({
-    ".ssh", ".gnupg", ".aws", ".kube", ".docker", ".password-store", ".terraform", ".azure",
-})
+SECRET_DIRS = frozenset(
+    {
+        ".ssh",
+        ".gnupg",
+        ".aws",
+        ".kube",
+        ".docker",
+        ".password-store",
+        ".terraform",
+        ".azure",
+    }
+)
 # Heavy or generated folders that only add noise
-SKIP_DIRS = frozenset({
-    "node_modules", "__pycache__", "venv", ".venv", "site-packages", "dist", "build", "target",
-    "bower_components", ".git", ".hg", ".svn", ".cache", ".tox", ".mypy_cache", ".pytest_cache",
-    ".gradle", ".m2", ".cargo", ".rustup", "snap", ".Trash", "Trash", "lost+found",
-})
+SKIP_DIRS = frozenset(
+    {
+        "node_modules",
+        "__pycache__",
+        "venv",
+        ".venv",
+        "site-packages",
+        "dist",
+        "build",
+        "target",
+        "bower_components",
+        ".git",
+        ".hg",
+        ".svn",
+        ".cache",
+        ".tox",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".gradle",
+        ".m2",
+        ".cargo",
+        ".rustup",
+        "snap",
+        ".Trash",
+        "Trash",
+        "lost+found",
+    }
+)
 
 # Content that means "this file holds a credential": the whole file is skipped
 SECRET_CONTENT: tuple[tuple[str, re.Pattern[str]], ...] = (
@@ -47,15 +111,21 @@ def find_secret(text: str) -> str | None:
 class PathFilter:
     """Decides whether a directory or file is eligible for indexing."""
 
-    def __init__(self, extra_patterns: list[str] | None = None, include_hidden: bool = False,
-                 forbidden: list[Path] | None = None) -> None:
+    def __init__(
+        self,
+        extra_patterns: list[str] | None = None,
+        include_hidden: bool = False,
+        forbidden: list[Path] | None = None,
+    ) -> None:
         self._extra = extra_patterns or []
         self._hidden = include_hidden
         self._forbidden = [p.resolve() for p in (forbidden or [])]
 
     def _matches_extra(self, path: Path, name: str) -> bool:
-        return any(fnmatch.fnmatch(name, pat) or fnmatch.fnmatch(str(path), pat)
-                   for pat in self._extra)
+        return any(
+            fnmatch.fnmatch(name, pat) or fnmatch.fnmatch(str(path), pat)
+            for pat in self._extra
+        )
 
     def dir_reason(self, path: Path) -> str | None:
         """Why a directory is skipped (None means: descend into it)."""

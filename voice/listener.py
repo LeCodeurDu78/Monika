@@ -21,8 +21,13 @@ FrameCallback = Callable[[float, float], None]  # (speech probability, RMS level
 class VoiceListener:
     """Keeps the microphone open and only hands frames to the detector while Monika is listening."""
 
-    def __init__(self, source: AudioSource, vad: FrameVAD, transcriber: Transcriber,
-                 settings: Settings) -> None:
+    def __init__(
+        self,
+        source: AudioSource,
+        vad: FrameVAD,
+        transcriber: Transcriber,
+        settings: Settings,
+    ) -> None:
         self._source = source
         self._vad = vad
         self._transcriber = transcriber
@@ -33,7 +38,9 @@ class VoiceListener:
         self._active_since = 0.0
         self._pump_task: asyncio.Task | None = None
         self._error: AudioError | None = None
-        self.dropped: list[str] = []  # Reasons of transcripts rejected as noise or hallucinations
+        self.dropped: list[
+            str
+        ] = []  # Reasons of transcripts rejected as noise or hallucinations
 
     @property
     def transcriber(self) -> Transcriber:
@@ -42,8 +49,14 @@ class VoiceListener:
 
     def _new_endpointer(self) -> Endpointer:
         s = self._s
-        return Endpointer(s.vad_speech_threshold, None, s.vad_min_speech_ms, s.vad_end_silence_ms,
-                          s.vad_pre_roll_ms, s.vad_max_utterance_s)
+        return Endpointer(
+            s.vad_speech_threshold,
+            None,
+            s.vad_min_speech_ms,
+            s.vad_end_silence_ms,
+            s.vad_pre_roll_ms,
+            s.vad_max_utterance_s,
+        )
 
     async def start(self) -> None:
         await self._source.start()
@@ -73,11 +86,17 @@ class VoiceListener:
         self._queue = asyncio.Queue()
         self._vad.reset()
         self._endpointer.reset()
-        self._active_since = asyncio.get_running_loop().time() + self._s.voice_resume_delay_ms / 1000
+        self._active_since = (
+            asyncio.get_running_loop().time() + self._s.voice_resume_delay_ms / 1000
+        )
         self._active = True
 
-    async def listen(self, timeout: float | None = None, on_state: StateCallback | None = None,
-                     on_frame: FrameCallback | None = None) -> Transcript | None:
+    async def listen(
+        self,
+        timeout: float | None = None,
+        on_state: StateCallback | None = None,
+        on_frame: FrameCallback | None = None,
+    ) -> Transcript | None:
         """Wait for one complete sentence and return its transcript (None on timeout)."""
         if self._error is not None:
             raise self._error
@@ -100,7 +119,12 @@ class VoiceListener:
                     raise item
                 probability = self._vad.probability(item)
                 if on_frame is not None:
-                    on_frame(probability, float(np.sqrt(np.mean((item.astype(np.float32) / 32768.0) ** 2))))
+                    on_frame(
+                        probability,
+                        float(
+                            np.sqrt(np.mean((item.astype(np.float32) / 32768.0) ** 2))
+                        ),
+                    )
                 utterance = self._endpointer.feed(item, probability)
                 if self._endpointer.in_speech and not speaking:
                     speaking = True

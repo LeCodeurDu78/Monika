@@ -25,7 +25,7 @@ MAX_DURATION = 8.0
 MAX_ACTIONS = 3
 LLM_TIMEOUT_S = 20.0
 
-# Every clip of web/static/clips.json that can be an action ("breathing" is the idle loop).
+# Every clip of web/static/assets/clips.json that can be an action ("breathing" is the idle loop).
 ACTION_LIBRARY: dict[str, str] = {
     "Talk": "Parle avec de petits gestes des mains ; explique, discute, répond (bonne fin)",
     "Think": "Poing sous le menton ; réfléchit, pèse le pour et le contre, hésite",
@@ -94,7 +94,7 @@ def parse_chain(raw: Any, total_duration: float) -> list[dict[str, Any]]:
     if end <= start:
         return []
     try:
-        data = json.loads(raw[start:end + 1])
+        data = json.loads(raw[start : end + 1])
     except (json.JSONDecodeError, TypeError):
         return []
     items = data.get("actions") if isinstance(data, dict) else None
@@ -107,10 +107,14 @@ def parse_chain(raw: Any, total_duration: float) -> list[dict[str, Any]]:
         if not isinstance(item, dict) or not isinstance(item.get("name"), str):
             continue
         name = _CANONICAL.get(item["name"].strip().lower())
-        if name is None or name in seen:  # unknown name or twice in a row: the page would look stuck
+        if (
+            name is None or name in seen
+        ):  # unknown name or twice in a row: the page would look stuck
             continue
         seen.add(name)
-        actions.append({"name": name, "duration": _duration(item.get("duration"), fallback)})
+        actions.append(
+            {"name": name, "duration": _duration(item.get("duration"), fallback)}
+        )
     return actions
 
 
@@ -130,8 +134,14 @@ def _one_line(text: Any, limit: int) -> str:
     return flat if len(flat) <= limit else flat[: limit - 1] + "…"
 
 
-def build_prompt(user_text: str, reply: str, snapshot: dict[str, Any], recent: list[str],
-                 count: int, total: float) -> str:
+def build_prompt(
+    user_text: str,
+    reply: str,
+    snapshot: dict[str, Any],
+    recent: list[str],
+    count: int,
+    total: float,
+) -> str:
     """The single user message of the action call: facts only, bounded."""
     mood = snapshot.get("dominant") or "neutre"
     try:
@@ -139,20 +149,27 @@ def build_prompt(user_text: str, reply: str, snapshot: dict[str, Any], recent: l
     except (TypeError, ValueError):
         intensity = 0.5
     level = snapshot.get("level_label") or snapshot.get("level") or "cordiale"
-    return "\n".join([
-        f"Message de l'utilisateur : {_one_line(user_text, 600)}",
-        f"Sa réponse : {_one_line(reply, 900)}",
-        f"Émotion : {mood} (intensité {min(max(intensity, 0.0), 1.0):.2f}) ; relation : {level}",
-        f"Gestes récents : {', '.join(recent) if recent else 'aucun'}",
-        f"À produire : {count} action(s), environ {total:.1f} s au total.",
-    ])
+    return "\n".join(
+        [
+            f"Message de l'utilisateur : {_one_line(user_text, 600)}",
+            f"Sa réponse : {_one_line(reply, 900)}",
+            f"Émotion : {mood} (intensité {min(max(intensity, 0.0), 1.0):.2f}) ; relation : {level}",
+            f"Gestes récents : {', '.join(recent) if recent else 'aucun'}",
+            f"À produire : {count} action(s), environ {total:.1f} s au total.",
+        ]
+    )
 
 
 class ActionDirector:
     """Post-turn avatar actions: one small model call, a strict chain, one hub message. Never raises."""
 
-    def __init__(self, complete: Complete | None, hub: Any | None = None,
-                 timeout_s: float = LLM_TIMEOUT_S, history_size: int = 5) -> None:
+    def __init__(
+        self,
+        complete: Complete | None,
+        hub: Any | None = None,
+        timeout_s: float = LLM_TIMEOUT_S,
+        history_size: int = 5,
+    ) -> None:
         self._complete = complete
         self._hub = hub
         self._timeout = timeout_s
@@ -166,18 +183,23 @@ class ActionDirector:
     def recent(self) -> list[str]:
         return list(self._recent)
 
-    async def suggest(self, user_text: str, reply: str,
-                      snapshot: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    async def suggest(
+        self, user_text: str, reply: str, snapshot: dict[str, Any] | None = None
+    ) -> list[dict[str, Any]]:
         """Decide and broadcast a chain for this finished reply; [] when there is nothing to play."""
         if self._complete is None or not str(reply).strip():
             return []
         snapshot = snapshot or {}
         total = calculate_action_duration(reply, _intensity(snapshot))
         count = decide_action_count(len(reply), _intensity(snapshot))
-        system = SYSTEM_PROMPT.format(max_actions=MAX_ACTIONS, min_duration=MIN_DURATION,
-                                      max_duration=MAX_DURATION,
-                                      library="\n".join(f"- {name} : {text}"
-                                                        for name, text in ACTION_LIBRARY.items()))
+        system = SYSTEM_PROMPT.format(
+            max_actions=MAX_ACTIONS,
+            min_duration=MIN_DURATION,
+            max_duration=MAX_DURATION,
+            library="\n".join(
+                f"- {name} : {text}" for name, text in ACTION_LIBRARY.items()
+            ),
+        )
         prompt = build_prompt(user_text, reply, snapshot, self.recent, count, total)
         try:
             async with asyncio.timeout(self._timeout):

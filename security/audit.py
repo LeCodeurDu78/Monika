@@ -9,7 +9,7 @@ import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -27,8 +27,9 @@ class AuditEntry:
 class AuditLog:
     """Write one JSON line per action: tool, arguments, status, duration."""
 
-    def __init__(self, path: Path, masker: Masker, enabled: bool = True,
-                 max_chars: int = 2000) -> None:
+    def __init__(
+        self, path: Path, masker: Masker, enabled: bool = True, max_chars: int = 2000
+    ) -> None:
         self._path = path
         self._masker = masker
         self._enabled = enabled
@@ -44,13 +45,19 @@ class AuditLog:
             return [self._truncate(v) for v in obj]
         return obj
 
-    def record(self, tool: str, arguments: dict[str, Any] | None, status: str,
-               duration_ms: float, detail: str | None = None) -> None:
+    def record(
+        self,
+        tool: str,
+        arguments: dict[str, Any] | None,
+        status: str,
+        duration_ms: float,
+        detail: str | None = None,
+    ) -> None:
         if not self._enabled:
             return
         # Mask first, then truncate, so a cut never leaves half a secret
         line = {
-            "ts": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
+            "ts": datetime.now(UTC).isoformat(timespec="milliseconds"),
             "tool": tool,
             "arguments": self._truncate(self._masker.mask(arguments or {})),
             "status": status,
@@ -67,7 +74,9 @@ class AuditLog:
                 fh.write(data)
 
     @contextmanager
-    def track(self, tool: str, arguments: dict[str, Any] | None = None) -> Iterator[AuditEntry]:
+    def track(
+        self, tool: str, arguments: dict[str, Any] | None = None
+    ) -> Iterator[AuditEntry]:
         """Time an action and log it, whatever its outcome."""
         entry = AuditEntry()
         start = time.perf_counter()
@@ -82,5 +91,10 @@ class AuditLog:
             entry.status = "interrupted"
             raise
         finally:
-            self.record(tool, arguments, entry.status,
-                        (time.perf_counter() - start) * 1000, entry.detail)
+            self.record(
+                tool,
+                arguments,
+                entry.status,
+                (time.perf_counter() - start) * 1000,
+                entry.detail,
+            )

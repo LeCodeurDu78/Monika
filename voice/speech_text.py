@@ -6,7 +6,9 @@ import re
 import unicodedata
 from collections.abc import Iterable
 
-CODE_NOTICE = "Je te laisse le code à l'écran."  # Spoken once instead of reading a code block
+CODE_NOTICE = (
+    "Je te laisse le code à l'écran."  # Spoken once instead of reading a code block
+)
 LINK_WORD = "un lien"  # Spoken instead of a bare URL
 
 _CLOSERS = "\"'»)]*_”’"
@@ -16,8 +18,26 @@ _MARKER = re.compile(r"^\s*(?:(?:#{1,6}|[-*+•>]|\d{1,3}[.)])\s+|>)+")
 _HOLD = re.compile(r"^\s*(?:#{1,6}|[-*+•>]|\d{1,3}[.)]?|`{1,3}|~{1,3})?\s*$")
 _SENT_END = re.compile(rf"[.!?…]+[{re.escape(_CLOSERS)}]*(?=\s)")
 _END_PUNCT = (".", "!", "?", "…", ":", ";", ",")
-_ABBREV = frozenset({"m", "mm", "mme", "mlle", "mr", "dr", "pr", "st", "ste", "cf", "vs", "env",
-                     "approx", "fig", "ex", "p"})
+_ABBREV = frozenset(
+    {
+        "m",
+        "mm",
+        "mme",
+        "mlle",
+        "mr",
+        "dr",
+        "pr",
+        "st",
+        "ste",
+        "cf",
+        "vs",
+        "env",
+        "approx",
+        "fig",
+        "ex",
+        "p",
+    }
+)
 
 _LINK = re.compile(r"!?\[([^\]]*)\]\([^)\s]*\)")
 _URL = re.compile(r"(?:https?://|www\.)[^\s<>()\[\]]*[^\s<>()\[\].,;:!?'\"»”’]")
@@ -37,20 +57,37 @@ def _named(prefix: str, unit: tuple[str, str]) -> tuple[str, str]:
 
 _UNIT_NAMES: dict[str, tuple[str, str]] = {
     # Capacities: "o" is the French spelling, "B" the English one for the same byte
-    "Ko": _named("kilo", _OCTETS), "KB": _named("kilo", _OCTETS), "KiB": _named("kibi", _OCTETS),
-    "Mo": _named("méga", _OCTETS), "MB": _named("méga", _OCTETS), "MiB": _named("mibi", _OCTETS),
-    "Go": _named("giga", _OCTETS), "GB": _named("giga", _OCTETS), "GiB": _named("gibi", _OCTETS),
-    "To": _named("téra", _OCTETS), "TB": _named("téra", _OCTETS), "TiB": _named("tébi", _OCTETS),
-    "Po": _named("péta", _OCTETS), "PB": _named("péta", _OCTETS),
-    "Eo": _named("exa", _OCTETS), "EB": _named("exa", _OCTETS),
+    "Ko": _named("kilo", _OCTETS),
+    "KB": _named("kilo", _OCTETS),
+    "KiB": _named("kibi", _OCTETS),
+    "Mo": _named("méga", _OCTETS),
+    "MB": _named("méga", _OCTETS),
+    "MiB": _named("mibi", _OCTETS),
+    "Go": _named("giga", _OCTETS),
+    "GB": _named("giga", _OCTETS),
+    "GiB": _named("gibi", _OCTETS),
+    "To": _named("téra", _OCTETS),
+    "TB": _named("téra", _OCTETS),
+    "TiB": _named("tébi", _OCTETS),
+    "Po": _named("péta", _OCTETS),
+    "PB": _named("péta", _OCTETS),
+    "Eo": _named("exa", _OCTETS),
+    "EB": _named("exa", _OCTETS),
     # Bits: the lowercase b is what keeps "1 Gb" a gigabit
-    "Kb": _named("kilo", _BITS), "Kbit": _named("kilo", _BITS),
-    "Mb": _named("méga", _BITS), "Mbit": _named("méga", _BITS),
-    "Gb": _named("giga", _BITS), "Gbit": _named("giga", _BITS),
-    "Tb": _named("téra", _BITS), "Tbit": _named("téra", _BITS),
+    "Kb": _named("kilo", _BITS),
+    "Kbit": _named("kilo", _BITS),
+    "Mb": _named("méga", _BITS),
+    "Mbit": _named("méga", _BITS),
+    "Gb": _named("giga", _BITS),
+    "Gbit": _named("giga", _BITS),
+    "Tb": _named("téra", _BITS),
+    "Tbit": _named("téra", _BITS),
     # Frequencies: hertz is invariable in French, so singular and plural are the same word
-    "Hz": ("hertz", "hertz"), "kHz": ("kilohertz", "kilohertz"), "MHz": ("mégahertz", "mégahertz"),
-    "GHz": ("gigahertz", "gigahertz"), "THz": ("térahertz", "térahertz"),
+    "Hz": ("hertz", "hertz"),
+    "kHz": ("kilohertz", "kilohertz"),
+    "MHz": ("mégahertz", "mégahertz"),
+    "GHz": ("gigahertz", "gigahertz"),
+    "THz": ("térahertz", "térahertz"),
 }
 
 _SYMBOLS = "|".join(sorted(_UNIT_NAMES, key=len, reverse=True))
@@ -71,9 +108,15 @@ def _pick(count: str, names: tuple[str, str]) -> str:
 
 def _spoken_units(text: str) -> str:
     """Say "3 Go" as "3 gigaoctets": the name is used only when a number comes right before it."""
-    text = _RATE.sub(lambda m: f"{m.group(1)} {_pick(m.group(1), _UNIT_NAMES[m.group(2)])} par seconde",
-                     text)
-    return _QUANTITY.sub(lambda m: f"{m.group(1)} {_pick(m.group(1), _UNIT_NAMES[m.group(2)])}", text)
+    text = _RATE.sub(
+        lambda m: (
+            f"{m.group(1)} {_pick(m.group(1), _UNIT_NAMES[m.group(2)])} par seconde"
+        ),
+        text,
+    )
+    return _QUANTITY.sub(
+        lambda m: f"{m.group(1)} {_pick(m.group(1), _UNIT_NAMES[m.group(2)])}", text
+    )
 
 
 def _path_name(match: re.Match[str]) -> str:
@@ -129,7 +172,7 @@ def _cut(text: str, limit: int) -> tuple[str, str]:
         return text[:best], text[best:].lstrip()
     i = window.rfind(" ")
     if i > 0:
-        return text[:i], text[i + 1:].lstrip()
+        return text[:i], text[i + 1 :].lstrip()
     return window, text[limit:]
 
 
@@ -185,7 +228,9 @@ class SentenceSplitter:
         self._buf = ""
         self._mid_line = False  # The start of the current line was already handled
         self._in_code = False
-        self._swallow_line = False  # The current line is the opening fence of a code block
+        self._swallow_line = (
+            False  # The current line is the opening fence of a code block
+        )
         self._carry = ""  # Short sentences wait here and are merged with the next one
         self._out: list[str] = []
 
@@ -216,14 +261,14 @@ class SentenceSplitter:
                     if final:
                         self._buf = ""
                     return
-                line, self._buf = self._buf[:newline], self._buf[newline + 1:]
+                line, self._buf = self._buf[:newline], self._buf[newline + 1 :]
                 if self._swallow_line:
                     self._swallow_line = False
                 elif _FENCE.match(line):
                     self._in_code = False
                 continue
             if newline >= 0:
-                line, self._buf = self._buf[:newline], self._buf[newline + 1:]
+                line, self._buf = self._buf[:newline], self._buf[newline + 1 :]
                 self._line(line)
                 self._mid_line = False
             elif final and self._buf:
@@ -273,7 +318,7 @@ class SentenceSplitter:
         while True:
             cut = None
             for match in _SENT_END.finditer(text):
-                if not _is_abbreviation(text[:match.start()], match.group()):
+                if not _is_abbreviation(text[: match.start()], match.group()):
                     cut = match.end()
                     break
             if cut is not None:
@@ -292,7 +337,9 @@ class SentenceSplitter:
             return
         pieces = _wrap(text, self._max)
         if hard and not pieces[-1].endswith(_END_PUNCT):
-            pieces[-1] += "."  # A line break is a pause: make it one for the voice as well
+            pieces[-1] += (
+                "."  # A line break is a pause: make it one for the voice as well
+            )
         for piece in pieces:
             self._carry = f"{self._carry} {piece}".strip()
             if len(self._carry) >= self._min:

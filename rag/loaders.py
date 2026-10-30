@@ -8,17 +8,86 @@ from pathlib import Path
 from rag.filters import find_secret
 
 TEXT_EXT = {
-    ".txt", ".md", ".markdown", ".rst", ".org", ".tex", ".adoc", ".json", ".yaml", ".yml",
-    ".toml", ".ini", ".cfg", ".conf", ".xml", ".csv", ".tsv", ".srt", ".bib",
+    ".txt",
+    ".md",
+    ".markdown",
+    ".rst",
+    ".org",
+    ".tex",
+    ".adoc",
+    ".json",
+    ".yaml",
+    ".yml",
+    ".toml",
+    ".ini",
+    ".cfg",
+    ".conf",
+    ".xml",
+    ".csv",
+    ".tsv",
+    ".srt",
+    ".bib",
 }
 CODE_EXT = {
-    ".py", ".js", ".mjs", ".ts", ".tsx", ".jsx", ".c", ".h", ".cpp", ".cc", ".hpp", ".rs", ".go",
-    ".java", ".kt", ".rb", ".php", ".sh", ".bash", ".zsh", ".fish", ".lua", ".sql", ".css",
-    ".scss", ".html", ".htm", ".vue", ".svelte", ".swift", ".cs", ".pl", ".r", ".ex", ".exs",
-    ".hs", ".ml", ".nix", ".cmake", ".gradle", ".zig", ".nim", ".dart", ".scala", ".clj",
-    ".service", ".timer", ".install", ".desktop", ".ipynb",
+    ".py",
+    ".js",
+    ".mjs",
+    ".ts",
+    ".tsx",
+    ".jsx",
+    ".c",
+    ".h",
+    ".cpp",
+    ".cc",
+    ".hpp",
+    ".rs",
+    ".go",
+    ".java",
+    ".kt",
+    ".rb",
+    ".php",
+    ".sh",
+    ".bash",
+    ".zsh",
+    ".fish",
+    ".lua",
+    ".sql",
+    ".css",
+    ".scss",
+    ".html",
+    ".htm",
+    ".vue",
+    ".svelte",
+    ".swift",
+    ".cs",
+    ".pl",
+    ".r",
+    ".ex",
+    ".exs",
+    ".hs",
+    ".ml",
+    ".nix",
+    ".cmake",
+    ".gradle",
+    ".zig",
+    ".nim",
+    ".dart",
+    ".scala",
+    ".clj",
+    ".service",
+    ".timer",
+    ".install",
+    ".desktop",
+    ".ipynb",
 }
-CODE_NAMES = {"Makefile", "Dockerfile", "PKGBUILD", "CMakeLists.txt", "Justfile", "Vagrantfile"}
+CODE_NAMES = {
+    "Makefile",
+    "Dockerfile",
+    "PKGBUILD",
+    "CMakeLists.txt",
+    "Justfile",
+    "Vagrantfile",
+}
 
 
 class SkipFile(Exception):
@@ -31,8 +100,12 @@ class Loaded:
 
     kind: str  # text | code | pdf | docx
     lines: list[str] = field(default_factory=list)  # text/code: one entry per line
-    pages: list[tuple[int, str]] = field(default_factory=list)  # pdf: (page number, text)
-    paragraphs: list[str] = field(default_factory=list)  # docx: non-empty paragraphs/rows
+    pages: list[tuple[int, str]] = field(
+        default_factory=list
+    )  # pdf: (page number, text)
+    paragraphs: list[str] = field(
+        default_factory=list
+    )  # docx: non-empty paragraphs/rows
 
     def full_text(self) -> str:
         if self.kind == "pdf":
@@ -51,7 +124,13 @@ def classify(path: Path) -> str | None:
         return "docx"
     if path.name in CODE_NAMES or ext in CODE_EXT:
         return "code"
-    if ext in TEXT_EXT or path.name.upper() in {"README", "LICENSE", "CHANGELOG", "TODO", "NOTES"}:
+    if ext in TEXT_EXT or path.name.upper() in {
+        "README",
+        "LICENSE",
+        "CHANGELOG",
+        "TODO",
+        "NOTES",
+    }:
         return "text"
     return None
 
@@ -63,15 +142,22 @@ def load(path: Path, kind: str, max_text_kb: int, max_doc_mb: int) -> Loaded:
         raise SkipFile("fichier vide")
     if kind in ("text", "code"):
         if size > max_text_kb * 1024:
-            raise SkipFile(f"trop gros ({size // 1024} Ko, limite RAG_MAX_TEXT_KB={max_text_kb})")
+            raise SkipFile(
+                f"trop gros ({size // 1024} Ko, limite RAG_MAX_TEXT_KB={max_text_kb})"
+            )
         loaded = _load_text(path, kind)
     else:
         if size > max_doc_mb * 1024 * 1024:
-            raise SkipFile(f"trop gros ({size // (1024 * 1024)} Mo, limite RAG_MAX_DOC_MB={max_doc_mb})")
+            raise SkipFile(
+                f"trop gros ({size // (1024 * 1024)} Mo, limite RAG_MAX_DOC_MB={max_doc_mb})"
+            )
         loaded = _load_pdf(path) if kind == "pdf" else _load_docx(path)
     text = loaded.full_text()
     if not text.strip():
-        raise SkipFile("aucun texte extractible" + (" (PDF scanné ? l'OCR n'est pas géré)" if kind == "pdf" else ""))
+        raise SkipFile(
+            "aucun texte extractible"
+            + (" (PDF scanné ? l'OCR n'est pas géré)" if kind == "pdf" else "")
+        )
     reason = find_secret(text)
     if reason:
         raise SkipFile(f"secret détecté ({reason})")

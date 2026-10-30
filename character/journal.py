@@ -23,12 +23,14 @@ from character.store import CharacterStore
 
 log = logging.getLogger(__name__)
 
-MAX_NOTES = 40               # stored; older ones are dropped (the overall impression already folds them in)
+MAX_NOTES = (
+    40  # stored; older ones are dropped (the overall impression already folds them in)
+)
 MAX_NOTE_CHARS = 600
 MAX_IMPRESSION_CHARS = 900
 MAX_THREADS = 5
 MAX_THREAD_CHARS = 120
-RECENT_NOTES = 3             # injected into the prompt, newest first
+RECENT_NOTES = 3  # injected into the prompt, newest first
 HEADER = (
     "## Tes notes personnelles sur lui\n"
     "(Ton journal de personnage : tes impressions, écrites par toi lors d'échanges passés. Ce sont des pensées, "
@@ -47,9 +49,9 @@ def clean(text: Any, limit: int) -> str:
 @dataclass
 class JournalNote:
     id: str
-    at: str                  # ISO datetime
+    at: str  # ISO datetime
     text: str
-    level: str = ""          # relationship level when it was written
+    level: str = ""  # relationship level when it was written
 
     @classmethod
     def from_dict(cls, data: Any) -> JournalNote | None:
@@ -64,7 +66,9 @@ class JournalNote:
         except ValueError:
             at = ""
         ident = clean(data.get("id", ""), 12) if isinstance(data.get("id"), str) else ""
-        return cls(ident or secrets.token_hex(3), at, text, clean(data.get("level", ""), 20))
+        return cls(
+            ident or secrets.token_hex(3), at, text, clean(data.get("level", ""), 20)
+        )
 
 
 @dataclass
@@ -78,9 +82,21 @@ class JournalData:
         """Tolerant loader: a damaged or hand-edited file yields what can be salvaged, never an exception."""
         if not isinstance(data, dict):
             return cls()
-        impression = clean(data["impression"], MAX_IMPRESSION_CHARS) if isinstance(data.get("impression"), str) else ""
-        raw_threads = data.get("threads") if isinstance(data.get("threads"), list) else []
-        threads = [t for t in (clean(x, MAX_THREAD_CHARS) for x in raw_threads if isinstance(x, str)) if t][:MAX_THREADS]
+        impression = (
+            clean(data["impression"], MAX_IMPRESSION_CHARS)
+            if isinstance(data.get("impression"), str)
+            else ""
+        )
+        raw_threads = (
+            data.get("threads") if isinstance(data.get("threads"), list) else []
+        )
+        threads = [
+            t
+            for t in (
+                clean(x, MAX_THREAD_CHARS) for x in raw_threads if isinstance(x, str)
+            )
+            if t
+        ][:MAX_THREADS]
         raw_notes = data.get("notes") if isinstance(data.get("notes"), list) else []
         notes: list[JournalNote] = []
         seen: set[str] = set()
@@ -92,12 +108,20 @@ class JournalData:
         return cls(impression, threads, notes[-MAX_NOTES:])
 
     def to_dict(self) -> dict[str, Any]:
-        return {"impression": self.impression, "threads": list(self.threads),
-                "notes": [{"id": n.id, "at": n.at, "text": n.text, "level": n.level} for n in self.notes]}
+        return {
+            "impression": self.impression,
+            "threads": list(self.threads),
+            "notes": [
+                {"id": n.id, "at": n.at, "text": n.text, "level": n.level}
+                for n in self.notes
+            ],
+        }
 
 
 class Journal:
-    def __init__(self, store: CharacterStore | None = None, data: JournalData | None = None) -> None:
+    def __init__(
+        self, store: CharacterStore | None = None, data: JournalData | None = None
+    ) -> None:
         self.store = store
         self.data = data or JournalData()
 
@@ -111,7 +135,7 @@ class Journal:
             return
         try:
             self.store.save(self.data.to_dict())
-        except OSError as err:   # a lost save must never break the conversation
+        except OSError as err:  # a lost save must never break the conversation
             log.warning("journal not saved: %s", err)
 
     # ------------------------------------------------------------------------------------ writing
@@ -139,7 +163,9 @@ class Journal:
         self.save()
 
     def set_threads(self, threads: list[str]) -> None:
-        self.data.threads = [t for t in (clean(x, MAX_THREAD_CHARS) for x in threads) if t][:MAX_THREADS]
+        self.data.threads = [
+            t for t in (clean(x, MAX_THREAD_CHARS) for x in threads) if t
+        ][:MAX_THREADS]
 
     # ------------------------------------------------------------------------------------ user control
     def delete_note(self, note_id: str) -> bool:
@@ -196,7 +222,9 @@ def render_block(data: JournalData, now: datetime, max_chars: int = 1800) -> str
     budget = max(200, max_chars)
     lines: list[str] = []
     if data.impression:
-        lines.append(f"Impression d'ensemble : {clean(data.impression, min(MAX_IMPRESSION_CHARS, budget // 2))}")
+        lines.append(
+            f"Impression d'ensemble : {clean(data.impression, min(MAX_IMPRESSION_CHARS, budget // 2))}"
+        )
     used = sum(len(line) + 1 for line in lines)
     if data.threads:
         lines.append("À reprendre ou en cours :")

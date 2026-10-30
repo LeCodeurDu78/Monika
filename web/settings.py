@@ -10,34 +10,94 @@ from __future__ import annotations
 
 import asyncio
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any, Awaitable, Callable
+from typing import Any
 from urllib.parse import urlparse
 
-from monika.config import (Settings, SettingsError, apply_settings_changes, editable_settings,
-                           pinned_fields, restart_required_fields, settings_json_path, write_env_secret)
+from monika.config import (
+    Settings,
+    SettingsError,
+    apply_settings_changes,
+    editable_settings,
+    pinned_fields,
+    restart_required_fields,
+    settings_json_path,
+    write_env_secret,
+)
 from monika.paths import Paths
-from security.words import TIERS, WordBank, WordsError, read_words, validate_tiers, write_words
+from security.words import (
+    TIERS,
+    WordBank,
+    WordsError,
+    read_words,
+    validate_tiers,
+    write_words,
+)
 from web.server import ActionError
 
 PROBE_TIMEOUT_S = 1.5
 
 # What the page shows. A curated list stays readable; the rest stays editable by hand in settings.json.
 CATALOG: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("Modèle et génération", ("model_name", "llm_temperature", "llm_timeout_s", "max_steps")),
-    ("Comportement", ("user_name", "persona_text", "context_budget_tokens", "context_keep_recent_tokens",
-                      "filler_delay_s", "filler_repeat_s", "filler_max_per_turn")),
-    ("Personnage", ("character_enabled", "affect_llm_enabled", "affect_timeout_s", "journal_enabled",
-                    "journal_every_turns", "journal_max_chars")),
-    ("Rôles", ("director_enabled", "director_llm_model", "director_timeout_s", "action_llm_enabled",
-               "action_llm_model")),
-    ("Mémoire", ("memory_inject_all_max", "memory_recall_limit", "memory_recall_threshold")),
+    (
+        "Modèle et génération",
+        ("model_name", "llm_temperature", "llm_timeout_s", "max_steps"),
+    ),
+    (
+        "Comportement",
+        (
+            "user_name",
+            "persona_text",
+            "context_budget_tokens",
+            "context_keep_recent_tokens",
+            "filler_delay_s",
+            "filler_repeat_s",
+            "filler_max_per_turn",
+        ),
+    ),
+    (
+        "Personnage",
+        (
+            "character_enabled",
+            "affect_llm_enabled",
+            "affect_timeout_s",
+            "journal_enabled",
+            "journal_every_turns",
+            "journal_max_chars",
+        ),
+    ),
+    (
+        "Rôles",
+        (
+            "director_enabled",
+            "director_llm_model",
+            "director_timeout_s",
+            "action_llm_enabled",
+            "action_llm_model",
+        ),
+    ),
+    (
+        "Mémoire",
+        ("memory_inject_all_max", "memory_recall_limit", "memory_recall_threshold"),
+    ),
     ("Sessions", ("sessions_enabled", "sessions_keep_days")),
     ("Noyau persistant", ("kernel_enabled",)),
     ("Tâches planifiées", ("tasks_enabled", "tasks_max")),
     ("Documents", ("rag_top_k", "rag_min_score", "rag_rerank_enabled")),
-    ("Voix", ("tts_enabled", "tts_text_mode", "tts_speed", "tts_emotion_tags", "tts_render",
-               "tts_pause_style", "tts_pause_scale", "tts_pause_max_s")),
+    (
+        "Voix",
+        (
+            "tts_enabled",
+            "tts_text_mode",
+            "tts_speed",
+            "tts_emotion_tags",
+            "tts_render",
+            "tts_pause_style",
+            "tts_pause_scale",
+            "tts_pause_max_s",
+        ),
+    ),
     ("Mots sensibles", ("sensitive_words_enabled",)),
     ("Page et journaux", ("web_port", "log_level")),
 )
@@ -70,7 +130,9 @@ def _kind(name: str, value: Any) -> str:
         return "bool"
     if isinstance(value, (int, float)):
         return "number"
-    if name == "persona_text" or (isinstance(value, str) and ("\n" in value or len(value) > 60)):
+    if name == "persona_text" or (
+        isinstance(value, str) and ("\n" in value or len(value) > 60)
+    ):
         return "long"
     return "text"
 
@@ -100,16 +162,25 @@ class SettingsApi:
         pinned = pinned_fields()
         groups = []
         for title, names in CATALOG:
-            fields = [{"name": name, "kind": _kind(name, values[name]), "value": values[name],
-                       "pinned": name in pinned}
-                      for name in names if name in values]
+            fields = [
+                {
+                    "name": name,
+                    "kind": _kind(name, values[name]),
+                    "value": values[name],
+                    "pinned": name in pinned,
+                }
+                for name in names
+                if name in values
+            ]
             if fields:
                 groups.append({"title": title, "fields": fields})
         return {
             "groups": groups,
             "pinned": sorted(pinned),
             "restart_required": restart_required_fields(),
-            "secrets": {"OPENAI_API_KEY": bool(self._s.openai_api_key.get_secret_value())},
+            "secrets": {
+                "OPENAI_API_KEY": bool(self._s.openai_api_key.get_secret_value())
+            },
             "settings_file": str(settings_json_path()),
             "words": self._words(),
         }
@@ -130,10 +201,24 @@ class SettingsApi:
         """All probes in parallel, each with its own bound; one failure never hides the others."""
         began = time.monotonic()
         rows = await asyncio.gather(
-            self._llm_row(), self._stt_row(), self._tts_row(), self._mcp_row(),
-            self._memory_row(), self._rag_row(), self._web_row(), return_exceptions=True)
-        labelled = ["LLM", "Reconnaissance vocale", "Voix (GPT-SoVITS)", "Serveurs MCP",
-                    "Mémoire rapide", "Documents", "Page locale"]
+            self._llm_row(),
+            self._stt_row(),
+            self._tts_row(),
+            self._mcp_row(),
+            self._memory_row(),
+            self._rag_row(),
+            self._web_row(),
+            return_exceptions=True,
+        )
+        labelled = [
+            "LLM",
+            "Reconnaissance vocale",
+            "Voix (GPT-SoVITS)",
+            "Serveurs MCP",
+            "Mémoire rapide",
+            "Documents",
+            "Page locale",
+        ]
         out = []
         for name, row in zip(labelled, rows):
             if isinstance(row, BaseException):
@@ -147,11 +232,23 @@ class SettingsApi:
         if llm is None:
             return _row("LLM", None, "désactivé")
         last = llm.last_call
-        tail = "" if last is None else (" · dernier appel : ok" if last.get("ok") else " · dernier appel : échec")
+        tail = (
+            ""
+            if last is None
+            else (
+                " · dernier appel : ok"
+                if last.get("ok")
+                else " · dernier appel : échec"
+            )
+        )
         try:
-            detail = await asyncio.wait_for(llm.ping(PROBE_TIMEOUT_S), PROBE_TIMEOUT_S + 0.5)
+            detail = await asyncio.wait_for(
+                llm.ping(PROBE_TIMEOUT_S), PROBE_TIMEOUT_S + 0.5
+            )
         except Exception as exc:  # noqa: BLE001 - a probe never raises
-            return _row("LLM", False, f"{self._s.llm_base_url} ne répond pas ({_short(exc)})")
+            return _row(
+                "LLM", False, f"{self._s.llm_base_url} ne répond pas ({_short(exc)})"
+            )
         return _row("LLM", True, f"{self._s.model_name} · {detail}{tail}")
 
     async def _stt_row(self) -> dict[str, Any]:
@@ -160,9 +257,16 @@ class SettingsApi:
             return _row("Reconnaissance vocale", None, "désactivée (mode texte)")
         transcriber = listener.transcriber
         if transcriber.loaded:
-            return _row("Reconnaissance vocale", True,
-                        f"Whisper « {transcriber.model_name} » sur {transcriber.device}")
-        return _row("Reconnaissance vocale", None, f"Whisper « {transcriber.model_name} » : modèle non chargé")
+            return _row(
+                "Reconnaissance vocale",
+                True,
+                f"Whisper « {transcriber.model_name} » sur {transcriber.device}",
+            )
+        return _row(
+            "Reconnaissance vocale",
+            None,
+            f"Whisper « {transcriber.model_name} » : modèle non chargé",
+        )
 
     async def _tts_row(self) -> dict[str, Any]:
         speaker = self._health.speaker
@@ -177,7 +281,9 @@ class SettingsApi:
                 await writer.wait_closed()
                 del reader
         except Exception as exc:  # noqa: BLE001
-            return _row("Voix (GPT-SoVITS)", False, f"{host}:{port} injoignable ({_short(exc)})")
+            return _row(
+                "Voix (GPT-SoVITS)", False, f"{host}:{port} injoignable ({_short(exc)})"
+            )
         engine = getattr(speaker, "engine", None)
         parts = [f"{host}:{port} répond"]
         if engine is not None:
@@ -209,9 +315,16 @@ class SettingsApi:
             return _row("Mémoire rapide", None, "désactivée ou indisponible")
         state = getattr(agent, "memory_ok", None)
         if state is None:
-            return _row("Mémoire rapide", None, "prête · aucun rappel depuis le lancement")
-        return _row("Mémoire rapide", bool(state),
-                    "dernier rappel : ok" if state else "dernier rappel : échec (voir la console)")
+            return _row(
+                "Mémoire rapide", None, "prête · aucun rappel depuis le lancement"
+            )
+        return _row(
+            "Mémoire rapide",
+            bool(state),
+            "dernier rappel : ok"
+            if state
+            else "dernier rappel : échec (voir la console)",
+        )
 
     async def _rag_row(self) -> dict[str, Any]:
         agent = self._health.agent
@@ -230,14 +343,20 @@ class SettingsApi:
     async def _web_row(self) -> dict[str, Any]:
         hub = self._health.hub
         listeners = getattr(hub, "listeners", 0) if hub is not None else 0
-        return _row("Page locale", True,
-                    f"en ligne depuis {_duration(time.monotonic() - self._health.started_at)} · "
-                    f"{listeners} page(s) connectée(s)")
+        return _row(
+            "Page locale",
+            True,
+            f"en ligne depuis {_duration(time.monotonic() - self._health.started_at)} · "
+            f"{listeners} page(s) connectée(s)",
+        )
 
     # ------------------------------------------------------------------------------------ writing
     def actions(self) -> dict[str, Callable[..., Awaitable[dict[str, Any]]]]:
-        return {"settings_update": self._update, "settings_secret": self._secret,
-                "settings_words": self._words_update}
+        return {
+            "settings_update": self._update,
+            "settings_secret": self._secret,
+            "settings_words": self._words_update,
+        }
 
     async def _words_update(self, tiers: dict[str, Any]) -> dict[str, Any]:
         """Validate, write the bank, then swap it into the running agent (hot reload)."""
@@ -255,9 +374,13 @@ class SettingsApi:
 
     async def _update(self, patch: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(patch, dict):
-            raise ActionError("Les réglages doivent arriver sous forme d'objet JSON.", 400)
+            raise ActionError(
+                "Les réglages doivent arriver sous forme d'objet JSON.", 400
+            )
         try:
-            restart = apply_settings_changes(patch, live=self._s, path=self._paths.settings_file)
+            restart = apply_settings_changes(
+                patch, live=self._s, path=self._paths.settings_file
+            )
         except SettingsError as exc:
             raise ActionError(str(exc), 400) from exc
         self._activity()

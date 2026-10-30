@@ -14,7 +14,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from monika.kernel import KernelUnavailable, MAX_LINE_CHARS
+from monika.kernel import MAX_LINE_CHARS, KernelUnavailable
 
 
 def kernel_alive(socket_path: Path) -> bool:
@@ -45,7 +45,11 @@ async def _read(reader: asyncio.StreamReader) -> dict[str, Any] | None:
         message = json.loads(line)
     except ValueError:
         return {"type": "error", "text": "Le noyau a envoyé un message illisible."}
-    return message if isinstance(message, dict) else {"type": "error", "text": "Message inattendu."}
+    return (
+        message
+        if isinstance(message, dict)
+        else {"type": "error", "text": "Message inattendu."}
+    )
 
 
 def _print(text: str) -> None:
@@ -64,9 +68,11 @@ async def _interrupted(writer: asyncio.StreamWriter) -> None:
 async def attach(socket_path: Path, voice: bool = False) -> int:
     """Connect and run until the user leaves. Returns a process exit code."""
     if not kernel_alive(socket_path):
-        print(f"✗ Aucun noyau ne répond sur {socket_path}.\n"
-              "  Démarre-le :  python -m monika --serve   (ou systemctl --user start monika)\n"
-              "  Vérifie aussi que KERNEL_ENABLED=true des deux côtés.")
+        print(
+            f"✗ Aucun noyau ne répond sur {socket_path}.\n"
+            "  Démarre-le :  python -m monika --serve   (ou systemctl --user start monika)\n"
+            "  Vérifie aussi que KERNEL_ENABLED=true des deux côtés."
+        )
         return 1
     try:
         reader, writer = await asyncio.open_unix_connection(str(socket_path))
@@ -103,7 +109,9 @@ class _Reader:
     `done` is set each time, so the prompt knows when it may ask for the next line.
     """
 
-    def __init__(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    def __init__(
+        self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ) -> None:
         self._reader = reader
         self._writer = writer
         self.done = asyncio.Event()
@@ -114,7 +122,9 @@ class _Reader:
             try:
                 message = await _read(self._reader)
             except asyncio.CancelledError:
-                await _interrupted(self._writer)  # Ctrl+C: cut the reply, keep the session
+                await _interrupted(
+                    self._writer
+                )  # Ctrl+C: cut the reply, keep the session
                 continue
             if message is None:
                 self.lost = True
@@ -159,17 +169,23 @@ class _Reader:
                 await _interrupted(self._writer)
 
 
-async def _text_session(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+async def _text_session(
+    reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+) -> None:
     from prompt_toolkit import PromptSession
     from prompt_toolkit.patch_stdout import patch_stdout
 
     stream = _Reader(reader, writer)
     printing = asyncio.create_task(stream.run())
     prompt: PromptSession = PromptSession()
-    print("Connecté au noyau. /quitter (ou Ctrl+D) pour rendre le terminal ; "
-          "Ctrl+C coupe une réponse. Ce que le noyau envoie (rappels compris) s'affiche ici.")
+    print(
+        "Connecté au noyau. /quitter (ou Ctrl+D) pour rendre le terminal ; "
+        "Ctrl+C coupe une réponse. Ce que le noyau envoie (rappels compris) s'affiche ici."
+    )
     try:
-        with patch_stdout():  # Notes and reminders land above the prompt, never inside it
+        with (
+            patch_stdout()
+        ):  # Notes and reminders land above the prompt, never inside it
             while True:
                 try:
                     line = (await prompt.prompt_async("Toi › ")).strip()
@@ -193,14 +209,18 @@ async def _text_session(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
         await asyncio.gather(printing, return_exceptions=True)
 
 
-async def _voice_session(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+async def _voice_session(
+    reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+) -> None:
     """No local prompt: the kernel listens. Ctrl+C cuts the reply; /quitter or Ctrl+D detaches."""
     from modes.voice import BANNER
 
     _send(writer, {"op": "voice", "on": True})
     await writer.drain()
     print(BANNER)
-    print("  (détacher : tape /quitter puis Entrée, ou Ctrl+D — Ctrl+C coupe seulement la voix)")
+    print(
+        "  (détacher : tape /quitter puis Entrée, ou Ctrl+D — Ctrl+C coupe seulement la voix)"
+    )
     keys = asyncio.create_task(_keyboard(writer))
     try:
         await _pump_forever(reader, writer)
@@ -225,7 +245,9 @@ async def _keyboard(writer: asyncio.StreamWriter) -> None:
             return
 
 
-async def _pump_forever(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+async def _pump_forever(
+    reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+) -> None:
     while True:
         try:
             message = await _read(reader)
@@ -241,9 +263,7 @@ async def _pump_forever(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
             _print(f"\n  [micro {'ouvert' if message.get('on') else 'fermé'}]\n")
         elif kind == "error":
             _print(f"\n  [noyau : {message.get('text', '')}]\n")
-        elif kind == "info":
-            _print(f"\n  [{message.get('text', '')}]\n")
-        elif kind == "stopped":
+        elif kind == "info" or kind == "stopped":
             _print(f"\n  [{message.get('text', '')}]\n")
         elif kind == "bye":
             return
