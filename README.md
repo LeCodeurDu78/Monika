@@ -311,14 +311,15 @@ voix.
 /rappel demain 8h : regarde la météo et dis-moi quoi mettre
 /rappel toutes les 2 heures : rappelle-moi de faire une pause
 /rappel chaque jour à 8h : donne-moi le programme du jour
+/rappel chaque lundi à 9h : résume-moi la semaine qui commence
 ```
 
 - **Ce qu'elle accepte** : `dans N minutes|heures|jours`, une heure (`18h30`, `08:05` — demain si
   elle est déjà passée), `demain 8h`, et la répétition : `toutes les 2 heures`, `tous les 3 jours`,
-  `chaque 30 minutes`, et `chaque jour à 8h` (ou `tous les jours à 08:30`) qui garde une **heure
-  fixe** — elle ne dérive pas de 24 h en 24 h depuis l'heure de création. Le langage naturel marche
-  aussi : « rappelle-moi dans deux heures de sortir les poubelles » passe par l'outil
-  `taches_planifier`.
+  `chaque 30 minutes`, `chaque jour à 8h` (ou `tous les jours à 08:30`) et `chaque lundi à 9h`
+  (`tous les mardis à 14h30`…). Les deux dernières gardent une **heure fixe** : elle ne dérive pas
+  de 24 h en 24 h depuis l'heure de création. Le langage naturel marche aussi : « rappelle-moi
+  dans deux heures de sortir les poubelles » passe par l'outil `taches_planifier`.
 - **Ce qu'elle fait à l'heure dite** : un tour complet, sans toi devant l'écran. La réponse
   s'affiche dans **tous les terminaux attachés** (et se dit à voix haute si la voix est active),
   et s'enregistre dans la session.
@@ -330,7 +331,8 @@ voix.
   Une tâche n'est jamais créée sans toi : ni le modèle ni le code n'en inventent.
 - **Limites** : 50 tâches (`TASKS_MAX`), un texte de 500 caractères, et rien ne se déclenche
   pendant qu'un tour est en cours — le rappel attend la fin de la réponse en cours. Une tâche
-  quotidienne manquée (machine éteinte) repart à la même heure le lendemain, sans rattrapage.
+  quotidienne ou hebdomadaire manquée (machine éteinte) repart à la prochaine occurrence, sans
+  rattrapage. Un jour de semaine à la fois : pour deux jours, crée deux tâches.
 
 ## Mémoire rapide
 

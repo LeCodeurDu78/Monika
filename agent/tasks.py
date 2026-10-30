@@ -9,7 +9,7 @@ Two forms only, written the way one says them:
 
     dans 20 minutes · dans 2 heures · dans 3 jours · 18h30 · demain 8h
     toutes les 2 heures · toutes les 30 minutes · tous les 3 jours
-    chaque jour à 8h · tous les jours à 08:30
+    chaque jour à 8h · tous les jours à 08:30 · chaque lundi à 9h
 
 A task is not a systemd timer: it fires only while a Monika process is running. Whatever came due
 while nothing was running is fired at the next start, saying it is late. Files are written
@@ -51,6 +51,14 @@ _DELAY = re.compile(r"^dans\s+(\d{1,4})\s*([a-zé]+)\b", re.IGNORECASE)
 _CLOCK = re.compile(r"^(?:(demain)\s+)?(\d{1,2})\s*(?:h|:)\s*(\d{1,2})?$", re.IGNORECASE)
 _DAILY = re.compile(r"^(?:tous\s+les\s+jours|chaque\s+jour)(?:\s*,?\s*(?:à|a))?\s+"
                     r"(\d{1,2})\s*(?:h|:)\s*(\d{1,2})?$", re.IGNORECASE)
+_WEEKLY = re.compile(r"^(?:tous\s+les|chaque)\s+(lundi|mardi|mercredi|jeudi|vendredi|samedi|"
+                     r"dimanche)s?(?:\s*,?\s*(?:à|a))?\s+(\d{1,2})\s*(?:h|:)\s*(\d{1,2})?$",
+                     re.IGNORECASE)
+
+# Python's Monday is 0; these are the names one says
+_WEEKDAYS = {"lundi": 0, "mardi": 1, "mercredi": 2, "jeudi": 3, "vendredi": 4,
+             "samedi": 5, "dimanche": 6}
+_WEEKDAY_NAMES = ("lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche")
 
 
 class TasksError(Exception):
@@ -64,7 +72,8 @@ class When:
     at: datetime
     every_s: int | None
     says: str  # What to show back, in French ("demain à 08:00", "toutes les 2 heures…")
-    daily_at: str | None = None  # "08:00" for « chaque jour à 8h »: a fixed time, not a 24 h delay
+    daily_at: str | None = None  # "08:00": a fixed time, not a 24 h delay that drifts
+    weekday: int | None = None  # « chaque lundi à 9h »: 0 = lundi, as in datetime.weekday()
 
 
 @dataclass(frozen=True)
@@ -78,6 +87,7 @@ class Task:
     created_at: datetime
     runs: int = 0
     daily_at: str | None = None  # "08:00": fires every day at that time
+    weekday: int | None = None   # 0 = lundi: fires every week on that day at `daily_at`
 
     @property
     def recurring(self) -> bool:
@@ -86,7 +96,9 @@ class Task:
     def describe(self) -> str:
         """One line for `/taches`."""
         when = f"{self.next_at:%d/%m %H:%M}"
-        if self.daily_at is not None:
+        if self.weekday is not None:
+            when += f" (chaque {_WEEKDAY_NAMES[self.weekday]} à {self.daily_at})"
+        elif self.daily_at is not None:
             when += f" (chaque jour à {self.daily_at})"
         elif self.every_s is not None:
             when += f" (toutes les {_duration(self.every_s)})"
@@ -95,7 +107,7 @@ class Task:
     def to_json(self) -> dict[str, Any]:
         return {"id": self.id, "prompt": self.prompt, "next_at": self.next_at.isoformat(),
                 "every_s": self.every_s, "created_at": self.created_at.isoformat(), "runs": self.runs,
-                "daily_at": self.daily_at}
+                "daily_at": self.daily_at, "weekday": self.weekday}
 
     @classmethod
     def from_json(cls, data: dict[str, Any]) -> Task:
@@ -107,6 +119,7 @@ class Task:
             created_at=datetime.fromisoformat(str(data.get("created_at", data["next_at"]))),
             runs=int(data.get("runs", 0)),
             daily_at=str(data["daily_at"]) if data.get("daily_at") else None,
+            weekday=int(data["weekday"]) if data.get("weekday") is not None else None,
         )
 
 
@@ -135,6 +148,18 @@ def parse_when(text: str, now: datetime | None = None) -> When:
     if not raw:
         raise TasksError("Quand ? « dans 20 minutes », « 18h30 », « demain 8h », "
                          "« toutes les 2 heures », « chaque jour à 8h »…")
+
+    weekly = _WEEKLY.match(raw)
+    if weekly:
+        weekday = _WEEKDAYS[weekly.group(1).lower()]
+        hour, minute = int(weekly.group(2)), int(weekly.group(3) or 0)
+        if hour > 23 or minute > 59:
+            raise TasksError(f"« {text.strip()} » n'est pas une heure valide.")
+        at_time = f"{hour:02d}:{minute:02d}"
+        at = _next_weekly(weekday, at_time, now)
+        return When(at, None, f"chaque {_WEEKDAY_NAMES[weekday]} à {at_time} "
+                              f"(prochaine fois {_human_when(at, now)})",
+                    daily_at=at_time, weekday=weekday)
 
     daily = _DAILY.match(raw)
     if daily:
@@ -180,14 +205,25 @@ def parse_when(text: str, now: datetime | None = None) -> When:
         return When(at, None, _human_when(at, now))
 
     raise TasksError(f"Je ne comprends pas « {text.strip()} ». Dis : « dans 20 minutes », "
-                     "« 18h30 », « demain 8h », « toutes les 2 heures », « chaque jour à 8h ».")
+                     "« 18h30 », « demain 8h », « toutes les 2 heures », « chaque jour à 8h », "
+                     "« chaque lundi à 9h ».")
+
+
+def _at_that_time(at_time: str, now: datetime) -> datetime:
+    hour, minute = (int(part) for part in at_time.split(":"))
+    return now.replace(hour=hour, minute=minute, second=0, microsecond=0)
 
 
 def _next_daily(at_time: str, now: datetime) -> datetime:
     """The next occurrence of that time of day: today if it has not passed yet, else tomorrow."""
-    hour, minute = (int(part) for part in at_time.split(":"))
-    at = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+    at = _at_that_time(at_time, now)
     return at if at > now else at + timedelta(days=1)
+
+
+def _next_weekly(weekday: int, at_time: str, now: datetime) -> datetime:
+    """The next time that weekday comes round at that time (today or within the next seven days)."""
+    at = _at_that_time(at_time, now) + timedelta(days=(weekday - now.weekday()) % 7)
+    return at if at > now else at + timedelta(days=7)
 
 
 def _human_when(at: datetime, now: datetime | None = None) -> str:
@@ -198,7 +234,7 @@ def _human_when(at: datetime, now: datetime | None = None) -> str:
     elif at.date() == (now + timedelta(days=1)).date():
         day = "demain"
     else:
-        day = f"le {at:%d/%m}"
+        day = f"{_WEEKDAY_NAMES[at.weekday()]} {at:%d/%m}"  # « lundi 02/11 », clearer than a date
     return f"{day} à {at:%H:%M}"
 
 
@@ -257,7 +293,8 @@ class TaskStore:
             raise TasksError(f"Trop de tâches ({self.max_tasks}) : annule-en une avec "
                              "« /tache annuler ID ».")
         task = Task(id=secrets.token_hex(4), prompt=self._masker.mask_text(prompt), next_at=when.at,
-                    every_s=when.every_s, created_at=now or datetime.now(), daily_at=when.daily_at)
+                    every_s=when.every_s, created_at=now or datetime.now(), daily_at=when.daily_at,
+                    weekday=when.weekday)
         self._tasks.append(task)
         self._tasks.sort(key=lambda t: t.next_at)
         self._save()
@@ -278,7 +315,8 @@ class TaskStore:
         if current is None:
             return None
         if current.daily_at is not None:  # Fixed time of day: no drift from the moment it ran
-            next_at = _next_daily(current.daily_at, moment)
+            next_at = (_next_weekly(current.weekday, current.daily_at, moment)
+                       if current.weekday is not None else _next_daily(current.daily_at, moment))
         elif current.every_s is not None:
             next_at = moment + timedelta(seconds=current.every_s)
         else:
@@ -287,7 +325,7 @@ class TaskStore:
             return None
         moved = Task(id=current.id, prompt=current.prompt, next_at=next_at,
                      every_s=current.every_s, created_at=current.created_at, runs=current.runs + 1,
-                     daily_at=current.daily_at)
+                     daily_at=current.daily_at, weekday=current.weekday)
         self._tasks = sorted((moved if t.id == task.id else t for t in self._tasks),
                              key=lambda t: t.next_at)
         self._save()
