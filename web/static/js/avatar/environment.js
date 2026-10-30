@@ -11,7 +11,8 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
-const ROOM = { halfX: 4.6, back: -5.0, front: 4.0, height: 3.1 };
+// The stage's dimensions, also used by the camera (orbit.js) to stay inside the room.
+export const ROOM = { halfX: 4.6, back: -5.0, front: 4.0, height: 3.1 };
 const DUSK = 0x2a2434;
 
 const COLORS = {

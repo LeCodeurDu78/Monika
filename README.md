@@ -400,9 +400,10 @@ pour la couper). À gauche l'avatar 3D, à droite le tableau de bord.
   rideaux, pupitres, suspension qui oscille et poussière en suspension. Aucun fichier à télécharger ;
   si le décor échoue à se construire, la scène reste utilisable sans lui.
 - **Caméra** : glisser avec le bouton gauche tourne autour d'elle, la molette rapproche ou éloigne,
-  et un glisser avec le bouton droit vers le haut ou le bas fait glisser le point de mire de sa tête
-  à ses chaussures (« `?view=full` » cadre le corps entier au départ). L'orbite ne passe jamais sous
-  le sol ; la caméra suit sa respiration sans tremblement.
+  et un glisser avec le bouton droit vers le haut ou le bas fait glisser le point de mire de sa tête  à ses chaussures (« `?view=full` » cadre le corps entier au départ). L'orbite ne passe jamais sous le
+  sol, ni à travers le plafond ou les murs : en montant ou en dézoomant, la caméra s'arrête dans la
+  pièce (l'angle le plus haut et la distance maximale dépendent alors de sa hauteur et du recul) ; elle
+  suit sa respiration sans tremblement.
   **Bibliothèques 3D** : three.js et three-vrm sont fournis dans `web/static/vendor/` et servis
   localement (aucune dépendance à télécharger : le dossier est versionné). Ouvre la page avec `?debug`
   pour tester chaque clip et chaque émotion ; `?view=full` cadre le corps entier au lieu du buste.
