@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import random
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -16,8 +17,6 @@ from agent.context import (
     estimate_tokens,
     message_tokens,
 )
-from agent.director import TurnPlan
-from agent.director import plan as plan_turn
 from agent.filler import FillerState
 from agent.llm import Completion, LLMError, TextDelta
 from agent.loop_detect import LoopDetector
@@ -26,13 +25,14 @@ from agent.sessions import SessionsError, trim_history
 from character.cues import sensitive_cue
 from character.models import AvatarCue
 from memory.capture import MemoryCapture
-from memory.fast import FastMemory, format_for_prompt
+from memory.notes import NoteMemory
 from monika.config import Settings
 from security.untrusted import wrap_tool_output
 from security.words import WordBank
 from tools.registry import ToolRegistry
 
 if TYPE_CHECKING:
+    from agent.recipes import RecipeKeeper, RecipeStore
     from agent.sessions import SessionRecorder
     from character.service import CharacterService
 
@@ -42,6 +42,7 @@ LOOP_WARNING = (
 )
 LOOP_STOPPED = "[Avertissement système : boucle détectée, la tâche est arrêtée pour faire un bilan.]"
 SKIPPED = "[Appel non exécuté : la tâche a été arrêtée avant.]"
+log = logging.getLogger(__name__)
 BILAN_REQUEST = {
     "limit": "tu as atteint la limite d'étapes autorisées pour cette tâche",
     "loop": "tu tournes en boucle sur les mêmes appels",
@@ -112,12 +113,14 @@ class Agent:
         store: ToolOutputStore | None = None,
         rng: random.Random | None = None,
         voice: bool = False,
-        memory: FastMemory | None = None,
+        memory: NoteMemory | None = None,
         capture: MemoryCapture | None = None,
         rag: Any | None = None,
         character: CharacterService | None = None,
         words: WordBank | None = None,
         sessions: SessionRecorder | None = None,
+        recipes: RecipeStore | None = None,
+        recipe_keeper: RecipeKeeper | None = None,
     ) -> None:
         self._s = settings
         self._llm = llm
@@ -133,9 +136,6 @@ class Agent:
         self._memory_block = ""
         self._character_block = ""
         self._journal_block = ""
-        self._hint_block = (
-            ""  # The director's note, this turn only (never kept in the history)
-        )
         self._tone_block = ""  # Sensitive-word tone for this message, this turn only
         self.words = (
             words  # The user's word bank; the settings page swaps it (hot reload)
@@ -143,14 +143,15 @@ class Agent:
         self.sessions = (
             sessions  # Persistent conversation log; None when SESSIONS_ENABLED is false
         )
+        self.recipes = recipes  # Learned procedures, injected as suggestions
+        self.recipes_keeper = recipe_keeper  # Writes a draft after a long, clean turn
+        self._recipe_block = ""
+        self._recipes_used: list[str] = []
         self.turn_running = (
             False  # True while a turn streams: the history must not be swapped then
         )
         self._memory_warned = False
         self.history: list[dict[str, Any]] = []
-        self.last_plan: TurnPlan | None = (
-            None  # What the director decided for the last turn (/contexte)
-        )
         self.memory_ok: bool | None = (
             None  # Last memory recall: True, False, or None when memory is off
         )
@@ -210,13 +211,13 @@ class Agent:
             has_documents=self.registry.get("documents_chercher") is not None,
             character_block=self._character_block,
             journal_block=self._journal_block,
-            hint_block=self._hint_block,
+            recipe_block=self._recipe_block,
             tone_block=self._tone_block,
         )
 
-    def _base_tokens(self, now: datetime, tools: set[str] | None = None) -> int:
+    def _base_tokens(self, now: datetime) -> int:
         """Tokens that every request pays: system prompt (without summary) and the tool schemas sent."""
-        schemas = self.registry.schemas(tools)
+        schemas = self.registry.schemas()
         return estimate_tokens(self._system_text(now, with_summary=False)) + (
             estimate_tokens(json.dumps(schemas, ensure_ascii=False)) if schemas else 0
         )
@@ -265,18 +266,23 @@ class Agent:
         self._journal_block = (
             self.character.journal_block() if self.character is not None else ""
         )
-        self._hint_block = ""
         self._tone_block = ""
-        self.last_plan = None
+        self._recipe_block, self._recipes_used = "", []
+        if self.recipes is not None:
+            block, self._recipes_used = self.recipes.prompt_block(
+                user_text, self._s.recipes_inject_max
+            )
+            self._recipe_block = "\n\n".join(
+                part for part in (block, self.recipes.pending_text()) if part
+            )
+        tool_calls = 0
+        tool_errors = 0
+        reply_text = ""
         turn = (
             self.character.start_turn(user_text) if self.character is not None else None
         )
         if turn is not None:
             turn.begin()  # Reads the tone while the memory recall runs
-        tools = (
-            None  # Subset of tool schemas for this turn (director); None = every tool
-        )
-        plan_task = self._start_plan(user_text)
         fillers = FillerState(self._s.filler_max_per_turn, self._rng)
         detector = LoopDetector(self._s.loop_warn_after, self._s.loop_stop_after)
         actions: list[str] = []
@@ -301,17 +307,10 @@ class Agent:
                 for cue in await turn.ready():
                     yield cue
                 self._character_block = turn.prompt_block()
-            if plan_task is not None:
-                self.last_plan = (
-                    await plan_task
-                )  # Runs in parallel with the memory recall and the tone reading
-                if self.last_plan is not None:
-                    tools = self.last_plan.tools
-                    self._hint_block = self.last_plan.hint
             while steps < self._s.max_steps:
                 steps += 1
                 fit = await self.context.fit(
-                    self.history, start, self._base_tokens(now, tools)
+                    self.history, start, self._base_tokens(now)
                 )
                 start -= fit.removed
                 for text in fit.notices:
@@ -319,7 +318,7 @@ class Agent:
                 system = {"role": "system", "content": self._system_text(now)}
                 completion: Completion | None = None
                 async for item in self._llm.stream(
-                    [system, *self.history], self.registry.schemas(tools) or None
+                    [system, *self.history], self.registry.schemas() or None
                 ):
                     if isinstance(item, TextDelta):
                         yield item
@@ -332,6 +331,7 @@ class Agent:
                 if not completion.tool_calls:
                     if completion.content.strip():
                         self.history.append(completion.as_message())
+                        reply_text = completion.content
                         self._submit_capture(user_text, completion.content)
                         finished = True
                         if turn is not None:
@@ -379,6 +379,9 @@ class Agent:
                         if not task.done():
                             task.cancel()
                     result = task.result()
+                    tool_calls += 1
+                    if result.is_error:
+                        tool_errors += 1
                     preview = " ".join(result.text.split())[:200]
                     yield ToolEnd(
                         call.name, not result.is_error, result.duration_ms, preview
@@ -440,7 +443,8 @@ class Agent:
                     "content": (final.content if final else "") or "(bilan vide)",
                 }
             )
-            self._submit_capture(user_text, self.history[-1]["content"])
+            reply_text = self.history[-1]["content"]
+            self._submit_capture(user_text, reply_text)
             finished = True
             if turn is not None:
                 turn.commit(self.history[-1]["content"])
@@ -450,10 +454,7 @@ class Agent:
                 self._rollback(start, user_text, actions, exc)
             raise
         finally:
-            self._hint_block = ""
             self._tone_block = ""
-            if plan_task is not None and not plan_task.done():
-                plan_task.cancel()
             if turn is not None:
                 turn.close()  # An aborted turn leaves no trace: the background tone reading is cancelled
             if (
@@ -462,6 +463,9 @@ class Agent:
                 self.sessions.finish(
                     self.history, self.context.summary, start, complete=finished
                 )
+            self._finish_recipes(
+                finished, tool_errors, tool_calls, user_text, actions, reply_text
+            )
             self.turn_running = False
 
     def _sensitive_tier(self, text: str) -> str | None:
@@ -473,23 +477,6 @@ class Agent:
         except Exception:  # noqa: BLE001 - a broken bank must never break a turn
             return None
 
-    def _start_plan(self, user_text: str) -> asyncio.Task[TurnPlan | None] | None:
-        """Start the director in the background: None when the role is off or there is nothing to plan."""
-        if not self._s.director_enabled:
-            return None
-        known = {tool.name for tool in self.registry.tools()}
-        if not known:
-            return None
-        return asyncio.get_running_loop().create_task(
-            plan_turn(
-                user_text,
-                known,
-                self._llm,
-                self._s.director_timeout_s,
-                self._s.director_llm_model,
-            )
-        )
-
     async def _recall(self, query: str) -> tuple[str, str | None]:
         """Fetch relevant memories for this message; a failure never blocks the turn."""
         if self.memory is None:
@@ -497,9 +484,9 @@ class Agent:
         reason = ""
         try:
             async with asyncio.timeout(self._s.memory_recall_timeout_s):
-                items = await self.memory.recall(query)
+                block = await self.memory.recall(query)
             self.memory_ok = True
-            return format_for_prompt(items), None
+            return block, None
         except TimeoutError:
             reason = f"délai de {self._s.memory_recall_timeout_s:g} s dépassé"
         except Exception as exc:  # Any backend failure: continue without memory
@@ -508,16 +495,50 @@ class Agent:
         if self._memory_warned:
             return "", None
         self._memory_warned = True
-        return "", f"Mémoire rapide indisponible ({reason}) : je continue sans."
+        return "", f"Mémoire indisponible ({reason}) : je continue sans."
 
     def _submit_capture(self, user_text: str, reply: str) -> None:
         """Hand the finished exchange to the background capture (never tool output)."""
         if self.capture is not None and reply and reply.strip():
             self.capture.submit(user_text, reply)
 
+    def _finish_recipes(
+        self,
+        finished: bool,
+        tool_errors: int,
+        tool_calls: int,
+        user_text: str,
+        actions: list[str],
+        reply: str,
+    ) -> None:
+        """Count whether the suggested recipes worked, then propose one after a clean turn."""
+        if self.recipes is None:
+            return
+        try:
+            ok = finished and tool_errors == 0
+            if self._recipes_used:
+                self.recipes.record_use(self._recipes_used, ok)
+                self._recipes_used = []
+            keeper = self.recipes_keeper
+            if (
+                ok
+                and reply.strip()
+                and tool_calls >= self._s.recipes_min_tools
+                and keeper is not None
+            ):
+                keeper.consider(user_text, actions, reply)
+        except Exception as exc:  # noqa: BLE001 - optional layer: never break a turn
+            log.warning(
+                "recettes : suivi du tour impossible (%s: %s)",
+                type(exc).__name__,
+                exc,
+            )
+
     async def aclose(self) -> int:
         """Finish pending background captures and journal notes; return how many could not be saved."""
         left = await self.capture.drain() if self.capture is not None else 0
+        if self.recipes_keeper is not None:
+            left += await self.recipes_keeper.drain()
         if self.character is not None:
             left += await self.character.aclose()
         return left

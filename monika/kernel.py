@@ -1,6 +1,6 @@
 """The persistent kernel: one process owns memory, documents, tools, the page and the voice.
 
-The terminal and the page become its clients. The transport is a private Unix socket
+The page is served by it. The transport is a private Unix socket
 (`<MONIKA_HOME>/kernel.sock`, `0600`): newline-delimited JSON, and the kernel sends back the very
 text the terminal would have printed. Rendering therefore stays in one place (`modes/text.py`)
 and a client only prints what it receives.
@@ -74,8 +74,8 @@ class InstanceLock:
             handle.close()
             raise KernelError(
                 "Une autre instance Monika utilise déjà ce dossier de données (mémoire et documents "
-                "ne supportent qu'un seul processus). Arrête-la, ou rattache-toi avec --attach si "
-                "c'est le noyau."
+                "ne supportent qu'un seul processus). Arrête-la, ou ouvre sa page dans le "
+                "navigateur si c'est le noyau."
             ) from exc
         try:
             os.chmod(self.path, 0o600)
@@ -168,7 +168,7 @@ class KernelServer:
                 f"Le noyau n'a pas pu ouvrir {self.socket_path} : {exc}"
             ) from exc
         self._install_signals()
-        print(f"Noyau prêt : {self.socket_path} (terminal : python -m monika --attach)")
+        print(f"Noyau prêt : {self.socket_path}")
         try:
             await self._stop.wait()
         finally:

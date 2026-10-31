@@ -102,12 +102,7 @@ class Settings(BaseSettings):
     loop_warn_after: int = Field(3, ge=2)
     loop_stop_after: int = Field(5, ge=3)
 
-    # Roles: two optional model calls, both off by default and both outside the critical path of a turn
-    director_enabled: bool = (
-        False  # Before the turn: keep only the useful tools and add one short hint
-    )
-    director_llm_model: str = ""  # Empty means MODEL_NAME
-    director_timeout_s: float = Field(1.5, gt=0)
+    # Role action : un appel modèle optionnel, hors du chemin critique d'un tour
     action_llm_enabled: bool = False  # After the turn: a short avatar action chain
     action_llm_model: str = ""  # Empty means MODEL_NAME
 
@@ -122,9 +117,9 @@ class Settings(BaseSettings):
     sessions_enabled: bool = False
     sessions_keep_days: int = Field(30, ge=1)
 
-    # Persistent kernel: one process owns memory, documents, tools, the page and the voice, and the
-    # terminal becomes its client (`--serve`, `--attach`). Off by default: without it, `python -m monika`
-    # keeps working exactly as before.
+    # Persistent kernel: one process owns memory, documents, tools, the page and the voice, and
+    # `--serve` keeps it running (the page talks to it). Off by default: without it,
+    # `python -m monika` starts everything once, for as long as the page is open.
     kernel_enabled: bool = False
     kernel_socket: Path | None = None  # default: <KERNEL home>/kernel.sock
 
@@ -133,15 +128,12 @@ class Settings(BaseSettings):
     tasks_enabled: bool = False
     tasks_max: int = Field(50, ge=1, le=500)
 
-    # Fast memory (mem0 + local Qdrant): facts and preferences about the user
+    # Mémoire personnelle (carnet continu, façon OpenSakura) : mes notes, les sujets en cours
+    # et les épisodes passés, réécrits par un « directeur » tous les MEMORY_CONSOLIDATE_TURNS tours.
     fast_memory_enabled: bool = True
-    embedding_model: str = "sentence-transformers/paraphrase-multilingual-mpnet-base-v2"
-    memory_llm_model: str = ""  # Extraction model; empty means MODEL_NAME
-    memory_inject_all_max: int = Field(
-        30, ge=0
-    )  # At most this many facts: inject them all
-    memory_recall_limit: int = Field(8, ge=1, le=30)
-    memory_recall_threshold: float = Field(0.25, ge=0.0, le=1.0)
+    memory_llm_model: str = ""  # Directeur de mémoire ; vide = MODEL_NAME
+    memory_consolidate_turns: int = Field(6, ge=2, le=100)
+    memory_notes_max_chars: int = Field(1800, ge=300, le=8000)
     memory_recall_timeout_s: float = Field(5.0, gt=0)
     memory_capture_enabled: bool = True
     memory_capture_min_chars: int = Field(20, ge=1)
@@ -158,6 +150,14 @@ class Settings(BaseSettings):
     journal_max_chars: int = Field(
         1800, ge=300, le=8000
     )  # Size of the journal section in her prompt
+
+    # Recettes: après un tour réussi d'au moins RECIPES_MIN_TOOLS appels d'outils, une procédure
+    # paramétrée est proposée ; rien n'est enregistré sans l'accord de l'utilisateur.
+    recipes_enabled: bool = True
+    recipes_min_tools: int = Field(3, ge=2, le=20)
+    recipes_max: int = Field(100, ge=1, le=500)
+    recipes_inject_max: int = Field(2, ge=0, le=5)
+    recipes_llm_model: str = ""  # Empty means MODEL_NAME
 
     # Document index (RAG): llama-index + local Qdrant, fastembed on CPU
     rag_enabled: bool = True
@@ -509,8 +509,9 @@ RESTART_REQUIRED = frozenset(
         "mcp_start_timeout_s",
         "mcp_call_timeout_s",
         "fast_memory_enabled",
-        "embedding_model",
         "memory_llm_model",
+        "memory_consolidate_turns",
+        "memory_notes_max_chars",
         "memory_capture_enabled",
         "memory_capture_min_chars",
         "rag_enabled",
@@ -546,6 +547,11 @@ RESTART_REQUIRED = frozenset(
         "journal_enabled",
         "journal_every_turns",
         "journal_max_chars",
+        "recipes_enabled",
+        "recipes_min_tools",
+        "recipes_max",
+        "recipes_inject_max",
+        "recipes_llm_model",
         "action_llm_enabled",
         "action_llm_model",
         "tool_result_max_chars",

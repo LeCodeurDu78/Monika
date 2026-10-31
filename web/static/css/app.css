@@ -49,11 +49,37 @@ body {
 @media (prefers-reduced-motion: reduce) { .chip::before { animation: none !important; } }
 
 .layout {
-  flex: 1; display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 0; min-height: 0;
-  transition: grid-template-columns .28s ease;   /* folding the dashboard: the column closes, the stage grows */
+  --panel-w: clamp(320px, 38vw, 620px);   /* largeur du panneau, changeable à la poignée */
+  position: relative; flex: 1; display: grid; min-height: 0;
+  grid-template-columns: minmax(0, 1fr) 8px var(--panel-w);
+  grid-template-rows: auto minmax(0, 1fr);
+  /* Replier/déplier : la colonne du panneau se referme, l'avatar reprend la place. */
+  transition: grid-template-columns .34s cubic-bezier(.4, 0, .2, 1);
+}
+.layout.instant, .layout.resizing { transition: none; }   /* premier affichage et glissement : pas d'animation */
+/* Deux sections, une seule visible : des radios décident de l'onglet, sans JavaScript. Ils restent
+   focusables au clavier mais hors flux, pour ne pas prendre de place dans la grille. */
+.tab-radio { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+.tabs {
+  grid-column: 1 / -1; display: flex; justify-content: center; gap: 6px;
+  padding: 8px 16px; border-bottom: 1px solid var(--border); background: var(--bg); z-index: 5;
+}
+.tab {
+  flex: 0 0 auto; padding: 7px 16px; border-radius: 10px; font-size: 13px; font-weight: 600;
+  color: var(--muted); background: transparent; border: 1px solid transparent;
+  cursor: pointer; user-select: none;
+}
+.tab:hover { color: var(--text); }
+#tab-chat:checked ~ .tabs .tab[for="tab-chat"],
+#tab-dashboard:checked ~ .tabs .tab[for="tab-dashboard"] {
+  color: var(--text); background: var(--surface); border-color: var(--border);
+}
+#tab-chat:focus-visible ~ .tabs .tab[for="tab-chat"],
+#tab-dashboard:focus-visible ~ .tabs .tab[for="tab-dashboard"] {
+  outline: 2px solid var(--accent); outline-offset: 2px;
 }
 .stage {
-  position: relative; min-height: 420px;
+  position: relative; min-height: 420px; grid-column: 1; grid-row: 2;
   background: radial-gradient(120% 90% at 50% 0%, var(--stage-top), var(--stage-bottom));
 }
 #avatar { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: grab; touch-action: none; }
@@ -62,29 +88,53 @@ body {
   position: absolute; left: 16px; right: 16px; bottom: 16px; margin: 0; padding: 10px 14px;
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); color: var(--muted);
 }
-.panels { position: relative; min-width: 0; display: flex; flex-direction: column; }
+/* Poignée entre l'avatar et le panneau : glisser pour la largeur, le bouton pour ranger. */
+.splitter {
+  grid-column: 2; grid-row: 2; position: relative; border: 0; background: none;
+  cursor: col-resize; touch-action: none;
+}
+.splitter::before {
+  content: ""; position: absolute; inset: 0 3px; border-radius: 99px; background: var(--border);
+  transition: background .15s;
+}
+.splitter:hover::before, .splitter:focus-visible::before, .splitter.dragging::before {
+  background: var(--accent);
+}
+.splitter:focus-visible { outline: none; }
+/* Le bouton est au centre de la poignée : à mi-hauteur, bien visible, il déborde des 8 px. */
+.panel-toggle {
+  position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 6;
+  width: 32px; height: 68px; padding: 0; font-size: 18px; line-height: 1;
+  display: grid; place-items: center;
+  border-radius: 12px; border: 1px solid var(--border); background: var(--surface);
+  color: var(--muted); cursor: pointer;
+  box-shadow: 0 2px 12px rgba(0, 0, 0, .22);
+  transition: color .15s, border-color .15s, background .15s;
+}
+.panel-toggle:hover, .panel-toggle:focus-visible { color: var(--accent); border-color: var(--accent); }
+/* Rangé : la colonne se referme, la poignée reste comme bouton de retour. */
+.layout.collapsed { grid-template-columns: minmax(0, 1fr) 8px 0px; }
+.layout.collapsed .splitter { cursor: default; }
+.panels {
+  grid-column: 3; grid-row: 2; min-width: 0; min-height: 0; display: flex; flex-direction: column;
+  border-left: 1px solid var(--border); overflow: hidden;   /* clippe le contenu pendant le repli */
+  transition: opacity .24s ease;
+}
+.layout.collapsed .panels { opacity: 0; }
 .panels-scroll {
+  flex: 1; min-height: 0; overflow-y: auto;
   padding: 16px; display: flex; flex-direction: column; gap: 12px;
-  overflow-y: auto; max-height: calc(100vh - 56px);
-  transition: opacity .2s ease, visibility 0s linear;
+  transition: transform .34s cubic-bezier(.4, 0, .2, 1);
 }
-/* The dashboard's edge tab, as on OpenSakura (#panels-toggle): a vertical tab glued outside the panel's
-   left edge — '❯' folds the dashboard away, '❮' brings it back. Folded, the stage takes the whole width. */
-.layout { position: relative; }
-.panels-tab {
-  position: absolute; left: -34px; top: 50%; transform: translateY(-50%); z-index: 6;
-  width: 34px; height: 72px; padding: 0; font-size: 15px; line-height: 1;
-  color: var(--muted); background: var(--surface); border: 1px solid var(--border); border-right: 0;
-  border-radius: 12px 0 0 12px;
+.layout.collapsed .panels-scroll { transform: translateX(28px); }
+/* Une seule section à la fois : le radio coché décide quels blocs existent dans la colonne. */
+.panels-scroll > .panel { display: none; }
+/* La conversation prend toute la hauteur de la colonne : le journal grandit, le champ reste en bas. */
+#tab-chat:checked ~ .panels .panel[data-tab="chat"] {
+  display: flex; flex-direction: column; flex: 1; min-height: 0;
 }
-.panels-tab:hover { color: var(--text); background: var(--surface-2); }
-/* Folded: the column closes to nothing, the contents fade, and the tab rides to the screen edge — where it
-   stays, one click from bringing the dashboard back. */
-body.panels-hidden .layout { grid-template-columns: minmax(0, 1fr) minmax(0, 0fr); }
-body.panels-hidden .panels-scroll {
-  opacity: 0; visibility: hidden; overflow: hidden;
-  transition: opacity .2s ease, visibility 0s linear .2s;
-}
+#tab-chat:checked ~ .panels .panel[data-tab="chat"] .body { flex: 1; min-height: 0; }
+#tab-dashboard:checked ~ .panels .panel[data-tab="dashboard"] { display: block; }
 .panel {
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 14px;
   min-width: 0;
@@ -102,9 +152,9 @@ body.panels-hidden .panels-scroll {
 .bar { height: 8px; border-radius: 99px; background: var(--surface-2); overflow: hidden; margin: 8px 0; }
 .bar > i { display: block; height: 100%; background: var(--accent); width: 0; transition: width .4s; }
 ul.facts { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
-ul.facts li { display: flex; gap: 10px; align-items: flex-start; padding: 6px 0; border-top: 1px solid var(--border); }
+ul.facts li { display: flex; flex-wrap: wrap; gap: 2px 10px; align-items: flex-start; padding: 6px 0; border-top: 1px solid var(--border); }
 ul.facts li:first-child { border-top: 0; }
-ul.facts .text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+ul.facts .text { flex: 1 1 12ch; min-width: 0; overflow-wrap: anywhere; }
 ul.facts .actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; flex-shrink: 0; }
 input, select {
   font: inherit; padding: 4px 8px; border-radius: 8px; background: var(--bg); color: var(--text);
@@ -136,7 +186,7 @@ textarea {
 /* Conversation in the page (chat.js) */
 #p-chat .body { display: flex; flex-direction: column; gap: 8px; }
 .chat-log {
-  display: flex; flex-direction: column; gap: 6px; max-height: 42vh; min-height: 90px; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 6px; flex: 1; min-height: 0; overflow-y: auto;
   padding: 2px 4px 2px 2px; scrollbar-width: thin;
 }
 .chat-line {
@@ -149,7 +199,7 @@ textarea {
 .chat-line.error { align-self: flex-start; color: var(--error); border: 1px solid var(--error); }
 .chat-line.note { align-self: center; background: none; color: var(--muted); font-size: 13px; }
 .chat-form { display: flex; flex-direction: column; gap: 6px; }
-.chat-form textarea { min-height: 46px; max-height: 120px; resize: vertical; }
+.chat-form textarea { min-height: 64px; max-height: 120px; resize: vertical; }
 .chat-form .row { display: flex; gap: 6px; justify-content: flex-end; }
 .chat-form .mic { margin-right: auto; }
 .chat-form .mic.on {
@@ -158,17 +208,367 @@ textarea {
 }
 .chat-note { margin: 0; min-height: 1em; font-size: 13px; color: var(--muted); }
 
-@media (max-width: 900px) {
-  .layout { grid-template-columns: 1fr; transition: none; }
-  .stage { min-height: 46vh; }
-  .panels-scroll { max-height: none; }
-  /* stacked, the dashboard folds at once and the tab floats in the corner, where it stays reachable */
-  .panels-tab {
-    position: fixed; left: auto; right: 12px; bottom: 12px; top: auto; transform: none;
-    width: 44px; height: 44px; border: 1px solid var(--border); border-radius: 12px;
+/* ==========================================================================================
+   Grand écran (≥ 901 px) : même langage visuel que sur téléphone (bulles arrondies, saisie en pilule,
+   icônes, onglets en segment), mais l'avatar reste à gauche et le panneau redimensionnable à droite.
+   Tout est sous `body.app` : la page Réglages ne change pas.
+   ========================================================================================== */
+@media (min-width: 901px) {
+  :root {
+    --i-mic: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='9' y='3' width='6' height='11' rx='3'/%3E%3Cpath d='M5 11a7 7 0 0 0 14 0M12 18v3'/%3E%3C/svg%3E");
+    --i-send: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 19V5M5.5 11.5 12 5l6.5 6.5'/%3E%3C/svg%3E");
+    --i-stop: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='6' y='6' width='12' height='12' rx='2.5' fill='%23000'/%3E%3C/svg%3E");
+    --i-chat: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 12a8.5 8.5 0 0 1-12.2 7.6L3.5 21l1.4-4.9A8.5 8.5 0 1 1 21 12z'/%3E%3C/svg%3E");
+    --i-grid: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linejoin='round'%3E%3Crect x='4' y='4' width='6.5' height='6.5' rx='1.5'/%3E%3Crect x='13.5' y='4' width='6.5' height='6.5' rx='1.5'/%3E%3Crect x='4' y='13.5' width='6.5' height='6.5' rx='1.5'/%3E%3Crect x='13.5' y='13.5' width='6.5' height='6.5' rx='1.5'/%3E%3C/svg%3E");
+    --i-sliders: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='M4 7h8M18 7h2M4 17h2M12 17h8'/%3E%3Ccircle cx='15' cy='7' r='3'/%3E%3Ccircle cx='9' cy='17' r='3'/%3E%3C/svg%3E");
+    --shadow: 0 6px 24px rgba(0, 0, 0, .18);
   }
-  body.panels-hidden .layout { grid-template-columns: 1fr; }
-  body.panels-hidden .panels { position: absolute; inset: auto 0 0 0; height: 0; overflow: hidden; }
+
+  /* ---- Barre du haut ---- */
+  body.app .top { gap: 12px; padding: 12px 24px; background: var(--bg); }
+  body.app .top h1 { font-size: 20px; font-weight: 700; letter-spacing: .01em; }
+  body.app .top a.chip {
+    margin-left: 4px; gap: 8px; text-decoration: none; color: var(--muted); background: transparent;
+  }
+  body.app .top a.chip::before { display: none; }
+  body.app .top a.chip::after {
+    content: ""; order: -1; width: 16px; height: 16px; background: currentColor;
+    -webkit-mask: var(--i-sliders) center / contain no-repeat; mask: var(--i-sliders) center / contain no-repeat;
+  }
+  body.app .top a.chip:hover { color: var(--accent); border-color: var(--accent); }
+  body.app .meta { font-variant-numeric: tabular-nums; }
+
+  /* ---- Onglets : segment centré, avec icônes ---- */
+  body.app .tabs { border-bottom: 0; padding: 10px 16px 8px; }
+  body.app .tabs::before { content: none; }
+  body.app .tab {
+    display: inline-flex; align-items: center; gap: 8px; padding: 7px 18px; border-radius: 999px; font-size: 13px;
+  }
+  body.app .tab::before {
+    content: ""; width: 16px; height: 16px; background: currentColor;
+    -webkit-mask: center / contain no-repeat; mask: center / contain no-repeat;
+  }
+  body.app .tab[for="tab-chat"]::before { -webkit-mask-image: var(--i-chat); mask-image: var(--i-chat); }
+  body.app .tab[for="tab-dashboard"]::before { -webkit-mask-image: var(--i-grid); mask-image: var(--i-grid); }
+  body.app #tab-chat:checked ~ .tabs .tab[for="tab-chat"],
+  body.app #tab-dashboard:checked ~ .tabs .tab[for="tab-dashboard"] {
+    color: var(--accent); background: color-mix(in srgb, var(--accent) 13%, var(--surface));
+    border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+  }
+
+  /* ---- Scène et panneau ---- */
+  body.app .stage { box-shadow: inset 0 -80px 80px -60px rgba(0, 0, 0, .25); }
+  /* Poignée du panneau : même langage que le volet du téléphone (bord arrondi, pastille, ombre), à la verticale. */
+  body.app .layout { grid-template-columns: minmax(0, 1fr) 22px var(--panel-w); }
+  body.app .layout.collapsed { grid-template-columns: minmax(0, 1fr) 30px 0px; }
+  body.app .splitter {
+    position: relative; z-index: 3; margin-left: -14px; cursor: col-resize;
+    background: var(--surface); border: 1px solid var(--border); border-right: 0; border-radius: 20px 0 0 20px;
+    box-shadow: -6px 0 18px rgba(0, 0, 0, .16);
+  }
+  body.app .splitter::before, body.app .layout.collapsed .splitter::before { display: none; }
+  body.app .layout.collapsed .splitter { cursor: pointer; }
+  body.app .panel-toggle {
+    top: 0; left: 0; transform: none; width: 100%; height: 100%; padding: 0; font-size: 0;
+    border: 0; border-radius: inherit; background: transparent; box-shadow: none; cursor: inherit;
+  }
+  body.app .panel-toggle::before {
+    content: ""; position: absolute; left: 50%; top: 50%; width: 5px; height: 42px; margin: -21px 0 0 -1px;
+    border-radius: 99px; background: var(--border); transition: background .15s;
+  }
+  body.app .splitter:hover .panel-toggle::before, body.app .splitter.dragging .panel-toggle::before,
+  body.app .panel-toggle:focus-visible::before { background: var(--accent); }
+  body.app .panel-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: -4px; }
+  body.app .layout.collapsed .panel-toggle::after {
+    content: "Afficher le panneau"; position: absolute; left: 50%; top: calc(50% + 36px); margin-left: 1px;
+    transform: translateX(-50%); writing-mode: vertical-rl; white-space: nowrap;
+    font-size: 12px; font-weight: 600; letter-spacing: .02em; color: var(--muted);
+  }
+  body.app .panels { background: var(--surface); border-left: 0; }
+  body.app .panels-scroll { padding: 14px 18px 18px; gap: 14px; scrollbar-width: thin; }
+  body.app .panel {
+    padding: 14px 16px; border-radius: 16px; box-shadow: 0 1px 0 rgba(255, 255, 255, .02), var(--shadow);
+  }
+  body.app .panel h2 { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+  body.app .panel h2::before { content: ""; width: 3px; height: 12px; border-radius: 99px; background: var(--accent); }
+  body.app .panel button, body.app .tab { transition: color .15s, background .15s, border-color .15s; }
+  body.app .panel button { border-radius: 10px; padding: 4px 12px; }
+  body.app .panel button:hover { background: color-mix(in srgb, var(--accent) 10%, var(--surface-2)); }
+  body.app .panel button.danger:hover { background: color-mix(in srgb, var(--error) 10%, var(--surface-2)); }
+  body.app .panel button.primary:hover { background: var(--accent); filter: brightness(1.08); }
+  body.app ul.facts li { padding: 8px 0; }
+  body.app .bar { height: 7px; }
+
+  /* ---- Conversation : sans carte (le panneau est la carte), bulles et pilule de saisie ---- */
+  body.app #p-chat { background: none; border: 0; padding: 0; box-shadow: none; border-radius: 0; }
+  body.app #p-chat h2 {   /* le titre reste pour les lecteurs d'écran */
+    position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden;
+    clip-path: inset(50%); white-space: nowrap;
+  }
+  body.app .chat-log {
+    gap: 8px; padding: 8px 4px 6px 0;
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 20px);
+    mask-image: linear-gradient(to bottom, transparent 0, #000 20px);
+  }
+  body.app .chat-log:empty::before {
+    content: "Dis quelque chose à Monika…"; margin: auto; color: var(--muted); font-size: 14px;
+  }
+  body.app .chat-line { max-width: 85%; padding: 9px 14px; border-radius: 18px; line-height: 1.45; }
+  body.app .chat-line.user { border-bottom-right-radius: 6px; }
+  body.app .chat-line.monika { border: 1px solid var(--border); border-bottom-left-radius: 6px; }
+  body.app .chat-line.note { padding: 2px 8px; }
+  body.app .chat-note { min-height: 0; font-size: 12px; }
+  body.app .chat-note:empty { display: none; }
+
+  body.app .chat-form {
+    display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: end; gap: 8px; padding-top: 4px;
+  }
+  body.app .chat-form .row { display: contents; }
+  body.app .chat-form textarea {
+    grid-column: 2; grid-row: 1; min-height: 42px; max-height: 140px; height: 42px; resize: none; overflow-y: auto;
+    padding: 10px 16px; border-radius: 21px; line-height: 22px; background: var(--surface);
+  }
+  body.app .chat-form button {
+    width: 42px; height: 42px; padding: 0; margin: 0; border-radius: 50%; font-size: 0;
+    display: flex; align-items: center; justify-content: center;
+  }
+  body.app .chat-form button::before {
+    content: ""; width: 20px; height: 20px; background: currentColor;
+    -webkit-mask: center / contain no-repeat; mask: center / contain no-repeat;
+  }
+  body.app .chat-form .mic { grid-column: 1; grid-row: 1; }
+  body.app .chat-form .mic::before { -webkit-mask-image: var(--i-mic); mask-image: var(--i-mic); }
+  body.app .chat-form .primary, body.app .chat-form .stop { grid-column: 3; grid-row: 1; }
+  body.app .chat-form .primary::before { -webkit-mask-image: var(--i-send); mask-image: var(--i-send); }
+  body.app .chat-form .stop { border-color: var(--error); color: var(--error); }
+  body.app .chat-form .stop::before { -webkit-mask-image: var(--i-stop); mask-image: var(--i-stop); }
+  body.app .chat-form[data-busy="true"] .primary, body.app .chat-form:not([data-busy="true"]) .stop { display: none; }
+  body.app .chat-form .mic.on {
+    background: color-mix(in srgb, var(--accent) 14%, var(--surface-2)); animation: mic-glow 1.6s ease-in-out infinite;
+  }
+  @keyframes mic-glow { 50% { box-shadow: 0 0 0 7px color-mix(in srgb, var(--accent) 0%, transparent); } }
+  @media (prefers-reduced-motion: reduce) { body.app .chat-form .mic.on { animation: none; } }
+}
+
+/* ==========================================================================================
+   Téléphone et petites fenêtres (≤ 900 px) : même thème que le grand écran, pensé pour le pouce.
+   - la page ne défile plus : l'avatar occupe le haut, la conversation est un volet en bas ;
+   - la poignée du volet se tire / se glisse (ou se touche) pour ranger la conversation ;
+   - les deux sections (Chat / Tableau de bord) passent dans une barre d'onglets en bas ;
+   - le clavier virtuel est géré par dashboard.js (--app-h, --app-top, classe html.kb).
+   Tout ce qui touche à la coque de l'appli est sous `body.app`, pour ne pas toucher la page Réglages.
+   ========================================================================================== */
+@media (max-width: 900px) {
+  html, body { height: auto; min-height: 100dvh; }   /* pages simples (Réglages) : la page défile */
+
+  :root {
+    /* Icônes (masques SVG) : elles prennent la couleur du texte, donc suivent le thème clair/sombre. */
+    --i-mic: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='9' y='3' width='6' height='11' rx='3'/%3E%3Cpath d='M5 11a7 7 0 0 0 14 0M12 18v3'/%3E%3C/svg%3E");
+    --i-send: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 19V5M5.5 11.5 12 5l6.5 6.5'/%3E%3C/svg%3E");
+    --i-stop: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='6' y='6' width='12' height='12' rx='2.5' fill='%23000'/%3E%3C/svg%3E");
+    --i-chat: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M21 12a8.5 8.5 0 0 1-12.2 7.6L3.5 21l1.4-4.9A8.5 8.5 0 1 1 21 12z'/%3E%3C/svg%3E");
+    --i-grid: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linejoin='round'%3E%3Crect x='4' y='4' width='6.5' height='6.5' rx='1.5'/%3E%3Crect x='13.5' y='4' width='6.5' height='6.5' rx='1.5'/%3E%3Crect x='4' y='13.5' width='6.5' height='6.5' rx='1.5'/%3E%3Crect x='13.5' y='13.5' width='6.5' height='6.5' rx='1.5'/%3E%3C/svg%3E");
+    --i-sliders: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='M4 7h8M18 7h2M4 17h2M12 17h8'/%3E%3Ccircle cx='15' cy='7' r='3'/%3E%3Ccircle cx='9' cy='17' r='3'/%3E%3C/svg%3E");
+  }
+
+  /* ---- La coque : tout l'écran, rien ne défile hors des volets ---- */
+  body.app {
+    position: fixed; left: 0; right: 0; top: var(--app-top, 0px);
+    height: var(--app-h, 100dvh); min-height: 0; overflow: hidden; overscroll-behavior: none;
+  }
+
+  /* ---- Barre du haut : nom, état, pastille de liaison, réglages ---- */
+  body.app .top {
+    flex-wrap: nowrap; gap: 10px; padding: calc(8px + env(safe-area-inset-top)) 14px 8px;
+    padding-left: max(14px, env(safe-area-inset-left)); padding-right: max(14px, env(safe-area-inset-right));
+  }
+  body.app .top h1 { font-size: 18px; }
+  body.app .top .chip { flex-shrink: 0; padding: 3px 10px; font-size: 12px; }
+  body.app .top .meta { display: none; }   /* « modèle · mode » : trop large ici */
+  /* Liaison : un simple point (le texte reste lisible par les lecteurs d'écran) ; le texte ne réapparaît que si elle tombe. */
+  body.app #link-chip {
+    margin-left: auto; width: 28px; height: 28px; padding: 0; gap: 0; justify-content: center;
+    font-size: 0; background: transparent; border-color: transparent;
+  }
+  body.app #link-chip::before { width: 10px; height: 10px; }
+  body.app #link-chip[data-link="on"]::before { box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 22%, transparent); }
+  body.app #link-chip[data-link="off"] {
+    width: auto; max-width: 52vw; padding: 3px 10px; gap: 8px; font-size: 12px; flex-shrink: 1; min-width: 0;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: inline-block; line-height: 1.7;
+    background: var(--surface-2); border-color: var(--border);
+  }
+  body.app #link-chip[data-link="off"]::before { display: inline-block; margin-right: 8px; vertical-align: 1px; }
+  body.app .top a.chip {
+    width: 36px; height: 36px; padding: 0; gap: 0; justify-content: center; font-size: 0;
+    color: var(--muted); background: transparent; border-color: transparent;
+  }
+  body.app .top a.chip::before { display: none; }
+  body.app .top a.chip::after {
+    content: ""; width: 22px; height: 22px; background: currentColor;
+    -webkit-mask: var(--i-sliders) center / contain no-repeat; mask: var(--i-sliders) center / contain no-repeat;
+  }
+  body.app .top a.chip:active { color: var(--accent); }
+
+  /* ---- Grille : avatar / poignée / volet / onglets ---- */
+  body.app .layout {
+    display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto auto;
+    transition: none;
+  }
+  body.app .layout.collapsed { grid-template-columns: minmax(0, 1fr); }
+  body.app .stage { grid-column: 1; grid-row: 2; min-height: 0; height: auto; }
+  body.app .stage-note { left: 14px; right: 14px; bottom: 26px; font-size: 13px; }
+
+  /* Poignée du volet : toute la barre se touche ou se glisse ; la petite pastille dit « tire-moi ». */
+  body.app .splitter {
+    grid-column: 1; grid-row: 3; position: relative; z-index: 3; height: 30px; margin-top: -14px;
+    cursor: default; touch-action: none;
+    background: var(--surface); border: 1px solid var(--border); border-bottom: 0; border-radius: 20px 20px 0 0;
+    box-shadow: 0 -6px 18px rgba(0, 0, 0, .16);
+    transition: height .34s cubic-bezier(.4, 0, .2, 1);
+  }
+  body.app .splitter::before, body.app .layout.collapsed .splitter::before { display: none; }
+  body.app .panel-toggle {
+    top: 0; left: 0; transform: none; width: 100%; height: 100%; padding: 0; font-size: 0;
+    border: 0; border-radius: inherit; background: transparent; box-shadow: none; touch-action: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  body.app .panel-toggle::before {
+    content: ""; position: absolute; left: 50%; top: 12px; width: 42px; height: 5px; margin-left: -21px;
+    border-radius: 99px; background: var(--border); transition: background .15s;
+  }
+  body.app .panel-toggle:active::before, body.app .panel-toggle:focus-visible::before { background: var(--accent); }
+  body.app .panel-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: -4px; }
+  /* Rangé : la poignée grandit un peu et dit ce qu'elle rouvre. */
+  body.app .layout.collapsed .splitter { height: 48px; }
+  body.app .layout.collapsed .panel-toggle::after {
+    content: "Afficher le panneau"; position: absolute; left: 0; right: 0; top: 24px;
+    font-size: 12px; font-weight: 600; letter-spacing: .02em; color: var(--muted); text-align: center;
+  }
+
+  /* ---- Volet : conversation (hauteur bornée, se replie) ou tableau de bord (plein écran) ---- */
+  body.app .panels {
+    grid-column: 1; grid-row: 4; display: flex; flex-direction: column;
+    border: 0; background: var(--surface);
+    height: var(--sheet-h, clamp(230px, calc(var(--app-h, 100dvh) * .46), 440px));   /* --sheet-h : hauteur tirée à la poignée */
+    transition: height .34s cubic-bezier(.4, 0, .2, 1), opacity .24s ease;
+  }
+  body.app .layout.collapsed .panels { height: 0; }
+  body.app .layout.resizing .panels, body.app .layout.resizing .splitter { transition: none; }   /* le doigt mène */
+  body.app .panels-scroll {
+    padding: 2px 14px 10px; gap: 10px; transition: none; overflow-y: auto; overscroll-behavior: contain;
+    padding-left: max(14px, env(safe-area-inset-left)); padding-right: max(14px, env(safe-area-inset-right));
+  }
+  body.app .layout.collapsed .panels-scroll { transform: none; }
+
+  /* Conversation : plus de carte, le volet est la carte. */
+  body.app #p-chat { background: none; border: 0; padding: 0; border-radius: 0; }
+  body.app #p-chat h2 {   /* le titre reste pour les lecteurs d'écran */
+    position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden;
+    clip-path: inset(50%); white-space: nowrap;
+  }
+  body.app .chat-log {
+    gap: 8px; padding: 6px 0 4px; overscroll-behavior: contain;
+    -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 16px);
+    mask-image: linear-gradient(to bottom, transparent 0, #000 16px);   /* les vieux messages s'effacent en haut */
+  }
+  body.app .chat-log:empty::before {
+    content: "Dis quelque chose à Monika…"; margin: auto; color: var(--muted); font-size: 14px;
+  }
+  body.app .chat-line { max-width: 86%; padding: 9px 13px; border-radius: 18px; font-size: 15px; line-height: 1.4; }
+  body.app .chat-line.user { border-bottom-right-radius: 6px; }
+  body.app .chat-line.monika { border: 1px solid var(--border); border-bottom-left-radius: 6px; }
+  body.app .chat-line.note { padding: 2px 8px; }
+  body.app .chat-note { font-size: 12px; min-height: 0; }
+  body.app .chat-note:empty { display: none; }
+
+  /* Zone de saisie : micro · champ · envoyer (ou arrêter pendant qu'elle répond). */
+  body.app .chat-form {
+    display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: end; gap: 8px;
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  html.kb body.app .chat-form { padding-bottom: 0; }
+  body.app .chat-form .row { display: contents; }
+  body.app .chat-form textarea {
+    grid-column: 2; grid-row: 1; min-height: 44px; max-height: 120px; height: 44px; resize: none;
+    padding: 11px 16px; border-radius: 22px; font-size: 16px; line-height: 22px;   /* 16 px : iOS ne zoome pas au focus */
+    background: var(--bg); overflow-y: auto;
+  }
+  body.app .chat-form button {
+    width: 44px; height: 44px; padding: 0; margin: 0; border-radius: 50%; font-size: 0;
+    display: flex; align-items: center; justify-content: center;
+    touch-action: manipulation; -webkit-tap-highlight-color: transparent;
+  }
+  body.app .chat-form button::before {
+    content: ""; width: 22px; height: 22px; background: currentColor;
+    -webkit-mask: center / contain no-repeat; mask: center / contain no-repeat;
+  }
+  body.app .chat-form .mic { grid-column: 1; grid-row: 1; margin: 0; }
+  body.app .chat-form .mic::before { -webkit-mask-image: var(--i-mic); mask-image: var(--i-mic); }
+  body.app .chat-form .primary, body.app .chat-form .stop { grid-column: 3; grid-row: 1; }
+  body.app .chat-form .primary::before { -webkit-mask-image: var(--i-send); mask-image: var(--i-send); }
+  body.app .chat-form .stop { border-color: var(--error); color: var(--error); }
+  body.app .chat-form .stop::before { -webkit-mask-image: var(--i-stop); mask-image: var(--i-stop); }
+  body.app .chat-form[data-busy="true"] .primary, body.app .chat-form:not([data-busy="true"]) .stop { display: none; }
+  body.app .chat-form .mic.on { background: color-mix(in srgb, var(--accent) 14%, var(--surface-2)); animation: mic-glow 1.6s ease-in-out infinite; }
+  @keyframes mic-glow { 50% { box-shadow: 0 0 0 7px color-mix(in srgb, var(--accent) 0%, transparent); } }
+  @media (prefers-reduced-motion: reduce) { body.app .chat-form .mic.on { animation: none; } }
+
+  /* Tableau de bord : le même volet, plus haut au départ ; l'avatar reste visible au-dessus. */
+  body.app #tab-dashboard:checked ~ .panels { height: var(--sheet-h, clamp(260px, calc(var(--app-h, 100dvh) * .64), 680px)); }
+  body.app .layout.collapsed #tab-dashboard:checked ~ .panels { height: 0; }
+  body.app #tab-dashboard:checked ~ .panels .panels-scroll { padding-top: 6px; padding-bottom: 18px; }
+  body.app .panel { padding: 12px 14px; }
+  body.app .panel button { min-height: 34px; }
+  body.app .scroll { max-height: none; }
+
+  /* ---- Onglets : en haut, comme sur grand écran (segment avec icônes) ---- */
+  body.app .top { border-bottom: 0; }
+  body.app .tabs {
+    grid-column: 1; grid-row: 1; position: static; justify-content: center; gap: 6px;
+    padding: 4px 12px 8px; border-top: 0; border-bottom: 1px solid var(--border); background: var(--bg);
+    padding-left: max(12px, env(safe-area-inset-left)); padding-right: max(12px, env(safe-area-inset-right));
+  }
+  body.app .tab {
+    flex: 1 1 0; display: flex; flex-direction: row; justify-content: center; align-items: center; gap: 8px;
+    padding: 8px 10px; font-size: 13px; border-radius: 999px; -webkit-tap-highlight-color: transparent;
+  }
+  body.app .tab::before {
+    content: ""; width: 16px; height: 16px; background: currentColor;
+    -webkit-mask: center / contain no-repeat; mask: center / contain no-repeat;
+  }
+  body.app .tab[for="tab-chat"]::before { -webkit-mask-image: var(--i-chat); mask-image: var(--i-chat); }
+  body.app .tab[for="tab-dashboard"]::before { -webkit-mask-image: var(--i-grid); mask-image: var(--i-grid); }
+  body.app #tab-chat:checked ~ .tabs .tab[for="tab-chat"],
+  body.app #tab-dashboard:checked ~ .tabs .tab[for="tab-dashboard"] {
+    color: var(--accent); background: color-mix(in srgb, var(--accent) 13%, var(--surface));
+    border-color: color-mix(in srgb, var(--accent) 35%, var(--border));
+  }
+  html.kb body.app .tabs { display: none; }   /* clavier ouvert : on garde la place pour écrire */
+}
+
+/* Téléphone en mode paysage : trop peu de hauteur pour empiler, on remet l'avatar et le volet côte à côte. */
+@media (max-width: 900px) and (max-height: 500px) {
+  body.app .layout, body.app .layout.collapsed { grid-template-columns: minmax(0, 1fr) minmax(300px, 46%); grid-template-rows: auto minmax(0, 1fr); }
+  body.app .stage { grid-column: 1; grid-row: 2; }
+  body.app .splitter { display: none; }
+  body.app .panels, body.app .layout.collapsed .panels,
+  body.app #tab-dashboard:checked ~ .panels, body.app .layout.collapsed #tab-dashboard:checked ~ .panels {
+    grid-column: 2; grid-row: 2; height: auto; opacity: 1; border-left: 1px solid var(--border);
+  }
+  body.app .tabs { grid-column: 1 / -1; grid-row: 1; padding-top: 2px; padding-bottom: 4px; }
+  body.app .tab { padding: 5px 10px; }
+  body.app .top { padding-top: calc(4px + env(safe-area-inset-top)); padding-bottom: 4px; }
+}
+
+@media (max-width: 480px) {
+  .top { padding: 10px 12px; gap: 8px; }
+  .top h1 { font-size: 18px; }
+  .chip { padding: 2px 10px; font-size: 12px; }
+  .panel { padding: 10px 12px; }
+  ul.facts li { flex-wrap: wrap; }
+  ul.facts .meta { white-space: normal; }
+  ul.facts .actions { margin-left: auto; }
+  button { padding: 6px 12px; }   /* zones tactiles plus franches */
 }
 
 /* Debug panel (?debug) */
@@ -192,7 +592,9 @@ textarea {
 .emotion { display: grid; grid-template-columns: 5.5rem 1fr; align-items: center; gap: 8px; font-size: .85rem; color: var(--muted); }
 .emotion.dominant { color: inherit; font-weight: 600; }
 .bar.mini { height: 5px; margin: 0; }
-.facts .meta { font-size: .75rem; margin-right: 8px; white-space: nowrap; }
+.facts .meta { font-size: .75rem; margin-right: 0; white-space: normal; }
+/* Les détails prennent leur propre ligne : le texte ne se retrouve plus écrasé à droite. */
+ul.facts li > .meta { flex: 1 0 100%; }
 
 /* Settings page (/settings) */
 .settings {
@@ -236,5 +638,5 @@ textarea {
 .loading-bar { height: 6px; border-radius: 99px; background: var(--surface-2); overflow: hidden; }
 .loading-bar > i { display: block; width: 0; height: 100%; background: var(--accent); transition: width .2s ease; }
 @media (prefers-reduced-motion: reduce) {
-  .layout, .panels-scroll, #loading, .loading-bar > i { transition: none !important; }
+  .layout, .panels, .panels-scroll, #loading, .loading-bar > i { transition: none !important; }
 }

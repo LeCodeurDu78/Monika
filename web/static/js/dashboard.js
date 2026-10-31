@@ -8,7 +8,9 @@ const SPEAKING_LEVEL = 0.02;
 // The server sends 20 ms RMS windows (speech sits around 0.02–0.15). OpenSakura's engine expects the 0..1
 // shape its own player produces, so the same curve is applied here; the animation stays its own.
 const mouthLevel = (rms) => Math.min(1, Math.pow(Math.min(1, rms * 4.5), 0.85));
-const PANELS_KEY = 'monika.panelsHidden';   // remembered, so the folded dashboard stays folded
+const TAB_KEY = 'monika.tab';   // remembered, so a phone reopens on the section it was on
+const PANEL_KEY = 'monika.panelWidth';   // the panel keeps the width it was dragged to
+const HIDDEN_KEY = 'monika.panelHidden'; // "rangé" state, like OpenSakura's panel arrow
 
 // The loading screen (index.html): real progress while the model downloads, then a fade.
 const LOADING = {
@@ -158,27 +160,230 @@ class Page {
   }
 }
 
-/** Fold the dashboard away: the stage takes the whole width and the avatar reframes itself on its own. */
-function mountPanelsToggle() {
-  const button = document.getElementById('panels-toggle');
-  if (!button) return;
-  const paint = (hidden) => {
-    document.body.classList.toggle('panels-hidden', hidden);
-    button.setAttribute('aria-expanded', String(!hidden));
-    button.textContent = hidden ? '❮' : '❯';   // glyph only, like OpenSakura's tab
-    const label = hidden ? 'Afficher le tableau de bord' : 'Replier le tableau de bord';
-    button.title = label;
-    button.setAttribute('aria-label', label);
-  };
-  button.addEventListener('click', () => {
-    const hidden = !document.body.classList.contains('panels-hidden');
-    paint(hidden);
-    try { localStorage.setItem(PANELS_KEY, hidden ? '1' : '0'); } catch (err) { /* private mode */ }
-  });
+/** La poignée entre l'avatar et le panneau : glisser pour la largeur, bouton central pour replier. */
+function mountLayout() {
+  const layout = document.getElementById('layout');
+  const splitter = document.getElementById('splitter');
+  const toggle = document.getElementById('panel-toggle');
+  const panels = document.getElementById('panels');
+  if (!layout || !splitter || !toggle || !panels) return null;
+  const MIN = 300;   // the width lives on .layout itself: it redefines --panel-w
+  const DEFAULT_RATIO = 0.38;   // same shape as the CSS fallback, so the first frame does not jump
+  const defaultWidth = () => Math.min(620, Math.max(MIN, Math.round(window.innerWidth * DEFAULT_RATIO)));
+  const maxWidth = () => Math.max(MIN, Math.round(window.innerWidth * 0.7));
+  let width = defaultWidth();   // the width the panel gets back when it is unfolded
   let hidden = false;
-  try { hidden = localStorage.getItem(PANELS_KEY) === '1'; } catch (err) { /* private mode */ }
-  paint(hidden);
+  let dragging = false;
+  let reframeTimer = 0;
+
+  // Always a px value: the column has to interpolate, and "0" must stay reachable.
+  const setColumn = (px) => layout.style.setProperty('--panel-w', `${Math.max(0, Math.round(px))}px`);
+  const apply = (px) => {
+    width = Math.round(Math.min(Math.max(px, MIN), maxWidth()));
+    if (!hidden) setColumn(width);
+  };
+  const remember = () => {
+    try { localStorage.setItem(PANEL_KEY, String(width)); } catch (err) { /* private mode */ }
+  };
+  const reframe = () => window.dispatchEvent(new Event('resize'));   // the avatar canvas reframes
+
+  try {
+    const saved = Number(localStorage.getItem(PANEL_KEY));
+    if (saved > 0) width = Math.min(Math.max(saved, MIN), maxWidth());
+  } catch (err) { /* private mode */ }
+  setColumn(width);
+
+  // On a phone the panel sits under the avatar: the arrow must point down/up, not right/left.
+  const stacked = window.matchMedia('(max-width: 900px)');
+  const arrow = (folded) => (stacked.matches ? (folded ? '▲' : '▼') : (folded ? '❮' : '❯'));
+
+  // Téléphone en paysage : avatar et panneau côte à côte, pas de poignée, donc rien à ranger.
+  const sideBySide = window.matchMedia('(max-width: 900px) and (max-height: 500px)');
+  const show = (value, animate = true) => {
+    if (value && sideBySide.matches) value = false;
+    hidden = value;
+    if (!animate) layout.classList.add('instant');
+    // A window made narrower while folded must not hand back a too-wide panel.
+    if (!value) width = Math.min(width, maxWidth());
+    setColumn(value ? 0 : width);   // the column folds to 0px, the CSS animates it
+    layout.classList.toggle('collapsed', value);
+    panels.toggleAttribute('inert', value);   // folded: not reachable with the keyboard
+    toggle.setAttribute('aria-expanded', String(!value));
+    toggle.title = value ? 'Afficher le panneau' : 'Masquer le panneau';
+    toggle.textContent = arrow(value);
+    try { localStorage.setItem(HIDDEN_KEY, value ? '1' : '0'); } catch (err) { /* private mode */ }
+    if (!animate) requestAnimationFrame(() => layout.classList.remove('instant'));
+    // The canvas only knows its final width once the fold is over.
+    clearTimeout(reframeTimer);
+    reframeTimer = setTimeout(reframe, animate ? 360 : 0);
+  };
+  let startHidden = false;
+  try { startHidden = localStorage.getItem(HIDDEN_KEY) === '1'; } catch (err) { /* private mode */ }
+  show(startHidden, false);
+  stacked.addEventListener('change', () => { toggle.textContent = arrow(hidden); });
+  sideBySide.addEventListener('change', () => { if (sideBySide.matches && hidden) show(false, false); });
+
+  // La poignée redimensionne le panneau, au doigt comme à la souris : en hauteur sur téléphone (retenue par section),
+  // en largeur sur grand écran. Tirée presque jusqu'au bord, elle range le panneau ; tirée à l'envers quand il est
+  // rangé, elle le rouvre ; un simple clic bascule.
+  const SHEET_MIN = 150;    // hauteur minimale d'un volet ouvert
+  const SHEET_FOLD = 100;   // en dessous, on relâche = on range
+  const WIDTH_FOLD = 150;   // idem pour la largeur sur grand écran
+  const tabsBar = document.querySelector('.tabs');
+  const tabName = () => (document.getElementById('tab-dashboard')?.checked ? 'dashboard' : 'chat');
+  const sheetKey = () => `monika.sheetH.${tabName()}`;
+  const sheetMax = () => Math.max(SHEET_MIN, layout.clientHeight - (tabsBar?.offsetHeight || 0) - splitter.offsetHeight - 90);
+  const applySheet = () => {   // remet la hauteur retenue pour la section affichée (ou celle par défaut du CSS)
+    let saved = 0;
+    try { saved = Number(localStorage.getItem(sheetKey())); } catch (err) { /* private mode */ }
+    if (saved > 0) layout.style.setProperty('--sheet-h', `${Math.round(Math.min(Math.max(saved, SHEET_MIN), sheetMax()))}px`);
+    else layout.style.removeProperty('--sheet-h');
+  };
+  applySheet();
+
+  let drag = null;
+  let swiped = false;   // un glissement ne doit pas déclencher en plus le « click » qui le suit
+  const endDrag = () => {
+    drag = null;
+    layout.classList.remove('resizing');
+    splitter.classList.remove('dragging');
+    document.body.style.userSelect = '';
+    window.removeEventListener('pointermove', onDragMove);
+    window.removeEventListener('pointerup', onDragEnd);
+    window.removeEventListener('pointercancel', onDragCancel);
+  };
+  // Le geste s'écoute sur la fenêtre, pas sur la poignée (30 px) : le doigt comme la souris peuvent en sortir.
+  function onDragMove(event) {
+    if (!drag || drag.id !== event.pointerId) return;
+    const d = (drag.vertical ? event.clientY : event.clientX) - drag.p;   // vers le haut / la gauche = plus grand
+    if (!drag.moved) {
+      if (Math.abs(d) < 8) return;
+      drag.moved = true;
+      swiped = true;
+      if (hidden) {   // rangé : tirer dans le sens de l'ouverture le rouvre à la taille retenue
+        if (d < 0) { applySheet(); show(false); }
+        endDrag();
+        window.addEventListener('pointerup', () => setTimeout(() => { swiped = false; }, 400), { once: true });
+        return;
+      }
+      layout.classList.add('resizing');   // pas d'animation : le doigt mène
+      splitter.classList.add('dragging');
+      document.body.style.userSelect = 'none';
+    }
+    if (drag.vertical) {
+      drag.now = Math.min(Math.max(drag.size - d, 0), sheetMax());
+      layout.style.setProperty('--sheet-h', `${Math.round(drag.now)}px`);
+    } else {
+      drag.now = Math.min(Math.max(drag.size - d, 0), maxWidth());
+      setColumn(drag.now);
+    }
+  }
+  function onDragEnd(event) {
+    if (!drag || drag.id !== event.pointerId) return;
+    const { moved, now, vertical } = drag;
+    endDrag();
+    if (!moved) return;
+    setTimeout(() => { swiped = false; }, 400);
+    if (vertical) {
+      if (now < SHEET_FOLD) { applySheet(); show(true); return; }
+      try { localStorage.setItem(sheetKey(), String(Math.round(now))); } catch (err) { /* private mode */ }
+    } else {
+      if (now < WIDTH_FOLD) { setColumn(width); show(true); return; }
+      width = Math.round(Math.min(Math.max(now, MIN), maxWidth()));
+      setColumn(width);
+      remember();
+    }
+    reframe();
+  }
+  function onDragCancel() { endDrag(); applySheet(); if (!hidden) setColumn(width); }
+  splitter.addEventListener('pointerdown', (event) => {
+    if (sideBySide.matches || drag || event.button > 0) return;
+    const vertical = stacked.matches;
+    const box = panels.getBoundingClientRect();
+    drag = {
+      id: event.pointerId, vertical, p: vertical ? event.clientY : event.clientX,
+      size: hidden ? 0 : (vertical ? box.height : box.width), moved: false, now: 0,
+    };
+    window.addEventListener('pointermove', onDragMove);
+    window.addEventListener('pointerup', onDragEnd);
+    window.addEventListener('pointercancel', onDragCancel);
+  });
+
+  toggle.onclick = (event) => {
+    event.stopPropagation();
+    if (swiped) { swiped = false; return; }
+    show(!hidden);
+  };
+
+  splitter.addEventListener('keydown', (event) => {
+    if (hidden || (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight')) return;
+    event.preventDefault();
+    layout.classList.add('instant');
+    apply(width + (event.key === 'ArrowLeft' ? 24 : -24));   // left widens the panel
+    requestAnimationFrame(() => layout.classList.remove('instant'));
+    remember();
+    reframe();
+  });
+  splitter.addEventListener('dblclick', () => {   // double-click: back to the default width
+    try { localStorage.removeItem(PANEL_KEY); } catch (err) { /* private mode */ }
+    layout.classList.add('instant');
+    apply(defaultWidth());
+    requestAnimationFrame(() => layout.classList.remove('instant'));
+    reframe();
+  });
+  window.addEventListener('resize', () => {   // a narrower window must not leave the panel overflowing
+    if (hidden) return;
+    const clamped = Math.min(width, maxWidth());
+    if (clamped !== width) { width = clamped; setColumn(width); }
+  });
+  window.addEventListener('resize', () => { if (stacked.matches) applySheet(); });   // rotation : hauteur à nouveau bornée
+  return { show, stacked, applySheet };
 }
 
-mountPanelsToggle();
+/** The radios switch sections on their own (CSS); this only remembers the choice and reframes. */
+function mountTabs(layout) {
+  const radios = [...document.querySelectorAll('.tab-radio')];
+  if (!radios.length) return;
+  let saved = '';
+  try { saved = localStorage.getItem(TAB_KEY) || ''; } catch (err) { /* private mode */ }
+  const wanted = document.getElementById(`tab-${saved === 'dashboard' ? 'dashboard' : 'chat'}`);
+  if (wanted) wanted.checked = true;
+  // Sur téléphone, choisir le tableau de bord ne doit jamais l'ouvrir sur un volet rangé.
+  const unfold = () => { if (layout && layout.stacked.matches) layout.show(false, false); };
+  if (wanted && wanted.id === 'tab-dashboard') unfold();
+  layout?.applySheet();
+  for (const radio of radios) {
+    radio.addEventListener('change', () => {
+      if (!radio.checked) return;
+      if (radio.id === 'tab-dashboard') unfold();
+      layout?.applySheet();   // chaque section garde sa propre hauteur
+      try { localStorage.setItem(TAB_KEY, radio.id.replace('tab-', '')); } catch (err) { /* private mode */ }
+      // The avatar canvas may have changed size: let it reframe.
+      window.dispatchEvent(new Event('resize'));
+    });
+  }
+}
+
+/**
+ * Clavier virtuel : la page est calée sur la zone réellement visible (--app-h, --app-top), sinon le champ
+ * de saisie se retrouve sous le clavier ou la page glisse sous la barre d'adresse. `html.kb` = clavier ouvert.
+ */
+function mountViewport() {
+  const vv = window.visualViewport;
+  if (!vv) return;
+  const root = document.documentElement;
+  const sync = () => {
+    if (vv.scale > 1.01) return;   // pincé pour zoomer : on ne touche à rien
+    root.style.setProperty('--app-h', `${Math.round(vv.height)}px`);
+    root.style.setProperty('--app-top', `${Math.round(vv.offsetTop)}px`);
+    root.classList.toggle('kb', window.innerHeight - vv.height > 140);
+  };
+  vv.addEventListener('resize', sync);
+  vv.addEventListener('scroll', sync);
+  sync();
+}
+
+mountViewport();
+const layout = mountLayout();
+mountTabs(layout);
 new Page().start();

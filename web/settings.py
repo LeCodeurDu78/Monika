@@ -68,18 +68,15 @@ CATALOG: tuple[tuple[str, tuple[str, ...]], ...] = (
         ),
     ),
     (
-        "Rôles",
+        "Rôle action",
         (
-            "director_enabled",
-            "director_llm_model",
-            "director_timeout_s",
             "action_llm_enabled",
             "action_llm_model",
         ),
     ),
     (
         "Mémoire",
-        ("memory_inject_all_max", "memory_recall_limit", "memory_recall_threshold"),
+        ("memory_consolidate_turns", "memory_notes_max_chars", "memory_capture_enabled"),
     ),
     ("Sessions", ("sessions_enabled", "sessions_keep_days")),
     ("Noyau persistant", ("kernel_enabled",)),
@@ -312,18 +309,18 @@ class SettingsApi:
         agent = self._health.agent
         memory = getattr(agent, "memory", None) if agent is not None else None
         if memory is None:
-            return _row("Mémoire rapide", None, "désactivée ou indisponible")
+            return _row("Mémoire", None, "désactivée ou indisponible")
         state = getattr(agent, "memory_ok", None)
         if state is None:
             return _row(
-                "Mémoire rapide", None, "prête · aucun rappel depuis le lancement"
+                "Mémoire", None, "prête · aucune lecture depuis le lancement"
             )
         return _row(
-            "Mémoire rapide",
+            "Mémoire",
             bool(state),
-            "dernier rappel : ok"
+            "dernière lecture : ok"
             if state
-            else "dernier rappel : échec (voir la console)",
+            else "dernière lecture : échec (voir la console)",
         )
 
     async def _rag_row(self) -> dict[str, Any]:

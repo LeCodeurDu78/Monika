@@ -90,10 +90,13 @@ function editableRow({ text, meta, channel, label, maxLength, allowEmpty = false
   return li;
 }
 
+const MEMORY_KINDS = { notes: 'mon carnet', sujet: 'sujet en cours', 'événement': 'épisode passé' };
+
 function factRow(fact, refresh) {
   const url = `/api/memory/${encodeURIComponent(fact.id)}`;
   return editableRow({
-    text: fact.text, channel: 'memory', label: 'Texte du souvenir', maxLength: 1000, refresh,
+    text: fact.text, meta: MEMORY_KINDS[fact.kind] || '', channel: 'memory',
+    label: 'Texte du souvenir', maxLength: 4000, refresh,
     onSave: (text) => apiRequest(url, 'PUT', { text }),
     onDelete: () => apiRequest(url, 'DELETE'),
   });
@@ -242,7 +245,7 @@ export const sections = {
   memory(m, refresh) {
     if (ui.editing) return;  // Do not wipe what is being typed
     if (m.error) return fill('p-memory', el('p', 'err', m.error));
-    if (!m.enabled) return fill('p-memory', el('p', 'muted', 'Mémoire rapide désactivée ou indisponible.'));
+    if (!m.enabled) return fill('p-memory', el('p', 'muted', 'Mémoire désactivée ou indisponible.'));
     const nodes = [];
     if (ui.messages.memory) nodes.push(el('p', 'err', ui.messages.memory));
     if (!m.facts.length) nodes.push(el('p', 'muted', 'Je ne sais encore rien de toi.'));
@@ -251,7 +254,7 @@ export const sections = {
       for (const fact of m.facts) list.append(factRow(fact, refresh));
       const box = el('div', 'scroll');
       box.append(list);
-      nodes.push(el('div', 'muted', `${m.facts.length} souvenir(s)`), box);
+      nodes.push(el('div', 'muted', `${m.facts.length} entrée(s) dans mon carnet`), box);
     }
     fill('p-memory', ...nodes);
   },
@@ -272,6 +275,47 @@ export const sections = {
     }
     fill('p-sessions', ...nodes);
   },
+  recipes(r) {
+    if (!r) return fill('p-recipes', el('p', 'muted', 'Démarrage en cours…'));
+    if (r.error) return fill('p-recipes', el('p', 'err', r.error));
+    if (!r.items.length) {
+      return fill('p-recipes', el('p', 'muted', 'Aucune recette : j’en propose une après un tour réussi d’au moins trois outils.'));
+    }
+    const list = el('ul', 'facts');
+    for (const item of r.items) {
+      let state = `v${item.version} active`;
+      if (item.brouillon_version) state = `v${item.version} active · v${item.brouillon_version} proposée`;
+      else if (!item.version) state = 'brouillon, à garder';
+      const li = el('li');
+      li.append(el('span', 'meta muted', `${state} · ${fmt(item.usages)} usage(s) · ${fmt(item.succes)} réussite(s)`));
+      li.append(el('span', 'text', `${item.titre} [${item.id}]`));
+      list.append(li);
+    }
+    const box = el('div', 'scroll');
+    box.append(list);
+    fill('p-recipes', el('div', 'muted', `${r.items.length} recette(s)`), box);
+  },
+
+  tools(t) {
+    if (!t) return fill('p-tools', el('p', 'muted', 'Démarrage en cours…'));
+    if (t.error) return fill('p-tools', el('p', 'err', t.error));
+    if (!t.items.length) {
+      return fill('p-tools', el('p', 'muted', 'Aucun outil perso : je n’ai encore rien créé de moi-même. Demande-moi une action qui manque à mes outils.'));
+    }
+    const list = el('ul', 'facts');
+    for (const item of t.items) {
+      const li = el('li');
+      const facts = [item.state, item.fingerprint];
+      if (item.changed) facts.push('code modifié, à revérifier');
+      li.append(el('span', 'meta muted', facts.filter(Boolean).join(' · ')));
+      li.append(el('span', 'text', item.description ? `${item.name} — ${item.description}` : item.name));
+      list.append(li);
+    }
+    const box = el('div', 'scroll');
+    box.append(list);
+    fill('p-tools', el('div', 'muted', `${t.items.length} outil(s) perso`), box);
+  },
+
   character(c, refresh) {
     if (ui.editing) return;
     if (!c) return fill('p-relation', el('p', 'muted', 'Démarrage en cours…'));
@@ -292,4 +336,6 @@ export function render(snap, refresh) {
   sections.memory(snap.memory, refresh);
   sections.character(snap.character, refresh);
   sections.sessions(snap.sessions, refresh);
+  sections.recipes(snap.recipes);
+  sections.tools(snap.custom_tools);
 }

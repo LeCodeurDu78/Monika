@@ -182,7 +182,7 @@ async function saveSecret() {
   input.value = '';
   await load();
   restartBox.hidden = false;
-  restartBox.textContent = 'Clé enregistrée dans le .env : redémarre Monika pour qu’elle soit utilisée.';
+  restartBox.textContent = 'Clé enregistrée dans le .env : redémarre-moi pour qu’elle soit utilisée.';
   say('Clé enregistrée.');
 }
 

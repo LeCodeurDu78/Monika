@@ -11,13 +11,15 @@ from pathlib import Path
 
 from agent.llm import LLMError, TextDelta
 from agent.loop import Agent, AvatarCue, Filler, Notice, ToolEnd, ToolStart, TurnEnd
+from agent.recipes import RecipeError
 from agent.sessions import SessionsError
 from security.masking import Masker
+from tools.registry import ToolFailure
 from voice.speech_text import SentenceSplitter
 
 HELP = (
     "Commandes : /aide, /outils (liste des outils), /contexte (taille de la conversation), "
-    "/memoire (ce que je sais de toi), /oublier ID (supprime un souvenir), "
+    "/memoire (mon carnet sur toi), /oublier ID (supprime une entrée), "
     "/relation (où nous en sommes ; « /relation reinitialiser » repart de zéro), "
     "/journal (mes notes sur toi ; « /journal oublier ID », « /journal effacer »), "
     "/sessions (sessions enregistrées ; « /reprendre ID », « /chercher MOT », "
@@ -26,6 +28,9 @@ HELP = (
     "/rappel QUAND : TEXTE (dans 20 minutes, demain 8h, toutes les 2 heures, chaque jour à 8h, "
     "chaque lundi et jeudi à 9h), "
     "/taches (tâches planifiées ; « /tache annuler ID »), /stop (arrête tout ce qui tourne), "
+    "/outils-perso (tes serveurs MCP : liste ; « code NOM », « desactiver NOM », "
+    "« supprimer NOM »), "
+    "/recettes (mes procédures apprises ; « garder ID », « refuser ID », « oublier ID »), "
     "/effacer (oublie la conversation en cours), /quitter (ou Ctrl+D). "
     "Ctrl+C interrompt la réponse et arrête ce qui tourne en arrière-plan."
 )
@@ -66,10 +71,14 @@ class TextSession:
         hub=None,
         action_director=None,
         tasks=None,
+        custom_tools=None,
+        recipes=None,
         chat=None,
     ) -> None:
         self._agent = agent
-        self._tasks = tasks  # agent.tasks.TaskStore (None = scheduled tasks disabled)
+        self._tasks = tasks
+        self._custom_tools = custom_tools
+        self._recipes_store = recipes  # agent.tasks.TaskStore (None = scheduled tasks disabled)
         self._chat = (
             chat  # web.chat.ChatView: the same turn, mirrored in the page (optional)
         )
@@ -138,6 +147,10 @@ class TextSession:
             self._forget_session(line[len("/session") :].strip())
         elif line == "/outils":
             self._show_tools()
+        elif line == "/outils-perso" or line.startswith("/outils-perso "):
+            self._personal_tools(line[len("/outils-perso") :].strip())
+        elif line == "/recettes" or line.startswith("/recettes "):
+            self._recipes_command(line[len("/recettes") :].strip())
         elif line == "/contexte":
             self._show_context()
         elif line == "/memoire":
@@ -392,7 +405,7 @@ class TextSession:
         memory = self._agent.memory
         if memory is None:
             self._write(
-                "Mémoire rapide désactivée ou indisponible (voir le message au lancement).\n"
+                "Mon carnet est désactivé ou indisponible (voir le message au lancement).\n"
             )
             return
         try:
@@ -416,7 +429,7 @@ class TextSession:
     async def _forget(self, memory_id: str) -> None:
         memory = self._agent.memory
         if memory is None:
-            self._write("Mémoire rapide désactivée ou indisponible.\n")
+            self._write("Mon carnet est désactivé ou indisponible.\n")
         elif not memory_id:
             self._write("Usage : /oublier ID (les ids s'affichent avec /memoire).\n")
         else:
@@ -530,19 +543,6 @@ class TextSession:
                     "Les outils pèsent lourd à chaque message : limite-les avec « enabled_tools » "
                     "ou « disabled_tools » dans mcp_servers.json.\n"
                 )
-        plan = self._agent.last_plan
-        if (
-            plan is not None
-        ):  # What the director kept for the last turn (it runs before every turn)
-            kept = (
-                "tous"
-                if plan.tools is None
-                else f"{len(plan.tools)} sur {st['tools_count']}"
-            )
-            hint = f" · piste : {plan.hint}" if plan.hint else ""
-            self._write(
-                f"Dernier tour planifié : {kept} outil(s) envoyé(s) au modèle{hint}.\n"
-            )
 
     def _show_tools(self) -> None:
         tools = self._agent.registry.tools()
@@ -550,6 +550,51 @@ class TextSession:
             self._write("Aucun outil disponible (voir mcp_servers.json).\n")
         for t in tools:
             self._write(f"  {t.name}{' (lent)' if t.slow else ''} — {t.source}\n")
+
+    def _personal_tools(self, argument: str) -> None:
+        """`/outils-perso` : liste, code, désactivation et suppression des outils perso."""
+        if self._custom_tools is None:
+            self._write("Les outils perso ne sont pas disponibles dans cette session.\n")
+            return
+        command, _, rest = argument.partition(" ")
+        rest = rest.strip()
+        try:
+            if not command:
+                self._write(self._custom_tools.status_text() + "\n")
+            elif command == "code" and rest:
+                self._write(self._custom_tools.show(rest) + "\n")
+            elif command == "desactiver" and rest:
+                self._write(self._custom_tools.disable(rest) + "\n")
+            elif command == "supprimer" and rest:
+                self._write(self._custom_tools.delete(rest) + "\n")
+            else:
+                self._write(
+                    "Usage : /outils-perso, /outils-perso code NOM, "
+                    "/outils-perso desactiver NOM, /outils-perso supprimer NOM.\n"
+                )
+        except ToolFailure as exc:
+            self._write(f"{exc}\n")
+
+    def _recipes_command(self, argument: str) -> None:
+        """`/recettes` : seul l'utilisateur garde, refuse ou oublie une procédure."""
+        if self._recipes_store is None:
+            self._write("Les recettes sont désactivées (RECIPES_ENABLED=false).\n")
+            return
+        command, _, rest = argument.partition(" ")
+        rest = rest.strip()
+        try:
+            if not command:
+                self._write(self._recipes_store.list_text() + "\n")
+            elif command in ("garder", "refuser", "oublier") and rest:
+                action = getattr(self._recipes_store, command)
+                self._write(action(rest) + "\n")
+            else:
+                self._write(
+                    "Usage : /recettes, /recettes garder ID, /recettes refuser ID, "
+                    "/recettes oublier ID.\n"
+                )
+        except RecipeError as exc:
+            self._write(f"{exc}\n")
 
     def _summary(self, raw: str, limit: int = 100) -> str:
         try:

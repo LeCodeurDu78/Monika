@@ -21,6 +21,8 @@ class Paths:
     tool_results: Path
     sessions: Path
     mcp_config: Path
+    custom_tools: Path
+    custom_tools_index: Path
     kernel_socket: Path
 
     @classmethod
@@ -36,6 +38,8 @@ class Paths:
             tool_results=home / "tool_results",
             sessions=home / "sessions",
             mcp_config=settings.mcp_servers_file or home / "mcp_servers.json",
+            custom_tools=home / "mcp_custom",
+            custom_tools_index=home / "custom_tools.json",
             kernel_socket=settings.kernel_socket or home / "kernel.sock",
         )
 
@@ -58,6 +62,11 @@ class Paths:
         return self.character / "journal.json"
 
     @property
+    def memory_notes(self) -> Path:
+        """Le carnet personnel (JSON, 0600) : mes notes, les sujets et les épisodes retenus."""
+        return self.memory / "notes.json"
+
+    @property
     def rag_qdrant(self) -> Path:
         return self.rag / "qdrant"
 
@@ -73,6 +82,11 @@ class Paths:
     def sessions_db(self) -> Path:
         """The conversation log (SQLite + FTS5), in 0600."""
         return self.sessions / "sessions.db"
+
+    @property
+    def recipes_file(self) -> Path:
+        """Recettes apprises (JSON, 0600) : brouillons, versions gardées et usages."""
+        return self.home / "recipes.json"
 
     @property
     def tasks_file(self) -> Path:
@@ -96,5 +110,6 @@ class Paths:
             self.logs,
             self.tool_results,
             self.sessions,
+            self.custom_tools,
         ):
             path.mkdir(parents=True, exist_ok=True)

@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import re
 import socket
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -25,10 +26,10 @@ from character.journal import MAX_IMPRESSION_CHARS, MAX_NOTE_CHARS
 from web.hub import Hub
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
-HOST = "127.0.0.1"
+HOST = "0.0.0.0"
 Snapshot = Callable[[], Awaitable[dict[str, Any]]]
 Actions = dict[str, Callable[..., Awaitable[None]]]
-MAX_TEXT_CHARS = 1000
+MAX_TEXT_CHARS = 4000  # une note du carnet peut être longue (MEMORY_NOTES_MAX_CHARS)
 
 
 class WebError(Exception):
@@ -57,12 +58,35 @@ def create_app(
     if settings_api is not None:
         actions = {**actions, **settings_api.actions()}  # Same act(), same ActionError
 
+    # A local app: its page, styles and scripts change with the code. Their URL carries the file's
+    # mtime, so an updated file is never served from an old cache (see the middleware below).
+    asset_ref = re.compile(r'\"/static/([^"?]+\.(?:js|css))\"')
+
+    def page(name: str) -> HTMLResponse:
+        html = (static_dir / name).read_text(encoding="utf-8")
+
+        def versioned(match: re.Match[str]) -> str:
+            rel = match.group(1)
+            path = static_dir / rel
+            stamp = int(path.stat().st_mtime) if path.exists() else 0
+            return f'\"/static/{rel}?v={stamp}\"' if stamp else f'\"/static/{rel}\"'
+
+        return HTMLResponse(
+            asset_ref.sub(versioned, html), headers={"Cache-Control": "no-store"}
+        )
+
+    @app.middleware("http")
+    async def no_store(request: Request, call_next: Any) -> Any:
+        """Code and pages are never cached; the big model and avatar files keep their cache."""
+        response = await call_next(request)
+        kind = response.headers.get("content-type", "")
+        if kind.startswith(("text/html", "text/css")) or "javascript" in kind:
+            response.headers["Cache-Control"] = "no-store"
+        return response
+
     @app.get("/")
     async def index() -> HTMLResponse:
-        return HTMLResponse(
-            (static_dir / "index.html").read_text(encoding="utf-8"),
-            headers={"Cache-Control": "no-store"},
-        )
+        return page("index.html")
 
     @app.get("/api/status")
     async def status() -> JSONResponse:
@@ -194,10 +218,7 @@ def create_app(
 
         @app.get("/settings")
         async def settings_page() -> HTMLResponse:
-            return HTMLResponse(
-                (static_dir / "settings.html").read_text(encoding="utf-8"),
-                headers={"Cache-Control": "no-store"},
-            )
+            return page("settings.html")
 
         @app.get("/api/settings")
         async def settings_read() -> JSONResponse:

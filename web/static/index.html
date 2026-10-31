@@ -2,9 +2,12 @@
 <html lang="fr">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#0d1210" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#f2f6f3" media="(prefers-color-scheme: light)">
+  <meta name="mobile-web-app-capable" content="yes">
   <title>Monika</title>
-  <link rel="icon" href="data:,">
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
   <link rel="stylesheet" href="/static/css/app.css">
   <script type="importmap">
   {
@@ -16,7 +19,7 @@
   }
   </script>
 </head>
-<body>
+<body class="app">
   <header class="top">
     <h1>Monika</h1>
     <span id="state-chip" class="chip" data-state="idle" role="status" aria-live="polite">Au repos</span>
@@ -25,21 +28,33 @@
     <a class="chip chip-quiet" href="/settings">Réglages</a>
   </header>
 
-  <main class="layout">
+  <main class="layout" id="layout">
+    <!-- Deux sections, une seule visible : des radios décident de l'onglet, sans JavaScript. -->
+    <input type="radio" class="tab-radio" name="section" id="tab-chat" checked>
+    <input type="radio" class="tab-radio" name="section" id="tab-dashboard">
+    <nav class="tabs" aria-label="Sections">
+      <label class="tab" for="tab-chat">Chat</label>
+      <label class="tab" for="tab-dashboard">Tableau de bord</label>
+    </nav>
+
     <section class="stage" aria-label="Avatar">
       <canvas id="avatar" aria-label="Avatar 3D de Monika"></canvas>
       <p id="stage-note" class="stage-note" hidden></p>
     </section>
 
+    <div class="splitter" id="splitter" role="separator" aria-orientation="vertical" aria-label="Redimensionner le panneau" tabindex="0">
+      <button class="panel-toggle" id="panel-toggle" type="button" aria-controls="panels" aria-expanded="true" title="Masquer le panneau">❯</button>
+    </div>
+
     <section class="panels" id="panels" aria-label="Tableau de bord">
-      <button type="button" id="panels-toggle" class="panels-tab" aria-controls="panels" aria-expanded="true"
-              aria-label="Replier le tableau de bord" title="Replier le tableau de bord">❯</button>
       <div class="panels-scroll">
-        <article class="panel" id="p-chat"><h2>Conversation</h2><div class="body"></div></article>
-        <article class="panel" id="p-context"><h2>Contexte</h2><div class="body"></div></article>
-        <article class="panel" id="p-relation"><h2>Relation</h2><div class="body"></div></article>
-        <article class="panel" id="p-memory"><h2>Mémoire</h2><div class="body"></div></article>
-        <article class="panel" id="p-sessions"><h2>Sessions</h2><div class="body"></div></article>
+        <article class="panel" id="p-chat" data-tab="chat"><h2>Conversation</h2><div class="body"></div></article>
+        <article class="panel" id="p-context" data-tab="dashboard"><h2>Contexte</h2><div class="body"></div></article>
+        <article class="panel" id="p-relation" data-tab="dashboard"><h2>Relation</h2><div class="body"></div></article>
+        <article class="panel" id="p-memory" data-tab="dashboard"><h2>Mémoire</h2><div class="body"></div></article>
+        <article class="panel" id="p-sessions" data-tab="dashboard"><h2>Sessions</h2><div class="body"></div></article>
+        <article class="panel" id="p-recipes" data-tab="dashboard"><h2>Recettes</h2><div class="body"></div></article>
+        <article class="panel" id="p-tools" data-tab="dashboard"><h2>Outils perso</h2><div class="body"></div></article>
       </div>
     </section>
   </main>

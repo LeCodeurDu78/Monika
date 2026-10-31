@@ -4,7 +4,7 @@
 # juste un port ouvert — puis ouvre Monika. Le serveur n'est arrêté en sortant que si
 # c'est ce script qui l'a démarré ; un serveur déjà lancé est réutilisé tel quel.
 #
-#   ./lancer-monika.sh                  # Monika demande le mode (texte ou voix)
+#   ./lancer-monika.sh                  # Monika démarre, conversation dans la page web
 #   ./lancer-monika.sh --mode voix      # conversation à voix haute
 #   ./lancer-monika.sh --config         # même chose, mais Monika affiche sa config et sort
 #
@@ -25,11 +25,6 @@ say() { printf '\033[36m▸ %s\033[0m\n' "$*"; }
 warn() { printf '\033[33m⚠ %s\033[0m\n' "$*"; }
 
 [ -x "$PY" ] || die "Pas d'environnement ici : python3 -m venv .venv && .venv/bin/pip install -r requirements.txt"
-
-# Un client qui rejoint le noyau ne synthétise rien lui-même : inutile de démarrer la voix ici.
-for arg in "$@"; do
-    [ "$arg" = "--attach" ] && exec "$PY" -m monika "$@"
-done
 
 # --- Ce que la configuration dit de la voix -----------------------------------------
 read -r ENABLED TTS_URL < <(cd "$ROOT" && "$PY" -c '

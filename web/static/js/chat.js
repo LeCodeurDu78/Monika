@@ -16,11 +16,25 @@ export function mountChat() {
 
   const note = el('p', 'chat-note');
 
+  // Sur téléphone : champ d'une ligne qui grandit avec le texte, libellé court, touche « Envoyer » du clavier.
+  const compact = window.matchMedia('(max-width: 900px)');
   const input = el('textarea');
-  input.rows = 2;
   input.maxLength = MAX_CHARS;
-  input.placeholder = 'Écris à Monika… (Entrée envoie, Maj+Entrée ajoute une ligne)';
+  input.enterKeyHint = 'send';
+  input.title = 'Entrée envoie, Maj+Entrée ajoute une ligne';
   input.setAttribute('aria-label', 'Message pour Monika');
+  const layoutInput = () => {
+    input.rows = 1;
+    input.placeholder = 'Écris à Monika…';
+    autosize();
+  };
+  function autosize() {
+    input.style.height = 'auto';
+    // scrollHeight leaves the border out; with border-box the height must include it, or the
+    // one-line field is 2 px too short and always shows a scrollbar. The CSS max-height caps it.
+    const border = input.offsetHeight - input.clientHeight;
+    input.style.height = `${input.scrollHeight + border}px`;
+  }
 
   const mic = el('button', 'mic', '🎙 Parler');  // wired by voice.js (the microphone lives there)
   mic.type = 'button';
@@ -28,7 +42,7 @@ export function mountChat() {
   mic.title = 'Parler à Monika au micro (nécessite https ou localhost)';
   const send = el('button', 'primary', 'Envoyer');
   send.type = 'submit';
-  const stop = el('button', '', 'Arrêter');
+  const stop = el('button', 'stop', 'Arrêter');
   stop.type = 'button';
   const row = el('div', 'row');
   row.append(mic, send, stop);
@@ -52,6 +66,7 @@ export function mountChat() {
 
   function setBusy(value) {
     busy = value;
+    form.dataset.busy = String(value);   // le CSS du téléphone échange « Envoyer » et « Arrêter » selon cet état
     send.disabled = value;
     stop.disabled = !value;
   }
@@ -110,7 +125,11 @@ export function mountChat() {
       return;
     }
     input.value = '';
+    autosize();
   };
+
+  input.addEventListener('input', autosize);
+  compact.addEventListener('change', layoutInput);
 
   input.addEventListener('keydown', (event) => {
     if (event.key === 'Enter' && !event.shiftKey) {
@@ -131,6 +150,7 @@ export function mountChat() {
     note.textContent = text || '';
   }
 
+  layoutInput();
   setBusy(false);
   return { receive, seed, status };
 }

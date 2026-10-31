@@ -85,7 +85,7 @@ class ToolRegistry:
         return list(self._tools.values())
 
     def schemas(self, names: set[str] | None = None) -> list[dict[str, Any]]:
-        """Function-calling definitions, all of them or only `names` (the director's subset for one turn)."""
+        """Function-calling definitions, all of them or only the given `names`."""
         if names is None:
             return [t.schema() for t in self._tools.values()]
         return [t.schema() for name, t in self._tools.items() if name in names]

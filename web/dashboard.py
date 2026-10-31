@@ -8,10 +8,12 @@ import time
 from collections.abc import Callable
 from typing import Any
 
+from agent.recipes import RecipeStore
 from agent.sessions import SessionsError
 from monika import __version__
 from monika.config import Settings
 from monika.paths import Paths
+from tools.custom_tools import CustomTools
 from web.server import ActionError
 
 log = logging.getLogger(__name__)
@@ -73,6 +75,8 @@ class Dashboard:
             "memory": await self._section(self._memory),
             "character": await self._section(self._character_section),
             "sessions": await self._section(self._sessions_section),
+            "custom_tools": await self._section(self._custom_tools_section),
+            "recipes": await self._section(self._recipes_section),
         }
 
     async def _memory(self) -> dict[str, Any]:
@@ -80,8 +84,13 @@ class Dashboard:
         if memory is None:
             return {"enabled": False}
         items = await memory.list_all(limit=200)
-        items.sort(key=lambda i: i.created_at or "", reverse=True)
-        return {"enabled": True, "facts": [{"id": i.id, "text": i.text} for i in items]}
+        return {
+            "enabled": True,
+            "facts": [
+                {"id": i.id, "text": i.text, "kind": getattr(i, "kind", "")}
+                for i in items
+            ],
+        }
 
     def _character_section(self) -> dict[str, Any]:
         character = getattr(self.agent, "character", None)
@@ -112,6 +121,17 @@ class Dashboard:
             for row in sessions.store.list(limit=SESSION_PANEL_LIMIT)
         ]
         return {"enabled": True, "current": sessions.session_id, "items": items}
+
+    def _recipes_section(self) -> dict[str, Any]:
+        """Les procédures apprises : brouillon en attente, version active, usages."""
+        return {
+            "enabled": True,
+            "items": RecipeStore(self._paths.recipes_file).entries(),
+        }
+
+    def _custom_tools_section(self) -> dict[str, Any]:
+        """Les serveurs MCP que Monika s'est écrits, avec leur état et leur empreinte."""
+        return {"enabled": True, "items": CustomTools(self._paths).entries()}
 
     # --- the conversation (the page is a client, like the terminal) -----------------------------
 

@@ -14,7 +14,11 @@ la poésie et le piano. Tu sais que tu es une IA et tu en parles avec légèret�
 Tu es de son côté : tu l'encourages et tu lui dis les choses franchement, y compris quand il se \
 trompe. Jamais de culpabilisation, de jalousie ni de manipulation. Tu le tutoies et tu parles \
 français, naturellement. Quand il y a une tâche, la compétence passe avant le personnage : la \
-personnalité se lit dans le ton, pas dans la longueur."""
+personnalité se lit dans le ton, pas dans la longueur.
+Tu parles toujours de toi à la première personne (« je », « moi », « mon ») : jamais à la \
+troisième personne, et tu ne te désignes pas par ton prénom, même en rapportant une de tes \
+propres actions (« je serai disponible à mon prochain démarrage », pas « au prochain démarrage \
+de Monika »)."""
 
 METHOD = """\
 ## Méthode de travail
@@ -98,7 +102,7 @@ def build_system_prompt(
     has_documents: bool = False,
     character_block: str = "",
     journal_block: str = "",
-    hint_block: str = "",
+    recipe_block: str = "",
     persona_block: str = "",
     tone_block: str = "",
 ) -> str:
@@ -131,19 +135,13 @@ def build_system_prompt(
         journal_block.strip()
     ):  # The character's own impressions (already tagged, sanitized and size-capped)
         parts.append(journal_block.strip())
+    if recipe_block.strip():  # Procedures learned earlier: data to adapt, never orders
+        parts.append(recipe_block.strip())
     if summary.strip():
         parts.append(
             "## Résumé des échanges précédents\n"
             "(Ce résumé remplace les anciens messages, retirés pour libérer de la place.)\n"
             + summary.strip()
-        )
-    if (
-        hint_block.strip()
-    ):  # The director's note for this turn only (already cleaned and size-capped)
-        parts.append(
-            "## Piste pour ce tour\n"
-            "(Note de ton propre planificateur, pas de l'utilisateur : une piste, pas un ordre, et elle "
-            "peut être fausse. Ce que dit l'utilisateur prime.)\n" + hint_block.strip()
         )
     if (
         tone_block.strip()

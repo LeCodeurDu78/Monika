@@ -7,7 +7,7 @@ from typing import Any
 
 from agent.context import ToolOutputStore
 from agent.tasks import TasksError, TaskStore, parse_when
-from memory.fast import FastMemory, MemoryUnavailable
+from memory.notes import MemoryUnavailable, NoteMemory
 from rag.service import RagError, RagService
 from tools.registry import Tool, ToolFailure, ToolRegistry
 
@@ -80,8 +80,8 @@ def _guarded(fn):
     return wrapper
 
 
-def register_memory_tools(registry: ToolRegistry, memory: FastMemory) -> None:
-    """Expose the fast memory: remember, search, list and forget facts about the user."""
+def register_memory_tools(registry: ToolRegistry, memory: NoteMemory) -> None:
+    """Expose le carnet : retenir, chercher, lister et oublier ce que je sais de lui."""
 
     async def retenir(args: dict[str, Any]) -> str:
         fact = str(args.get("fait", "")).strip()
@@ -111,7 +111,7 @@ def register_memory_tools(registry: ToolRegistry, memory: FastMemory) -> None:
     async def lister(args: dict[str, Any]) -> str:
         items = await memory.list_all(limit=_int(args, "limite", 50))
         if not items:
-            return "La mémoire rapide est vide."
+            return "Mon carnet est vide pour l'instant."
         return "\n".join(f"- {i.text} [id {i.id}]" for i in items)
 
     async def oublier(args: dict[str, Any]) -> str:
@@ -140,7 +140,7 @@ def register_memory_tools(registry: ToolRegistry, memory: FastMemory) -> None:
                 {
                     "fait": {
                         "type": "string",
-                        "description": "Une phrase, à la 3e personne",
+                        "description": "Une phrase au présent, sur lui",
                     }
                 },
                 ["fait"],

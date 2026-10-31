@@ -10,6 +10,7 @@ import time
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from rich.console import Console
 from rich.table import Table
@@ -18,13 +19,14 @@ from agent.context import ToolOutputStore
 from agent.llm import LLMClient
 from agent.loop import Agent
 from memory.capture import MemoryCapture
-from memory.fast import FastMemory, MemoryUnavailable
+from memory.notes import NoteMemory
 from monika.__init__ import __version__
 from monika.config import ENV_FILE, Settings, get_settings, settings_load_problems
 from monika.paths import Paths
 from rag.service import RagError, RagService
 from security.audit import AuditLog
 from security.masking import Masker, MaskingFilter
+from tools.custom_tools import CustomTools, register_custom_tool
 from tools.internal import (
     register_document_tools,
     register_memory_tools,
@@ -76,23 +78,13 @@ def show_config(settings: Settings, paths: Paths) -> None:
     console.print(f"Socket du noyau : {paths.kernel_socket}")
 
 
-async def load_fast_memory(settings: Settings, paths: Paths) -> FastMemory | None:
-    """Start the fast memory, or explain clearly why it is unavailable."""
+async def load_memory(settings: Settings, paths: Paths) -> NoteMemory | None:
+    """Open the personal notebook (a JSON file: nothing to download)."""
     if not settings.fast_memory_enabled:
-        console.print(
-            "[dim]Mémoire rapide désactivée (FAST_MEMORY_ENABLED=false).[/dim]"
-        )
+        console.print("[dim]Mémoire désactivée (FAST_MEMORY_ENABLED=false).[/dim]")
         return None
-    console.print(
-        "[dim]Chargement de la mémoire (le premier lancement télécharge le modèle "
-        "d'embeddings, environ 1 Go)…[/dim]"
-    )
-    try:
-        memory = await asyncio.to_thread(FastMemory.create, settings, paths)
-    except MemoryUnavailable as exc:
-        console.print(f"[red]{exc}[/red]\nDémarrage sans mémoire rapide.")
-        return None
-    console.print("[green]✓[/green] Mémoire rapide prête.")
+    memory = NoteMemory(paths.memory_notes, settings)
+    console.print("[green]✓[/green] Mémoire prête (carnet de notes).")
     return memory
 
 
@@ -216,6 +208,9 @@ async def open_tools(settings: Settings, paths: Paths, masker: Masker, on_manage
             paths.audit_log, masker, settings.audit_enabled, settings.audit_max_chars
         )
     )
+    # Un outil perso modifié depuis l'accord est désactivé avant tout démarrage
+    for notice in CustomTools(paths).enforce():
+        console.print(f"[yellow]{notice}[/yellow]")
     try:
         servers = load_mcp_config(paths.mcp_config)
     except McpConfigError as exc:
@@ -442,6 +437,31 @@ def load_words(settings: Settings, paths: Paths):
     return bank
 
 
+def load_recipes(settings: Settings, paths: Paths, llm, masker):
+    """Recettes apprises (facultatif) : un souci ici ne doit jamais empêcher de démarrer."""
+    if not settings.recipes_enabled:
+        console.print("[dim]Recettes désactivées (RECIPES_ENABLED=false).[/dim]")
+        return None, None
+    try:
+        from agent.recipes import RecipeKeeper, RecipeStore
+        from character.service import llm_complete
+
+        store = RecipeStore(paths.recipes_file, masker.mask_text, settings.recipes_max)
+        keeper = RecipeKeeper(
+            store,
+            llm_complete(llm, settings.recipes_llm_model, 0.4),
+            settings.recipes_min_tools,
+            mask=masker.mask_text,
+        )
+        return store, keeper
+    except Exception as exc:  # noqa: BLE001 - optional layer
+        console.print(
+            f"[yellow]Recettes indisponibles ({type(exc).__name__}: {exc}) : "
+            "je continue sans.[/yellow]"
+        )
+        return None, None
+
+
 def load_sessions(settings: Settings, paths: Paths, masker: Masker, voice: bool):
     """Open the conversation log (SQLite + FTS5), or explain why it stays off. Never stops the chat."""
     if not settings.sessions_enabled:
@@ -570,10 +590,10 @@ async def run_chat(
 async def _run_chat(
     settings: Settings, paths: Paths, masker: Masker, voice: bool = False, server=None
 ) -> int:
-    """Start the chat: keyboard (text mode) or microphone (voice mode), with tools, memory and documents.
+    """Start Monika with tools, memory and documents: the page, or the microphone in voice mode.
 
-    With `server` (the kernel), stdin is not the input any more: the socket is, and this function
-    keeps everything running until the kernel stops.
+    Nothing is read from the terminal: the page sends its messages through the same session, and
+    `server` (the kernel) keeps everything running until it stops.
     """
     from modes.text import TextSession
     from web.settings import Health
@@ -591,12 +611,19 @@ async def _run_chat(
     store.purge(settings.tool_results_keep_days)
     sessions = load_sessions(settings, paths, masker, voice)
     tasks = load_tasks(settings, paths, masker)
-    memory = await load_fast_memory(settings, paths)
+    memory = await load_memory(settings, paths)
     capture = None
     if memory and settings.memory_capture_enabled:
         capture = MemoryCapture([memory.capture], settings.memory_capture_min_chars)
     rag = load_rag(settings, paths)
     web = await start_web(settings, paths, voice, health)
+    if web is None and not voice:
+        console.print(
+            "[red]La page web est indispensable[/red] : sans conversation au terminal, "
+            "c'est la seule façon de me parler. Active WEB_ENABLED (et vérifie WEB_PORT), "
+            "puis relance."
+        )
+        return 1
     hub = web.hub if web else None
     chat = web.chat if web else None
     speaker = await start_speech(
@@ -605,6 +632,7 @@ async def _run_chat(
     health.listener = listener
     health.speaker = speaker
     scheduler = None
+    custom = CustomTools(paths)
     try:
         async with open_tools(
             settings, paths, masker, lambda manager: setattr(health, "mcp", manager)
@@ -619,10 +647,14 @@ async def _run_chat(
                     console.print(
                         "[dim]Aucun document indexé : /indexer pour commencer.[/dim]"
                     )
+            register_custom_tool(registry, custom)
             if registry.tools():  # Without other tools no result is ever truncated
                 register_result_reader(registry, store)
             llm = LLMClient(settings)
             health.llm = llm
+            if memory is not None:
+                memory.bind_llm(llm)  # le directeur réécrit le carnet ; il lui faut le modèle
+            recipes, recipe_keeper = load_recipes(settings, paths, llm, masker)
             character = load_character(settings, paths, llm, hub, masker)
             action_director = load_action_director(settings, llm, hub)
             words = load_words(settings, paths)
@@ -638,6 +670,8 @@ async def _run_chat(
                 character=character,
                 words=words,
                 sessions=sessions,
+                recipes=recipes,
+                recipe_keeper=recipe_keeper,
             )
             health.agent = agent
             if web:
@@ -649,6 +683,8 @@ async def _run_chat(
                 "hub": hub,
                 "action_director": action_director,
                 "tasks": tasks,
+                "custom_tools": custom,
+                "recipes": recipes,
                 "chat": chat,
             }
             if listener is not None:
@@ -666,23 +702,13 @@ async def _run_chat(
                     banner=BANNER_SPOKEN if speaker else BANNER,
                     **session_kwargs,
                 )
-            elif server is not None:
+            else:
 
-                async def no_input() -> (
-                    str
-                ):  # The kernel never reads stdin: clients send lines
+                async def no_input() -> str:
+                    # Rien n'est lu au terminal : la page envoie ses messages par run_line.
                     raise EOFError
 
                 session = TextSession(agent, no_input, **session_kwargs)
-            else:
-                from prompt_toolkit import PromptSession
-
-                prompt = PromptSession()
-
-                async def read_line() -> str:
-                    return await prompt.prompt_async("Toi › ")
-
-                session = TextSession(agent, read_line, **session_kwargs)
             if (
                 web is not None
             ):  # The page sends its messages through the same session as the terminal
@@ -748,11 +774,11 @@ async def _run_chat(
                     await session.close()
             elif listener is not None:
                 await session.run()
-            else:
-                from prompt_toolkit.patch_stdout import patch_stdout
-
-                with patch_stdout():
-                    await session.run()
+            else:  # Sans noyau ni micro, la page est la seule entrée : on la laisse vivre
+                try:
+                    await asyncio.Event().wait()
+                finally:
+                    await session.close()
     finally:
         if scheduler is not None:
             await scheduler.stop()
@@ -791,6 +817,8 @@ async def run_tools_command(
         paths.audit_log, masker, settings.audit_enabled, settings.audit_max_chars
     )
     registry = ToolRegistry(audit)
+    for notice in CustomTools(paths).enforce():
+        console.print(f"[yellow]{notice}[/yellow]")
     async with McpManager(
         servers,
         registry,
@@ -829,36 +857,15 @@ async def run_tools_command(
     return 0
 
 
-def attach_console(paths: Paths, voice: bool) -> int:
-    """Hand this terminal to the kernel (Ctrl+C while waiting for a reply is handled by the client)."""
-    from monika.client import attach
-    from monika.kernel import KernelError
-
-    try:
-        return asyncio.run(attach(paths.kernel_socket, voice=voice))
-    except KernelError as exc:
-        console.print(f"[red]{exc}[/red]")
-        return 1
-    except KeyboardInterrupt:
-        return 130
-
-
-def run_kernel_command(
-    settings: Settings, paths: Paths, masker: Masker, args: argparse.Namespace
-) -> int:
-    """--serve (the kernel, in the foreground) and --attach (this terminal as its client)."""
-    if args.serve and args.attach:
-        console.print("[red]--serve et --attach sont exclusifs.[/red]")
-        return 1
+def run_kernel_command(settings: Settings, paths: Paths, masker: Masker) -> int:
+    """--serve: the kernel, in the foreground, serving the page."""
     if not settings.kernel_enabled:
         console.print(
             "[red]Le noyau est désactivé[/red] (KERNEL_ENABLED=false). Active-le dans "
             "/settings ou dans .env puis relance. Sans noyau, `python -m monika` reste le "
-            "mode local d'avant."
+            "mode local."
         )
         return 1
-    if args.attach:
-        return attach_console(paths, args.mode == "voix")
     from monika.kernel import KernelError, KernelServer
 
     try:
@@ -881,25 +888,14 @@ def run_kernel_command(
         return 0
 
 
-def choose_mode() -> str | None:
-    """Ask which mode to start; return None if the user gives up."""
-    try:
-        answer = console.input(
-            "Mode ? [bold]t[/bold]exte / [bold]v[/bold]oix (Entrée = texte) : "
-        )
-    except (EOFError, KeyboardInterrupt):
-        return None
-    return "voix" if answer.strip().lower().startswith("v") else "texte"
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="monika", description="Monika, assistante IA personnelle locale."
     )
     parser.add_argument(
         "--mode",
-        choices=["texte", "voix"],
-        help="Mode d'interaction (sinon demandé au lancement).",
+        choices=["voix"],
+        help="Conversation à voix haute (par défaut : la page web seulement).",
     )
     parser.add_argument(
         "--config",
@@ -939,11 +935,6 @@ def main(argv: list[str] | None = None) -> int:
         help="Lance le noyau persistant (mémoire, outils, page, voix) et le laisse tourner.",
     )
     parser.add_argument(
-        "--attach",
-        action="store_true",
-        help="Se connecte au noyau en cours : le terminal devient un client.",
-    )
-    parser.add_argument(
         "--call",
         nargs="+",
         metavar=("OUTIL", "JSON"),
@@ -974,26 +965,13 @@ def main(argv: list[str] | None = None) -> int:
             return 130
     if args.tools or args.call:
         return asyncio.run(run_tools_command(settings, paths, masker, args.call))
-    if args.serve or args.attach:
-        return run_kernel_command(settings, paths, masker, args)
+    if args.serve:
+        return run_kernel_command(settings, paths, masker)
 
-    mode = args.mode or choose_mode()
-    if mode is None:
-        return 0
-    if (
-        settings.kernel_enabled
-    ):  # A kernel exists: the terminal is a client, not a second brain
-        from monika.client import kernel_alive
-
-        if kernel_alive(paths.kernel_socket):
-            console.print("[dim]Noyau en cours : je m'y rattache.")
-            return attach_console(paths, mode == "voix")
-        console.print(
-            "[dim]Aucun noyau en cours : je démarre en local "
-            "(python -m monika --serve pour le noyau).[/dim]"
-        )
     try:
-        return asyncio.run(run_chat(settings, paths, masker, voice=(mode == "voix")))
+        return asyncio.run(
+            run_chat(settings, paths, masker, voice=(args.mode == "voix"))
+        )
     except KeyboardInterrupt:
         console.print("\nÀ bientôt.")
         return 0
