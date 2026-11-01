@@ -319,6 +319,7 @@ class KernelServer:
         line: str,
         writer: asyncio.StreamWriter | None = None,
         source: str = "user",
+        label: str | None = None,
     ) -> asyncio.Task | None:
         """Run the turn in the background: the client must stay able to send `cancel`."""
         if self._turn_task is not None and not self._turn_task.done():
@@ -333,19 +334,23 @@ class KernelServer:
                     }
                 )
             return None
-        task = asyncio.create_task(self._turn(line, writer, source))
+        task = asyncio.create_task(self._turn(line, writer, source, label))
         self._turn_task = task
         return task
 
     async def _turn(
-        self, line: str, writer: asyncio.StreamWriter | None, source: str = "user"
+        self,
+        line: str,
+        writer: asyncio.StreamWriter | None,
+        source: str = "user",
+        label: str | None = None,
     ) -> None:
         """One turn: the session writes to the client that asked, then everything is rolled back."""
         self.session.set_output(
             _ClientOut(self, writer) if writer is not None else self._out
         )
         try:
-            await self._execute(line, source)
+            await self._execute(line, source, label)
         except asyncio.CancelledError:
             pass  # cut on purpose (client cancel or shutdown); the session already said so
         except Exception as exc:  # noqa: BLE001 - a turn must never take the kernel down
@@ -366,9 +371,11 @@ class KernelServer:
             if writer is not None:
                 self._send(writer, {"type": "turn_end"})
 
-    async def _execute(self, line: str, source: str = "user") -> None:
+    async def _execute(
+        self, line: str, source: str = "user", label: str | None = None
+    ) -> None:
         if not await self.session.handle_command(line):
-            await self.session.reply(line, source=source)
+            await self.session.reply(line, source=source, label=label)
 
     def cancel(self) -> None:
         """Cut the running turn; the same path as Ctrl+C in the local session."""
@@ -433,11 +440,11 @@ class KernelServer:
             self._send(writer, {"type": "stopped", "text": report})
         return stopped
 
-    async def fire_task(self, prompt: str) -> None:
+    async def fire_task(self, prompt: str, label: str | None = None) -> None:
         """A scheduled task is a turn like any other: it waits for the current answer, then speaks."""
         while self._turn_task is not None and not self._turn_task.done():
             await asyncio.gather(self._turn_task, return_exceptions=True)
-        task = self._start_turn(prompt, source="auto")
+        task = self._start_turn(prompt, source="auto", label=label)
         if task is not None:
             await asyncio.gather(task, return_exceptions=True)
 

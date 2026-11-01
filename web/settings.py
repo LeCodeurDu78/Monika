@@ -81,6 +81,25 @@ CATALOG: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("Sessions", ("sessions_enabled", "sessions_keep_days")),
     ("Noyau persistant", ("kernel_enabled",)),
     ("Tâches planifiées", ("tasks_enabled", "tasks_max")),
+    (
+        "Briefing du matin",
+        (
+            "briefing_enabled",
+            "briefing_time",
+            "briefing_days",
+            "briefing_city",
+            "briefing_sections",
+        ),
+    ),
+    (
+        "Veille nocturne",
+        (
+            "nightly_enabled",
+            "nightly_time",
+            "obsidian_journal_dir",
+            "nightly_llm_model",
+        ),
+    ),
     ("Documents", ("rag_top_k", "rag_min_score", "rag_rerank_enabled")),
     (
         "Voix",

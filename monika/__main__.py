@@ -492,6 +492,50 @@ def load_sessions(settings: Settings, paths: Paths, masker: Masker, voice: bool)
     return SessionRecorder(store, mode="voix" if voice else "texte")
 
 
+def load_nightly(settings: Settings, paths: Paths, masker: Masker, llm, memory, sessions, recipes, character):
+    """Veille nocturne (facultative) : note Obsidian, propositions de mémoire, pensées du matin."""
+    if not settings.nightly_enabled:
+        console.print("[dim]Veille nocturne désactivée (NIGHTLY_ENABLED=false).[/dim]")
+        return None, None
+    if settings.obsidian_vault is None:
+        console.print(
+            "[yellow]Veille nocturne ignorée : OBSIDIAN_VAULT n'est pas défini dans .env.[/yellow]"
+        )
+        return None, None
+    if not settings.obsidian_vault.is_dir():
+        console.print(
+            f"[yellow]Veille nocturne ignorée : le coffre {settings.obsidian_vault} "
+            "n'existe pas (OBSIDIAN_VAULT).[/yellow]"
+        )
+        return None, None
+    try:
+        from agent.nightly import MorningNotes, NightlyJob
+
+        morning = MorningNotes(paths.morning_notes)
+        job = NightlyJob(
+            settings,
+            paths,
+            masker,
+            llm=llm,
+            memory=memory,
+            session_store=sessions.store if sessions is not None else None,
+            recipes=recipes,
+            character=character,
+            morning=morning,
+        )
+        console.print(
+            f"[green]✓[/green] Veille nocturne : {settings.nightly_time} · "
+            f"{settings.obsidian_vault}"
+        )
+        return job, morning
+    except Exception as exc:  # noqa: BLE001 - optional layer
+        console.print(
+            f"[yellow]Veille nocturne indisponible ({type(exc).__name__}: {exc}) : "
+            "je continue sans.[/yellow]"
+        )
+        return None, None
+
+
 def _stopped_sentence(stopped: list[str]) -> str:
     return "Arrêté : " + ", ".join(stopped) + "." if stopped else "Rien ne tournait."
 
@@ -632,6 +676,8 @@ async def _run_chat(
     health.listener = listener
     health.speaker = speaker
     scheduler = None
+    nightly = None
+    briefing = None
     custom = CustomTools(paths)
     try:
         async with open_tools(
@@ -658,6 +704,9 @@ async def _run_chat(
             character = load_character(settings, paths, llm, hub, masker)
             action_director = load_action_director(settings, llm, hub)
             words = load_words(settings, paths)
+            nightly, morning = load_nightly(
+                settings, paths, masker, llm, memory, sessions, recipes, character
+            )
             agent = Agent(
                 settings,
                 llm,
@@ -672,6 +721,7 @@ async def _run_chat(
                 sessions=sessions,
                 recipes=recipes,
                 recipe_keeper=recipe_keeper,
+                morning=morning,
             )
             health.agent = agent
             if web:
@@ -685,6 +735,7 @@ async def _run_chat(
                 "tasks": tasks,
                 "custom_tools": custom,
                 "recipes": recipes,
+                "nightly": nightly,
                 "chat": chat,
             }
             if listener is not None:
@@ -760,6 +811,32 @@ async def _run_chat(
                     tasks, server.fire_task if server is not None else session.run_task
                 )
                 scheduler.start()
+            if settings.briefing_enabled:  # Après la session : le briefing parle par elle
+                from agent.briefing import BriefingJob
+
+                briefing = BriefingJob(
+                    settings,
+                    paths,
+                    masker,
+                    server.fire_task if server is not None else session.run_task,
+                    tasks=tasks,
+                )
+                session.set_briefing(briefing)
+                briefing.start()
+                console.print(
+                    f"[green]✓[/green] Briefing du matin : {settings.briefing_time} · "
+                    + (
+                        f"météo {settings.briefing_city}"
+                        if settings.briefing_city
+                        else "sans météo (BRIEFING_CITY vide)"
+                    )
+                )
+            else:
+                console.print(
+                    "[dim]Briefing du matin désactivé (BRIEFING_ENABLED=false).[/dim]"
+                )
+            if nightly is not None:
+                nightly.start()
             if server is not None:
                 try:
                     await server.serve(
@@ -782,6 +859,10 @@ async def _run_chat(
     finally:
         if scheduler is not None:
             await scheduler.stop()
+        if briefing is not None:
+            await briefing.stop()
+        if nightly is not None:
+            await nightly.stop()
         if web:
             await web.server.stop()
         if speaker is not None:

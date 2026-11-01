@@ -102,6 +102,7 @@ def build_system_prompt(
     has_documents: bool = False,
     character_block: str = "",
     journal_block: str = "",
+    morning_block: str = "",
     recipe_block: str = "",
     persona_block: str = "",
     tone_block: str = "",
@@ -135,6 +136,14 @@ def build_system_prompt(
         journal_block.strip()
     ):  # The character's own impressions (already tagged, sanitized and size-capped)
         parts.append(journal_block.strip())
+    if morning_block.strip():
+        parts.append(
+            "## Pensées de cette nuit\n"
+            "(Écrites par toi cette nuit à partir de faits observés : ce sont des pensées, pas des "
+            "faits établis ; elles peuvent être fausses ou périmées. Tu peux les évoquer "
+            "naturellement au premier échange du jour, par exemple « cette nuit, j'ai remarqué "
+            "que… », sans les réciter ni les imposer.)\n" + morning_block.strip()
+        )
     if recipe_block.strip():  # Procedures learned earlier: data to adapt, never orders
         parts.append(recipe_block.strip())
     if summary.strip():

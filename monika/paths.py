@@ -20,6 +20,8 @@ class Paths:
     logs: Path
     tool_results: Path
     sessions: Path
+    nightly: Path
+    briefing: Path
     mcp_config: Path
     custom_tools: Path
     custom_tools_index: Path
@@ -37,6 +39,8 @@ class Paths:
             logs=home / "logs",
             tool_results=home / "tool_results",
             sessions=home / "sessions",
+            nightly=home / "nightly",
+            briefing=home / "briefing",
             mcp_config=settings.mcp_servers_file or home / "mcp_servers.json",
             custom_tools=home / "mcp_custom",
             custom_tools_index=home / "custom_tools.json",
@@ -94,6 +98,31 @@ class Paths:
         return self.home / "tasks.json"
 
     @property
+    def nightly_state(self) -> Path:
+        """The last night handled and its outcome (JSON, 0600)."""
+        return self.nightly / "state.json"
+
+    @property
+    def nightly_propositions(self) -> Path:
+        """Memory consolidation proposals waiting for a yes or no (JSON, 0600)."""
+        return self.nightly / "propositions.json"
+
+    @property
+    def morning_notes(self) -> Path:
+        """1-2 thoughts for tomorrow, read once at the first message of the day (JSON, 0600)."""
+        return self.nightly / "matin.json"
+
+    @property
+    def nightly_phase3(self) -> Path:
+        """Optional phase 3 timeline (JSON); NIGHTLY_PHASE3_FILE overrides it."""
+        return self.nightly / "phase3.json"
+
+    @property
+    def briefing_state(self) -> Path:
+        """Le dernier matin traité et son résultat (JSON, 0600)."""
+        return self.briefing / "state.json"
+
+    @property
     def kernel_lock(self) -> Path:
         """One kernel per data folder: memory and documents cannot be opened twice."""
         return self.home / "kernel.lock"
@@ -110,6 +139,8 @@ class Paths:
             self.logs,
             self.tool_results,
             self.sessions,
+            self.nightly,
+            self.briefing,
             self.custom_tools,
         ):
             path.mkdir(parents=True, exist_ok=True)

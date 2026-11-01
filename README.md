@@ -20,15 +20,16 @@ Tout est stocké chez toi ; seul le fournisseur LLM que tu configures reçoit te
 8. [Sessions et reprise](#sessions-et-reprise)
 9. [Noyau persistant](#noyau-persistant)
 10. [Tâches planifiées](#tâches-planifiées)
-11. [Mémoire personnelle](#mémoire-personnelle)
-12. [Documents personnels (RAG)](#documents-personnels-rag)
-13. [Voix : écoute et parole](#voix--écoute-et-parole)
-14. [Avatar et tableau de bord](#avatar-et-tableau-de-bord)
-15. [Personnage : émotions, relation et journal](#personnage--émotions-relation-et-journal)
-16. [Mots sensibles](#mots-sensibles)
-17. [Données, vie privée et sécurité](#données-vie-privée-et-sécurité)
-18. [Tests](#tests)
-19. [Dépannage](#dépannage)
+11. [Briefing du matin](#briefing-du-matin)
+12. [Mémoire personnelle](#mémoire-personnelle)
+13. [Documents personnels (RAG)](#documents-personnels-rag)
+14. [Voix : écoute et parole](#voix--écoute-et-parole)
+15. [Avatar et tableau de bord](#avatar-et-tableau-de-bord)
+16. [Personnage : émotions, relation et journal](#personnage--émotions-relation-et-journal)
+17. [Mots sensibles](#mots-sensibles)
+18. [Données, vie privée et sécurité](#données-vie-privée-et-sécurité)
+19. [Tests](#tests)
+20. [Dépannage](#dépannage)
 
 ## Prérequis
 
@@ -106,6 +107,7 @@ Les paquets (`agent/`, `rag/`, `web/`…) sont à la racine du projet : lance to
 | `/memoire`, `/oublier ID` | Ce que Monika sait de toi ; supprime un souvenir |
 | `/relation` | Où en est votre relation (niveau, favorabilité, humeur) ; `/relation reinitialiser` repart de zéro |
 | `/journal` | Les notes que Monika a écrites sur toi ; `/journal oublier ID` en supprime une, `/journal effacer` tout |
+| `/journal-nuit` | La note de la nuit dans Obsidian ; `/journal-nuit voir DATE`, `supprimer DATE`, `accepter ID`, `refuser ID` |
 | `/sessions` | Les sessions enregistrées, les plus récentes d'abord |
 | `/reprendre ID` | Reprend une session : son historique et son résumé sont rechargés |
 | `/chercher MOT …` | Cherche dans les tours enregistrés (plein texte) |
@@ -113,6 +115,7 @@ Les paquets (`agent/`, `rag/`, `web/`…) sont à la racine du projet : lance to
 | `/indexer [dossier]`, `/documents` | Lance l'indexation en arrière-plan ; état de l'index |
 | `/rappel QUAND : TEXTE` | Programme un rappel (« /rappel dans 20 minutes : boire de l'eau ») |
 | `/taches`, `/tache annuler ID` | Les tâches planifiées ; en supprime une |
+| `/briefing` | Le briefing du matin tout de suite, sans attendre l'heure dite |
 | `/outils-perso` | Les serveurs MCP que Monika a écrits : liste, `code NOM` (relire le code et le test), `desactiver NOM`, `supprimer NOM` |
 | `/recettes` | Mes procédures apprises : liste ; `garder ID`, `refuser ID`, `oublier ID` |
 | `/stop` | Arrête tout ce qui tourne (réponse, voix, indexation) et dit quoi |
@@ -139,6 +142,8 @@ valeurs par défaut du code). Les plus utiles :
 | `SESSIONS_ENABLED`, `SESSIONS_KEEP_DAYS` | Historique des conversations sur disque (désactivé par défaut ; rétention 30 jours) |
 | `KERNEL_ENABLED`, `KERNEL_SOCKET` | Noyau persistant et son chemin de socket (désactivé par défaut) |
 | `TASKS_ENABLED`, `TASKS_MAX` | Rappels et tâches récurrentes (désactivé par défaut, 50 tâches max) |
+| `BRIEFING_ENABLED`, `BRIEFING_TIME`, `BRIEFING_DAYS` | Briefing du matin : météo, agenda, mails et tâches du jour (désactivé par défaut, 07:30) |
+| `BRIEFING_CITY`, `BRIEFING_SECTIONS` | Ville de la météo (Open-Meteo, sans clé) et sections demandées |
 | `FAST_MEMORY_ENABLED`, `MEMORY_CAPTURE_ENABLED` | Carnet de notes et capture automatique |
 | `RAG_ENABLED`, `RAG_ROOTS`, `RAG_EXCLUDE`, `RAG_MIN_SCORE` | Documents personnels (dont le seuil de pertinence) |
 | `STT_MODEL`, `TTS_ENABLED` | Voix |
@@ -411,6 +416,33 @@ voix.
   pendant qu'un tour est en cours — le rappel attend la fin de la réponse en cours. Une tâche
   quotidienne ou hebdomadaire manquée (machine éteinte) repart à la prochaine occurrence, sans
   rattrapage ; une tâche à plusieurs jours reprend au jour suivant de sa liste.
+
+## Briefing du matin
+
+Avec `BRIEFING_ENABLED=true`, Monika te donne un briefing chaque matin — météo, agenda, mails
+importants, tâches du jour — sans que tu demandes rien. C'est un **tour complet** à l'heure dite :
+elle l'écrit à sa voix, la réponse s'affiche dans la page (et se dit à voix haute si la voix est
+active) et s'enregistre dans la session comme n'importe quel échange. La page montre le libellé
+**Briefing du matin**, jamais le relevé ni la demande préparés.
+
+- **Ce qu'elle lit** : la météo du jour (Open-Meteo, **sans clé**), les tâches planifiées qui
+  tombent aujourd'hui (`/rappel`), puis ton agenda et tes mails **par ses outils MCP** : branche un
+  serveur de calendrier et un serveur de messagerie, elle s'en sert seule. Un outil absent est dit
+  absent en une demi-phrase ; rien n'est inventé.
+- **Réglages** : `BRIEFING_TIME` (`07:30` par défaut), `BRIEFING_DAYS` (`tous`, ou
+  `lundi,mardi,mercredi,jeudi,vendredi`), `BRIEFING_CITY` (la ville de la météo ; vide = pas de
+  météo) et `BRIEFING_SECTIONS` (`meteo,agenda,mails,taches` : retire ce dont tu ne veux pas). Ils
+  se règlent aussi dans `/settings` (groupe *Briefing du matin*).
+- **Tout de suite plutôt qu'à 7 h 30** : `/briefing`. Elle le fait immédiatement et ne le refera
+  pas le même jour.
+- **Rattrapage** : un briefing manqué (machine éteinte) est donné au lancement suivant s'il a
+  moins de 4 h de retard ; après, il repart au matin d'après, sans rattraper les jours passés.
+- **Un processus doit tourner** : le noyau (`--serve`) de préférence, sinon `python -m monika`.
+  Rien ne se déclenche pendant qu'un tour est en cours : le briefing attend la fin de la réponse.
+- **Limites** : la météo vient d'un service extérieur (Open-Meteo) — sans réseau, elle est dite
+  indisponible ; l'agenda et les mails n'existent que si les serveurs MCP correspondants sont
+  branchés ; il n'y a pas de modèle dédié, le briefing compte donc un tour, avec ses appels
+  d'outils.
 
 ## Mémoire personnelle
 

@@ -22,12 +22,15 @@ HELP = (
     "/memoire (mon carnet sur toi), /oublier ID (supprime une entrée), "
     "/relation (où nous en sommes ; « /relation reinitialiser » repart de zéro), "
     "/journal (mes notes sur toi ; « /journal oublier ID », « /journal effacer »), "
+    "/journal-nuit (note de la nuit dans Obsidian ; « voir DATE », « supprimer DATE », "
+    "« accepter ID », « refuser ID »), "
     "/sessions (sessions enregistrées ; « /reprendre ID », « /chercher MOT », "
     "« /session oublier ID »), "
     "/indexer [dossier] (indexe tes documents), /documents (état de l'index), "
     "/rappel QUAND : TEXTE (dans 20 minutes, demain 8h, toutes les 2 heures, chaque jour à 8h, "
     "chaque lundi et jeudi à 9h), "
-    "/taches (tâches planifiées ; « /tache annuler ID »), /stop (arrête tout ce qui tourne), "
+    "/taches (tâches planifiées ; « /tache annuler ID »), /briefing (le briefing du matin "
+    "tout de suite), /stop (arrête tout ce qui tourne), "
     "/outils-perso (tes serveurs MCP : liste ; « code NOM », « desactiver NOM », "
     "« supprimer NOM »), "
     "/recettes (mes procédures apprises ; « garder ID », « refuser ID », « oublier ID »), "
@@ -73,12 +76,16 @@ class TextSession:
         tasks=None,
         custom_tools=None,
         recipes=None,
+        nightly=None,
         chat=None,
     ) -> None:
         self._agent = agent
         self._tasks = tasks
         self._custom_tools = custom_tools
         self._recipes_store = recipes  # agent.tasks.TaskStore (None = scheduled tasks disabled)
+        self._nightly = nightly  # agent.nightly.NightlyJob (None = nightly review disabled)
+        self._briefing = None  # agent.briefing.BriefingJob (branché après la session)
+        self._briefing_tasks: set[asyncio.Task] = set()
         self._chat = (
             chat  # web.chat.ChatView: the same turn, mirrored in the page (optional)
         )
@@ -155,6 +162,8 @@ class TextSession:
             self._show_context()
         elif line == "/memoire":
             await self._show_memory()
+        elif line == "/journal-nuit" or line.startswith("/journal-nuit "):
+            await self._nightly_command(line[len("/journal-nuit") :].strip())
         elif line.startswith("/journal"):
             self._journal(line[len("/journal") :].strip())
         elif line.startswith("/relation"):
@@ -169,6 +178,8 @@ class TextSession:
             self._tasks_list()
         elif line == "/tache" or line.startswith("/tache "):
             self._task_cancel(line[len("/tache") :].strip())
+        elif line == "/briefing":
+            self._briefing_now()
         elif line.startswith("/rappel"):
             self._remind(line[len("/rappel") :].strip())
         elif line.startswith("/oublier"):
@@ -596,6 +607,74 @@ class TextSession:
         except RecipeError as exc:
             self._write(f"{exc}\n")
 
+    def set_briefing(self, briefing) -> None:
+        """Le briefing du matin a besoin de la session pour parler : il arrive après elle."""
+        self._briefing = briefing
+
+    def _briefing_now(self) -> None:
+        """`/briefing` : tout de suite, dans un tour à part (la commande tient le verrou du tour)."""
+        briefing = self._briefing
+        if briefing is None:
+            self._write(
+                "Le briefing du matin est désactivé (BRIEFING_ENABLED=false).\n"
+            )
+            return
+        self._write("Briefing du matin en préparation…\n")
+
+        async def run() -> None:
+            try:
+                await briefing.run_now()
+            except Exception as exc:  # noqa: BLE001 - un briefing ne casse pas la session
+                self._write(f"Briefing impossible ({type(exc).__name__}: {exc}).\n")
+
+        task = asyncio.get_running_loop().create_task(run())
+        self._briefing_tasks.add(task)
+        task.add_done_callback(self._briefing_tasks.discard)
+
+    async def _nightly_command(self, argument: str) -> None:
+        """`/journal-nuit` : lire ou supprimer une note, accepter ou refuser une consolidation."""
+        nightly = self._nightly
+        if nightly is None:
+            self._write(
+                "La veille nocturne est désactivée (NIGHTLY_ENABLED=false) ou "
+                "OBSIDIAN_VAULT n'est pas défini.\n"
+            )
+            return
+        command, _, rest = argument.partition(" ")
+        rest = rest.strip()
+        if not command:
+            self._write(nightly.summary_text() + "\n")
+        elif command == "voir":
+            if not rest:
+                self._write("Usage : /journal-nuit voir DATE (AAAA-MM-JJ).\n")
+                return
+            text = nightly.read_note(rest)
+            if text is None:
+                self._write(f"Aucune note générée pour {rest}.\n")
+            else:
+                self._write(text if text.endswith("\n") else text + "\n")
+        elif command == "supprimer":
+            if not rest:
+                self._write("Usage : /journal-nuit supprimer DATE (AAAA-MM-JJ).\n")
+            elif nightly.delete_note(rest):
+                self._write(f"Note du {rest} supprimée (et ses propositions).\n")
+            else:
+                self._write(f"Aucune note générée pour {rest}.\n")
+        elif command in ("accepter", "refuser"):
+            if not rest:
+                self._write(
+                    f"Usage : /journal-nuit {command} ID (les ids sont dans /journal-nuit).\n"
+                )
+            else:
+                self._write(
+                    await nightly.resolve(rest, accept=command == "accepter") + "\n"
+                )
+        else:
+            self._write(
+                "Usage : /journal-nuit, /journal-nuit voir DATE, /journal-nuit supprimer DATE, "
+                "/journal-nuit accepter ID, /journal-nuit refuser ID.\n"
+            )
+
     def _summary(self, raw: str, limit: int = 100) -> str:
         try:
             data = json.loads(raw)
@@ -609,10 +688,12 @@ class TextSession:
         text = self._masker.mask_text(" ".join(text.split()))
         return text if len(text) <= limit else text[: limit - 1] + "…"
 
-    async def reply(self, user_text: str, *, source: str = "user") -> None:
+    async def reply(
+        self, user_text: str, *, source: str = "user", label: str | None = None
+    ) -> None:
         """Run one turn at a time; a scheduled reminder waits for the answer in progress."""
         async with self._turn_lock:
-            await self._reply(user_text, source=source)
+            await self._reply(user_text, source=source, label=label)
 
     async def run_line(self, line: str, *, source: str = "user") -> None:
         """One line sent from the page: a /command runs here, a message is an ordinary turn.
@@ -653,9 +734,9 @@ class TextSession:
             if self._chat is not None:
                 self._chat.end("".join(out.parts).strip() or "Rien à afficher.")
 
-    async def run_task(self, prompt: str) -> None:
+    async def run_task(self, prompt: str, label: str | None = None) -> None:
         """Entry point of the scheduler in a local session: the reminder is an ordinary turn."""
-        await self.reply(prompt, source="auto")
+        await self.reply(prompt, source="auto", label=label)
 
     async def stop_all(self, *, turn: bool = False) -> list[str]:
         """Stop everything running beside the keyboard; returns what was stopped, for the user.
@@ -683,12 +764,18 @@ class TextSession:
         )
 
     async def _reply(
-        self, user_text: str, *, source: str = "user", announce: bool = True
+        self,
+        user_text: str,
+        *,
+        source: str = "user",
+        announce: bool = True,
+        label: str | None = None,
     ) -> None:
         """Run one turn; on failure or Ctrl+C the agent has already tidied its history."""
         self._cancel_action_tasks()  # A chain decided for the previous answer must not land in this one
         if self._chat is not None and announce:
-            self._chat.begin(user_text, source=source)
+            # `label` is what the page shows: a long prepared prompt stays hidden.
+            self._chat.begin(label or user_text, source=source)
         self._write("\n")
         need_prefix = (
             True  # The "Monika ›" prefix is written only when text actually arrives

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tempfile
 import time
 from functools import lru_cache
@@ -127,6 +128,25 @@ class Settings(BaseSettings):
     # They need a process to fire: the kernel ideally, otherwise the terminal that is open.
     tasks_enabled: bool = False
     tasks_max: int = Field(50, ge=1, le=500)
+
+    # Veille nocturne : une note Markdown dans un coffre Obsidian, des propositions de consolidation
+    # de la mémoire (jamais appliquées seules) et 1-2 pensées pour le lendemain (matin.json).
+    # Elle tourne tant qu'un processus Monika vit ; une nuit manquée est rattrapée au lancement.
+    nightly_enabled: bool = False
+    nightly_time: str = "04:00"  # heure locale, HH:MM
+    obsidian_vault: Path | None = None  # racine du coffre (chemin absolu, dans .env)
+    obsidian_journal_dir: str = "Monika/Journal"  # relatif au coffre, sans « .. »
+    nightly_llm_model: str = ""  # modèle du paragraphe et des pensées ; vide = MODEL_NAME
+    nightly_phase3_file: Path | None = None  # chronologie de la phase 3 (JSON), si elle existe
+
+    # Briefing du matin : météo, agenda, mails importants et tâches du jour, une fois par jour. Un
+    # tour complet à l'heure dite (la météo vient d'Open-Meteo, sans clé ; l'agenda et les mails
+    # des outils MCP). Un matin manqué est rattrapé au lancement s'il a moins de 4 h de retard.
+    briefing_enabled: bool = False
+    briefing_time: str = "07:30"  # heure locale, HH:MM
+    briefing_days: str = "tous"  # « tous » ou « lundi,mardi,mercredi,jeudi,vendredi »
+    briefing_city: str = ""  # ville de la météo ; vide = pas de météo
+    briefing_sections: str = "meteo,agenda,mails,taches"  # ce qu'il demande
 
     # Mémoire personnelle (carnet continu, façon OpenSakura) : mes notes, les sujets en cours
     # et les épisodes passés, réécrits par un « directeur » tous les MEMORY_CONSOLIDATE_TURNS tours.
@@ -294,6 +314,79 @@ class Settings(BaseSettings):
             return None
         return (
             Path(value).expanduser() if isinstance(value, str) else value.expanduser()
+        )
+
+    @field_validator("nightly_time")
+    @classmethod
+    def _nightly_time(cls, value: str) -> str:
+        match = re.fullmatch(r"\s*(\d{1,2})\s*[:h]\s*(\d{1,2})\s*", value or "")
+        if match is None:
+            raise ValueError("NIGHTLY_TIME doit être une heure locale au format HH:MM")
+        hour, minute = int(match.group(1)), int(match.group(2))
+        if hour > 23 or minute > 59:
+            raise ValueError("NIGHTLY_TIME n'est pas une heure valide (HH:MM)")
+        return f"{hour:02d}:{minute:02d}"
+
+    @field_validator("briefing_time")
+    @classmethod
+    def _briefing_time(cls, value: str) -> str:
+        match = re.fullmatch(r"\s*(\d{1,2})\s*[:h]\s*(\d{1,2})\s*", value or "")
+        if match is None:
+            raise ValueError("BRIEFING_TIME doit être une heure locale au format HH:MM")
+        hour, minute = int(match.group(1)), int(match.group(2))
+        if hour > 23 or minute > 59:
+            raise ValueError("BRIEFING_TIME n'est pas une heure valide (HH:MM)")
+        return f"{hour:02d}:{minute:02d}"
+
+    @field_validator("briefing_days")
+    @classmethod
+    def _briefing_days(cls, value: str) -> str:
+        """« tous les jours » ou une liste de jours ; les virgules et « et » sont tolérés."""
+        raw = " ".join((value or "").lower().replace(",", " ").split())
+        if raw.startswith("chaque"):
+            raw = raw[len("chaque") :].strip()
+        elif raw.startswith("tous"):
+            return "tous"
+        if not raw:
+            return "tous"
+        known = (
+            "lundi",
+            "mardi",
+            "mercredi",
+            "jeudi",
+            "vendredi",
+            "samedi",
+            "dimanche",
+        )
+        names = [word for word in raw.split() if word in known]
+        if not names:
+            raise ValueError(
+                "BRIEFING_DAYS doit être « tous » ou des jours : "
+                "« lundi,mardi,mercredi,jeudi,vendredi »"
+            )
+        return ",".join(dict.fromkeys(names))
+
+    @field_validator("obsidian_journal_dir")
+    @classmethod
+    def _journal_dir(cls, value: str) -> str:
+        raw = (value or "").strip().replace("\\", "/").strip("/")
+        if not raw:
+            return "Monika/Journal"
+        if raw.startswith("/") or any(part == ".." for part in raw.split("/")):
+            raise ValueError(
+                "OBSIDIAN_JOURNAL_DIR doit être relatif au coffre, sans « .. »"
+            )
+        return raw
+
+    @field_validator("obsidian_vault", "nightly_phase3_file", mode="before")
+    @classmethod
+    def _expand_optional_path(cls, value: Any) -> Any:
+        if value is None or (isinstance(value, str) and not value.strip()):
+            return None
+        return (
+            Path(value).expanduser().resolve()
+            if isinstance(value, str)
+            else value.expanduser().resolve()
         )
 
     @field_validator("persona_text")
@@ -496,6 +589,8 @@ NOT_EDITABLE = frozenset(
         "openai_api_key",
         "tts_speakers_dir",
         "kernel_socket",
+        "obsidian_vault",
+        "nightly_phase3_file",
     }
 )
 
@@ -563,6 +658,11 @@ RESTART_REQUIRED = frozenset(
         "kernel_enabled",
         "tasks_enabled",
         "tasks_max",
+        "nightly_enabled",
+        "nightly_time",
+        "obsidian_journal_dir",
+        "nightly_llm_model",
+        "briefing_enabled",
         "log_level",
         "web_enabled",
         "web_port",

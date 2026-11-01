@@ -121,6 +121,7 @@ class Agent:
         sessions: SessionRecorder | None = None,
         recipes: RecipeStore | None = None,
         recipe_keeper: RecipeKeeper | None = None,
+        morning: Any | None = None,
     ) -> None:
         self._s = settings
         self._llm = llm
@@ -136,6 +137,7 @@ class Agent:
         self._memory_block = ""
         self._character_block = ""
         self._journal_block = ""
+        self._morning_block = ""  # 1-2 thoughts written by the nightly review, this day only
         self._tone_block = ""  # Sensitive-word tone for this message, this turn only
         self.words = (
             words  # The user's word bank; the settings page swaps it (hot reload)
@@ -145,6 +147,7 @@ class Agent:
         )
         self.recipes = recipes  # Learned procedures, injected as suggestions
         self.recipes_keeper = recipe_keeper  # Writes a draft after a long, clean turn
+        self.morning = morning  # MorningNotes: read once at the first message of the day
         self._recipe_block = ""
         self._recipes_used: list[str] = []
         self.turn_running = (
@@ -211,6 +214,7 @@ class Agent:
             has_documents=self.registry.get("documents_chercher") is not None,
             character_block=self._character_block,
             journal_block=self._journal_block,
+            morning_block=self._morning_block,
             recipe_block=self._recipe_block,
             tone_block=self._tone_block,
         )
@@ -266,6 +270,9 @@ class Agent:
         self._journal_block = (
             self.character.journal_block() if self.character is not None else ""
         )
+        self._morning_block = ""
+        if self.morning is not None:
+            self._morning_block = self.morning.take()  # once per day, then consumed
         self._tone_block = ""
         self._recipe_block, self._recipes_used = "", []
         if self.recipes is not None:

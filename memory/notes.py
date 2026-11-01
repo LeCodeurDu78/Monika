@@ -238,6 +238,39 @@ class NoteMemory:
                 )
         return items[: max(1, limit)]
 
+    async def changes_since(self, since_ts: float) -> dict[str, Any]:
+        """What changed in the notebook since an epoch time (nightly review)."""
+        async with self._lock:
+            state = self._load()
+        history = [
+            entry
+            for entry in state.get("notes_history") or []
+            if isinstance(entry, dict) and float(entry.get("at") or 0) >= since_ts
+        ]
+        events = [
+            _clean_text(event.get("event"), 400)
+            for event in state.get("completed_events") or []
+            if isinstance(event, dict)
+            and isinstance(event.get("at"), (int, float))
+            and float(event["at"]) >= since_ts
+            and _clean_text(event.get("event"), 400)
+        ]
+        topics = [
+            text
+            for text in (
+                _clean_text(topic, 160)
+                for topic in state.get("ongoing_topics") or []
+            )
+            if text
+        ]
+        return {
+            "notes": str(state.get("notes") or ""),
+            "notes_rewrites": len(history),
+            "topics": topics,
+            "events": events,
+            "total_turns": int(state.get("total_turns") or 0),
+        }
+
     @staticmethod
     def guidance(items: list[MemoryItem]) -> str:
         return next((i.text for i in items if i.kind == "notes"), "")

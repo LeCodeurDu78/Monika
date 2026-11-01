@@ -110,6 +110,18 @@ class Hit:
     excerpt: str
 
 
+@dataclass(frozen=True)
+class DayTurn:
+    """One turn read for a date (nightly review)."""
+
+    session_id: str
+    title: str
+    at: str
+    user_text: str
+    reply: str
+    status: str
+
+
 @dataclass
 class Loaded:
     """What `/reprendre` needs."""
@@ -341,6 +353,26 @@ class SessionStore:
                 r["title"],
                 int(r["turns"]),
                 bool(r["has_summary"]),
+            )
+            for r in rows
+        ]
+
+    def turns_between(self, start: str, end: str, limit: int = 200) -> list[DayTurn]:
+        """Turns written in [start, end), oldest first (already masked when written)."""
+        rows = self._conn.execute(
+            "SELECT t.session_id, s.title, t.at, t.user_text, t.reply, t.status "
+            "FROM turns t JOIN sessions s ON s.id = t.session_id "
+            "WHERE t.at >= ? AND t.at < ? ORDER BY t.at LIMIT ?",
+            (start, end, max(1, limit)),
+        ).fetchall()
+        return [
+            DayTurn(
+                r["session_id"],
+                r["title"],
+                r["at"],
+                r["user_text"],
+                r["reply"],
+                r["status"],
             )
             for r in rows
         ]

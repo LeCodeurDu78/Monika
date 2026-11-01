@@ -370,6 +370,27 @@ class RecipeStore:
         items.sort(key=lambda item: item["id"])
         return items
 
+    def used_since(self, since_iso: str) -> list[dict[str, Any]]:
+        """Recipes used at or after that instant (for the nightly note)."""
+        out: list[dict[str, Any]] = []
+        for recipe_id, item in self._load().items():
+            last = str(item.get("dernier_usage") or "")
+            if last and last >= since_iso:
+                fields = item.get("actuelle") or item.get("brouillon") or {}
+                out.append(
+                    {
+                        "id": recipe_id,
+                        "titre": str(fields.get("titre") or "")
+                        if isinstance(fields, dict)
+                        else "",
+                        "usages": int(item.get("usages") or 0),
+                        "succes": int(item.get("succes") or 0),
+                        "echecs": int(item.get("echecs") or 0),
+                    }
+                )
+        out.sort(key=lambda recipe: recipe["id"])
+        return out
+
     def list_text(self) -> str:
         items = self.entries()
         if not items:
@@ -503,6 +524,7 @@ class RecipeStore:
             item["succes" if ok else "echecs"] = (
                 int(item.get("succes" if ok else "echecs") or 0) + 1
             )
+            item["dernier_usage"] = _now()
             changed = True
         if changed:
             self._save(recettes)
