@@ -37,6 +37,7 @@ from typing import Any
 import numpy as np
 
 from monika.config import Settings
+from monika.i18n import get_language, tr
 from monika.paths import Paths
 from voice.errors import TtsError
 
@@ -397,6 +398,17 @@ class GptSovitsEngine:
         self.character_name = self.pack.name
         self.prompt_lang = self.pack.prompt_lang
         self.warnings.extend(self.pack.warnings)
+        language = get_language()
+        expected = language_code(language, "en")
+        if language not in ("fr", "en") and self.pack.prompt_lang != expected:
+            self.warnings.append(
+                tr(
+                    "voice.language_mismatch",
+                    name=self.pack.name,
+                    pack=self.pack.prompt_lang,
+                    language=language,
+                )
+            )
 
     def _warm_up(self) -> None:
         """One short request: it loads the model server-side and tells us the real sample rate."""

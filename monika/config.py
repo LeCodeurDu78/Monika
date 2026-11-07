@@ -14,8 +14,18 @@ from typing import Any
 from pydantic import Field, SecretStr, ValidationError, field_validator, model_validator
 from pydantic_settings import BaseSettings, JsonConfigSettingsSource, SettingsConfigDict
 
+from monika.i18n import normalize_language, set_language, tr
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 ENV_FILE = PROJECT_ROOT / ".env"
+
+
+def default_home(platform: str | None = None) -> Path:
+    """`%APPDATA%\\monika` on Windows, `~/.config/monika` everywhere else."""
+    if (platform or os.name) == "nt":
+        base = os.environ.get("APPDATA") or os.environ.get("USERPROFILE") or "~"
+        return Path(base) / "monika"
+    return Path("~/.config/monika")
 
 
 def _home_from_environment() -> Path:
@@ -25,7 +35,7 @@ def _home_from_environment() -> Path:
         from dotenv import dotenv_values
 
         raw = str(dotenv_values(ENV_FILE).get("MONIKA_HOME") or "").strip()
-    return Path(raw or "~/.config/monika").expanduser()
+    return Path(raw).expanduser() if raw else default_home()
 
 
 def settings_json_path() -> Path:
@@ -48,11 +58,14 @@ _LANGUAGE_NAMES = {
 
 
 class SettingsError(Exception):
-    """A settings change was refused; the message is in French and ready to display."""
+    """A settings change was refused; the message is ready to display."""
 
 
 class Settings(BaseSettings):
     """All user-tunable settings: environment, .env file, then settings.json (the page writes it)."""
+
+    # Language of the interface, prompts and built-in lexicons (fr or en)
+    language: str = "fr"
 
     # Allow a field named model_name (pydantic reserves the "model_" prefix by default)
     model_config = SettingsConfigDict(
@@ -91,7 +104,7 @@ class Settings(BaseSettings):
     llm_max_retries: int = Field(2, ge=0, le=10)
 
     # Storage root for every persistent file
-    monika_home: Path = Path("~/.config/monika")
+    monika_home: Path = Field(default_factory=default_home)
 
     # MCP servers (default file: <home>/mcp_servers.json)
     mcp_servers_file: Path | None = None
@@ -102,6 +115,12 @@ class Settings(BaseSettings):
     max_steps: int = Field(100, ge=1, le=500)
     loop_warn_after: int = Field(3, ge=2)
     loop_stop_after: int = Field(5, ge=3)
+
+    # Rôle surface : une réplique immédiate, avant que les outils aient tourné. Vide = désactivé ;
+    # un petit modèle rapide donne le réflexe. Il ne voit pas les outils : il n'annonce aucun résultat.
+    surface_llm_model: str = ""  # Empty means the surface role is off
+    surface_prompt: str = Field("", max_length=2000)
+    surface_timeout_s: float = Field(2.0, gt=0)  # Past it, the turn continues without the line
 
     # Role action : un appel modèle optionnel, hors du chemin critique d'un tour
     action_llm_enabled: bool = False  # After the turn: a short avatar action chain
@@ -118,14 +137,8 @@ class Settings(BaseSettings):
     sessions_enabled: bool = False
     sessions_keep_days: int = Field(30, ge=1)
 
-    # Persistent kernel: one process owns memory, documents, tools, the page and the voice, and
-    # `--serve` keeps it running (the page talks to it). Off by default: without it,
-    # `python -m monika` starts everything once, for as long as the page is open.
-    kernel_enabled: bool = False
-    kernel_socket: Path | None = None  # default: <KERNEL home>/kernel.sock
-
     # Scheduled tasks: reminders and recurring jobs, fired by the running process (`/rappel`).
-    # They need a process to fire: the kernel ideally, otherwise the terminal that is open.
+    # They need a process to fire: `python -m monika`, left open.
     tasks_enabled: bool = False
     tasks_max: int = Field(50, ge=1, le=500)
 
@@ -151,7 +164,11 @@ class Settings(BaseSettings):
     # Mémoire personnelle (carnet continu, façon OpenSakura) : mes notes, les sujets en cours
     # et les épisodes passés, réécrits par un « directeur » tous les MEMORY_CONSOLIDATE_TURNS tours.
     fast_memory_enabled: bool = True
-    memory_llm_model: str = ""  # Directeur de mémoire ; vide = MODEL_NAME
+    memory_llm_model: str = ""  # Directeur de mémoire ; vide = REFLECTION_MODEL puis MODEL_NAME
+    reflection_model: str = ""  # Rôle réflexion (mémoire, résumés de contexte, veille) ; vide = MODEL_NAME
+    reflection_enabled: bool = False  # Conseil entre les tours, en tâche de fond
+    reflection_speak: bool = False  # Autorise une prise de parole spontanée (tour automatique)
+    reflection_prompt: str = Field("", max_length=2000)
     memory_consolidate_turns: int = Field(6, ge=2, le=100)
     memory_notes_max_chars: int = Field(1800, ge=300, le=8000)
     memory_recall_timeout_s: float = Field(5.0, gt=0)
@@ -213,12 +230,10 @@ class Settings(BaseSettings):
         "auto"  # auto = cpu, to keep the GPU memory for the voice synthesis
     )
     stt_compute_type: str = "int8"
-    stt_language: str = "fr"
+    stt_language: str = ""  # empty = follow LANGUAGE
     stt_beam_size: int = Field(2, ge=1, le=10)
     stt_cpu_threads: int = Field(0, ge=0)  # 0 = half of the CPU cores
-    stt_prompt: str = (
-        "Conversation en français avec Monika, une assistante personnelle."
-    )
+    stt_prompt: str = ""  # empty = the catalog's prompt for LANGUAGE
     audio_input_device: str = (
         "@DEFAULT_SOURCE@"  # PulseAudio/PipeWire source name for parec
     )
@@ -247,7 +262,7 @@ class Settings(BaseSettings):
         ""  # Pack to use when the folder holds several; empty = the only one
     )
     tts_prompt_lang: str = (
-        "zh"  # Language of the reference transcripts when character.json is silent
+        "en"  # Language of the reference transcripts when character.json is silent
     )
     tts_emotion_tags: str = "auto"  # auto = only the tags the voice pack has, on = trust the mapper, off = never
     tts_render: str = (
@@ -273,9 +288,12 @@ class Settings(BaseSettings):
         ""  # PulseAudio/PipeWire sink for pacat; empty = default output
     )
 
-    # Local web page: 3D avatar and dashboard (reachable from this computer only)
+    # Local web page: 3D avatar and dashboard. 127.0.0.1 by default (this computer only). Opening it
+    # on the network needs WEB_TOKEN: without it, anyone who reaches the port reads and writes it all.
     web_enabled: bool = True
     web_port: int = Field(8765, ge=1024, le=65535)
+    web_host: str = "127.0.0.1"  # WEB_HOST=0.0.0.0 answers on the network (with WEB_TOKEN)
+    web_token: SecretStr = SecretStr("")  # empty = no token; the page keeps it in a cookie
 
     # Optional first name used in the system prompt
     user_name: str = ""
@@ -295,6 +313,16 @@ class Settings(BaseSettings):
     audit_enabled: bool = True
     audit_max_chars: int = Field(2000, ge=100)
 
+    @field_validator("language", mode="before")
+    @classmethod
+    def _language(cls, value: str) -> str:
+        raw = str(value or "").strip()
+        code = normalize_language(raw, default="")
+        if not code:
+            raise ValueError(tr("config.language"))
+        set_language(code)
+        return code
+
     @field_validator("llm_base_url")
     @classmethod
     def _strip_trailing_slash(cls, value: str) -> str:
@@ -306,25 +334,15 @@ class Settings(BaseSettings):
     def _expand_home(cls, value: Path) -> Path:
         return value.expanduser().resolve()
 
-    @field_validator("kernel_socket", mode="before")
-    @classmethod
-    def _expand_socket(cls, value: Any) -> Any:
-        # KERNEL_SOCKET= (empty) means the default path, not "." (which pydantic would make of "")
-        if value is None or (isinstance(value, str) and not value.strip()):
-            return None
-        return (
-            Path(value).expanduser() if isinstance(value, str) else value.expanduser()
-        )
-
     @field_validator("nightly_time")
     @classmethod
     def _nightly_time(cls, value: str) -> str:
         match = re.fullmatch(r"\s*(\d{1,2})\s*[:h]\s*(\d{1,2})\s*", value or "")
         if match is None:
-            raise ValueError("NIGHTLY_TIME doit être une heure locale au format HH:MM")
+            raise ValueError(tr("config.time_format", name="NIGHTLY_TIME"))
         hour, minute = int(match.group(1)), int(match.group(2))
         if hour > 23 or minute > 59:
-            raise ValueError("NIGHTLY_TIME n'est pas une heure valide (HH:MM)")
+            raise ValueError(tr("config.time_invalid", name="NIGHTLY_TIME"))
         return f"{hour:02d}:{minute:02d}"
 
     @field_validator("briefing_time")
@@ -332,20 +350,21 @@ class Settings(BaseSettings):
     def _briefing_time(cls, value: str) -> str:
         match = re.fullmatch(r"\s*(\d{1,2})\s*[:h]\s*(\d{1,2})\s*", value or "")
         if match is None:
-            raise ValueError("BRIEFING_TIME doit être une heure locale au format HH:MM")
+            raise ValueError(tr("config.time_format", name="BRIEFING_TIME"))
         hour, minute = int(match.group(1)), int(match.group(2))
         if hour > 23 or minute > 59:
-            raise ValueError("BRIEFING_TIME n'est pas une heure valide (HH:MM)")
+            raise ValueError(tr("config.time_invalid", name="BRIEFING_TIME"))
         return f"{hour:02d}:{minute:02d}"
 
     @field_validator("briefing_days")
     @classmethod
     def _briefing_days(cls, value: str) -> str:
-        """« tous les jours » ou une liste de jours ; les virgules et « et » sont tolérés."""
+        """« tous les jours » / "every day" or a list of weekdays."""
         raw = " ".join((value or "").lower().replace(",", " ").split())
-        if raw.startswith("chaque"):
-            raw = raw[len("chaque") :].strip()
-        elif raw.startswith("tous"):
+        if raw in ("all", "every day", "tous", "tous les jours", "chaque jour"):
+            return "tous"
+        raw = raw.replace("chaque", " ").replace("every", " ").strip()
+        if raw.startswith("tous"):
             return "tous"
         if not raw:
             return "tous"
@@ -357,13 +376,22 @@ class Settings(BaseSettings):
             "vendredi",
             "samedi",
             "dimanche",
+            "monday",
+            "tuesday",
+            "wednesday",
+            "thursday",
+            "friday",
+            "saturday",
+            "sunday",
         )
-        names = [word for word in raw.split() if word in known]
+        aliases = {
+            "monday": "lundi", "tuesday": "mardi", "wednesday": "mercredi",
+            "thursday": "jeudi", "friday": "vendredi", "saturday": "samedi",
+            "sunday": "dimanche",
+        }
+        names = [aliases.get(word, word) for word in raw.split() if word in known]
         if not names:
-            raise ValueError(
-                "BRIEFING_DAYS doit être « tous » ou des jours : "
-                "« lundi,mardi,mercredi,jeudi,vendredi »"
-            )
+            raise ValueError(tr("config.days_invalid"))
         return ",".join(dict.fromkeys(names))
 
     @field_validator("obsidian_journal_dir")
@@ -373,9 +401,7 @@ class Settings(BaseSettings):
         if not raw:
             return "Monika/Journal"
         if raw.startswith("/") or any(part == ".." for part in raw.split("/")):
-            raise ValueError(
-                "OBSIDIAN_JOURNAL_DIR doit être relatif au coffre, sans « .. »"
-            )
+            raise ValueError(tr("config.journal_dir"))
         return raw
 
     @field_validator("obsidian_vault", "nightly_phase3_file", mode="before")
@@ -404,8 +430,9 @@ class Settings(BaseSettings):
     @classmethod
     def _known_pause_style(cls, value: str) -> str:
         value = value.strip().lower()
+        value = {"neutral": "neutre", "natural": "naturel"}.get(value, value)
         if value not in ("neutre", "naturel"):
-            raise ValueError("TTS_PAUSE_STYLE doit être « neutre » ou « naturel »")
+            raise ValueError(tr("config.pause_style"))
         return value
 
     @field_validator("tts_speakers_dir")
@@ -418,7 +445,7 @@ class Settings(BaseSettings):
     def _strip_tts_slash(cls, value: str) -> str:
         value = value.strip().rstrip("/")
         if not value.startswith(("http://", "https://")):
-            raise ValueError("TTS_URL doit commencer par http:// ou https://")
+            raise ValueError(tr("config.tts_url"))
         return value
 
     @field_validator("stt_device")
@@ -426,7 +453,7 @@ class Settings(BaseSettings):
     def _stt_device(cls, value: str) -> str:
         value = value.strip().lower()
         if value not in {"auto", "cpu", "cuda"}:
-            raise ValueError("STT_DEVICE doit valoir auto, cpu ou cuda")
+            raise ValueError(tr("config.stt_device"))
         return value
 
     @field_validator("tts_language", "tts_prompt_lang")
@@ -434,10 +461,7 @@ class Settings(BaseSettings):
     def _tts_language(cls, value: str) -> str:
         code = _LANGUAGE_NAMES.get(value.strip().lower(), value.strip().lower())
         if code not in _LANGUAGES:
-            raise ValueError(
-                "TTS_LANGUAGE et TTS_PROMPT_LANG valent auto, en, zh, ja, ko ou yue "
-                "(GPT-SoVITS n'a pas de frontal français : fr est lu comme en)"
-            )
+            raise ValueError(tr("config.tts_language"))
         return code
 
     @field_validator("tts_emotion_tags")
@@ -445,7 +469,7 @@ class Settings(BaseSettings):
     def _tts_emotion_tags(cls, value: str) -> str:
         value = value.strip().lower()
         if value not in {"auto", "on", "off"}:
-            raise ValueError("TTS_EMOTION_TAGS doit valoir auto, on ou off")
+            raise ValueError(tr("config.tts_emotion"))
         return value
 
     @field_validator("tts_render")
@@ -453,7 +477,7 @@ class Settings(BaseSettings):
     def _tts_render(cls, value: str) -> str:
         value = value.strip().lower()
         if value not in {"auto", "sentence", "block"}:
-            raise ValueError("TTS_RENDER doit valoir auto, sentence ou block")
+            raise ValueError(tr("config.tts_render"))
         return value
 
     @field_validator("log_level")
@@ -461,26 +485,25 @@ class Settings(BaseSettings):
     def _upper_level(cls, value: str) -> str:
         level = value.strip().upper()
         if level not in {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}:
-            raise ValueError(f"niveau de log invalide : {value!r}")
+            raise ValueError(tr("config.log_level", value=value))
         return level
 
     @model_validator(mode="after")
     def _loop_thresholds(self) -> Settings:
+        if not self.stt_language.strip():
+            self.stt_language = self.language
+        if not self.stt_prompt.strip():
+            self.stt_prompt = tr("voice.stt_prompt")
         if self.loop_stop_after <= self.loop_warn_after:
-            raise ValueError("LOOP_STOP_AFTER doit être supérieur à LOOP_WARN_AFTER")
+            raise ValueError(tr("config.loop_order"))
         if self.rag_chunk_overlap_chars >= self.rag_chunk_chars // 2:
-            raise ValueError(
-                "RAG_CHUNK_OVERLAP_CHARS doit rester sous la moitié de RAG_CHUNK_CHARS"
-            )
+            raise ValueError(tr("config.rag_overlap"))
         if (
             not self.context_keep_recent_tokens
             < self.context_budget_tokens
             < self.context_window_tokens
         ):
-            raise ValueError(
-                "il faut CONTEXT_KEEP_RECENT_TOKENS < CONTEXT_BUDGET_TOKENS "
-                "< CONTEXT_WINDOW_TOKENS"
-            )
+            raise ValueError(tr("config.context_order"))
         return self
 
     def tts_render_mode(self) -> str:
@@ -513,7 +536,7 @@ class Settings(BaseSettings):
         out: dict[str, str] = {}
         for name, value in self:
             if isinstance(value, SecretStr):
-                out[name] = "définie" if value.get_secret_value() else "non définie"
+                out[name] = tr("config.secret_set") if value.get_secret_value() else tr("config.secret_unset")
             else:
                 out[name] = str(value)
         return out
@@ -536,7 +559,7 @@ def _settings_file_problem(path: Path) -> str:
     except (OSError, ValueError) as exc:
         return f"JSON illisible ({exc})"
     if not isinstance(data, dict):
-        return "le contenu n'est pas un objet JSON"
+        return tr("config.no_object")
     try:
         Settings(
             **data
@@ -560,11 +583,13 @@ def quarantine_unusable_settings(path: Path | None = None) -> str:
     try:
         os.replace(path, backup)
     except OSError as exc:
-        message = f"{path} est inutilisable ({problem}) et n'a pas pu être mis de côté : {exc}"
+        message = tr("config.quarantine_fail", path=path, problem=problem, error=exc)
     else:
-        message = (
-            f"{path.name} était inutilisable ({problem}) : mis de côté dans {backup.name}. "
-            "Je repartis des réglages par défaut ; corrige-le et renomme-le si tu y tiens."
+        message = tr(
+            "config.quarantine_ok",
+            name=path.name,
+            problem=problem,
+            backup=backup.name,
         )
     _problems.append(message)
     return message
@@ -588,7 +613,7 @@ NOT_EDITABLE = frozenset(
         "mcp_servers_file",
         "openai_api_key",
         "tts_speakers_dir",
-        "kernel_socket",
+        "web_token",
         "obsidian_vault",
         "nightly_phase3_file",
     }
@@ -605,6 +630,13 @@ RESTART_REQUIRED = frozenset(
         "mcp_call_timeout_s",
         "fast_memory_enabled",
         "memory_llm_model",
+        "reflection_model",
+        "reflection_enabled",
+        "reflection_speak",
+        "reflection_prompt",
+        "surface_llm_model",
+        "surface_prompt",
+        "surface_timeout_s",
         "memory_consolidate_turns",
         "memory_notes_max_chars",
         "memory_capture_enabled",
@@ -655,7 +687,6 @@ RESTART_REQUIRED = frozenset(
         "audit_max_chars",
         "sessions_enabled",
         "sessions_keep_days",
-        "kernel_enabled",
         "tasks_enabled",
         "tasks_max",
         "nightly_enabled",
@@ -666,6 +697,7 @@ RESTART_REQUIRED = frozenset(
         "log_level",
         "web_enabled",
         "web_port",
+        "web_host",
     }
 )
 
@@ -706,20 +738,14 @@ def apply_settings_changes(
     All or nothing: a value out of range writes nothing and changes nothing on the running instance.
     """
     if not isinstance(patch, dict) or not patch:
-        raise SettingsError("Aucun réglage à enregistrer.")
+        raise SettingsError(tr("config.no_change"))
     refused = sorted(set(patch) - EDITABLE)
     if refused:
-        raise SettingsError(
-            "Ces réglages ne s'éditent pas depuis la page : " + ", ".join(refused) + "."
-        )
+        raise SettingsError(tr("config.not_editable", names=", ".join(refused)))
     pinned = sorted(set(patch) & pinned_fields())
     if pinned:
         # The .env wins over settings.json: writing them would look like it worked until the next launch
-        raise SettingsError(
-            "Figés par l'environnement ou le fichier .env (aucun effet depuis la page) : "
-            + ", ".join(pinned)
-            + ". Modifie-les à la main dans .env."
-        )
+        raise SettingsError(tr("config.pinned", names=", ".join(pinned)))
     live = live or get_settings()
     merged = {**_read_json(path), **patch}
     try:
@@ -732,7 +758,7 @@ def apply_settings_changes(
         ValueError
     ) as exc:  # settings.json broken by hand while Monika runs (JSONDecodeError)
         raise SettingsError(
-            f"settings.json est illisible ({exc}) : corrige ou supprime-le."
+            tr("config.read_file", path=path or settings_json_path(), error=exc)
         ) from exc
     values = {name: _jsonable(getattr(candidate, name)) for name in merged}
     before = {name: _jsonable(getattr(live, name)) for name in values}
@@ -756,10 +782,10 @@ def write_env_secret(name: str, value: str) -> None:
     """Replace one line of the project's .env. The value never goes to a log and is never read back."""
     key = str(name).strip().upper()
     if key not in ENV_WRITABLE:
-        raise SettingsError("Ce secret ne s'écrit pas depuis la page.")
+        raise SettingsError(tr("config.bad_secret"))
     value = str(value).strip()
     if not value or "\n" in value or "\r" in value:
-        raise SettingsError("La valeur doit tenir sur une seule ligne.")
+        raise SettingsError(tr("config.secret_line"))
     try:
         lines = (
             ENV_FILE.read_text(encoding="utf-8").splitlines()
@@ -768,7 +794,7 @@ def write_env_secret(name: str, value: str) -> None:
         )
     except OSError as exc:
         raise SettingsError(
-            f"Impossible de lire {ENV_FILE} : {exc.strerror or exc}."
+            tr("config.read_env", path=ENV_FILE, error=exc.strerror or exc)
         ) from exc
     out: list[str] = []
     replaced = False
@@ -793,7 +819,7 @@ def _read_json(path: Path | None = None) -> dict[str, Any]:
         return {}
     except (OSError, ValueError) as exc:
         raise SettingsError(
-            f"{path} est illisible ({exc}) : corrige ou supprime-le."
+            tr("config.read_file", path=path, error=exc)
         ) from exc
     return data if isinstance(data, dict) else {}
 
@@ -818,7 +844,7 @@ def _atomic_write(path: Path, text: str) -> None:
         os.replace(temporary, path)
     except OSError as exc:
         raise SettingsError(
-            f"Impossible d'écrire {path} : {exc.strerror or exc}."
+            tr("config.write_file", path=path, error=exc.strerror or exc)
         ) from exc
 
 
@@ -831,8 +857,10 @@ def _jsonable(value: Any) -> Any:
 def _first_problem(exc: ValidationError, written: bool = True) -> str:
     """One French sentence about the first refused value (never the value itself, it may be a secret)."""
     error = exc.errors()[0]
-    field = ".".join(str(part) for part in error.get("loc", ())) or "réglage"
-    suffix = ", rien n'a été écrit." if written else "."
-    if error.get("type") in _BOUNDS:
-        return f"{field} : hors bornes{suffix}"
-    return f"{field} : {error.get('msg', 'valeur invalide')}{suffix}"
+    field = ".".join(str(part) for part in error.get("loc", ())) or "setting"
+    if written and error.get("type") in _BOUNDS:
+        return tr("config.out_of_bounds", field=field)
+    message = str(error.get("msg", "invalid value"))
+    if written:
+        return tr("config.invalid", field=field, message=message)
+    return f"{field} : {message}"

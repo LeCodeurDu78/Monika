@@ -1,6 +1,9 @@
 // Settings page: builds every control with textContent (never innerHTML), reads and writes through the
 // API. Requests are made here rather than with panels.apiRequest() because the write answer tells which
 // keys need a restart, and apiRequest() only returns an error string or null.
+import { setLanguage, startI18n } from './i18n.js';
+
+startI18n();
 
 const stateText = document.getElementById('save-state');
 const restartBox = document.getElementById('restart');
@@ -128,6 +131,7 @@ function renderSecret(defined) {
 async function load() {
   const result = await request('/api/settings');
   if (!result.ok) { say(result.error, 'error'); return; }
+  if (result.data.language) setLanguage(result.data.language);
   renderGroups(result.data);
   renderWords(result.data.words);
   renderSecret(!!(result.data.secrets || {}).OPENAI_API_KEY);

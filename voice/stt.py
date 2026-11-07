@@ -15,6 +15,7 @@ from typing import Any
 import numpy as np
 
 from monika.config import Settings
+from monika.i18n import tr
 from monika.paths import Paths
 from voice.audio import SAMPLE_RATE
 from voice.errors import SttError
@@ -35,6 +36,12 @@ HALLUCINATIONS = (
     "j espere que cette video vous a plu",
     "thanks for watching",
     "subtitles by",
+    "please subscribe",
+    "like and subscribe",
+    "see you next time",
+    "thank you for watching",
+    "subtitles made by",
+    "transcription by",
 )
 
 
@@ -52,17 +59,17 @@ def filter_reason(text: str, avg_logprob: float, no_speech_prob: float) -> str |
     """Return why a transcript should be dropped (None = keep it)."""
     norm = normalize_text(text)
     if not norm:
-        return "vide"
+        return tr("voice.empty")
     for phrase in HALLUCINATIONS:
         if phrase in norm and len(norm) <= len(phrase) + 30:
-            return "hallucination connue"
+            return tr("voice.hallucination")
     words = norm.split()
     if len(words) >= 6 and len(set(words)) <= 2:
-        return "répétition"
+        return tr("voice.repetition")
     if no_speech_prob > 0.7 and avg_logprob < -0.8:
-        return "bruit"
+        return tr("voice.noise")
     if avg_logprob < -1.6:
-        return "peu fiable"
+        return tr("voice.unreliable")
     return None
 
 
@@ -117,9 +124,12 @@ class Transcriber:
                 )
             except Exception as exc:
                 raise SttError(
-                    f"Impossible de charger le modèle Whisper « {self._s.stt_model} » : "
-                    f"{type(exc).__name__}: {str(exc)[:200]}. Le premier lancement télécharge le modèle : "
-                    "vérifie ta connexion (ou le réglage STT_MODEL / STT_DEVICE)."
+                    tr(
+                        "voice.load_error",
+                        model=self._s.stt_model,
+                        kind=type(exc).__name__,
+                        error=str(exc)[:200],
+                    )
                 ) from exc
             return time.perf_counter() - start
 
@@ -146,7 +156,7 @@ class Transcriber:
         audio_s = len(audio) / SAMPLE_RATE
         if audio_s < MIN_AUDIO_S:
             return Transcript(
-                "", self._s.stt_language, audio_s, 0.0, filtered="trop court"
+                "", self._s.stt_language, audio_s, 0.0, filtered=tr("voice.too_short")
             )
         segments, info = self._model.transcribe(
             audio,

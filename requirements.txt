@@ -1,5 +1,6 @@
 pydantic>=2.7
 pydantic-settings>=2.3
+python-dotenv>=1.0
 rich>=13.7
 openai>=1.40
 mcp>=2.3,<3

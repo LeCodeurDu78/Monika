@@ -2,6 +2,7 @@
 import { render, setEmotionLabels } from './panels.js';
 import { mountChat } from './chat.js';
 import { mountVoice } from './voice.js';
+import { setLanguage, startI18n } from './i18n.js';
 
 const STATE_TEXT = { idle: 'Au repos', listening: 'J’écoute', thinking: 'Je réfléchis', speaking: 'Je parle' };
 const SPEAKING_LEVEL = 0.02;
@@ -82,7 +83,9 @@ class Page {
   async refresh() {
     try {
       const response = await fetch('/api/status', { cache: 'no-store' });
-      render(await response.json(), () => this.refresh());
+      const data = await response.json();
+      if (data.app?.language) setLanguage(data.app.language);
+      render(data, () => this.refresh());
     } catch (err) {
       /* The link chip already tells the connection is down */
     }
@@ -90,7 +93,8 @@ class Page {
 
   connect() {
     const link = document.getElementById('link-chip');
-    const ws = new WebSocket(`ws://${location.host}/ws`);
+    // wss behind the HTTPS proxy (tailscale serve): a browser refuses a plain ws from an https page
+    const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
     ws.binaryType = 'arraybuffer';  // Monika's voice comes back as PCM frames, not as JSON
     ws.onopen = () => { link.dataset.link = 'on'; link.textContent = 'Connectée'; this.retry = 500; };
     ws.onmessage = (event) => {
@@ -147,6 +151,7 @@ class Page {
   }
 
   async start() {
+    startI18n();
     const note = document.getElementById('stage-note');
     window.monika = this;  // Handy in the browser console, and for the automated checks
     this.chat = mountChat();

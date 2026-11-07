@@ -18,18 +18,17 @@ Tout est stocké chez toi ; seul le fournisseur LLM que tu configures reçoit te
 6. [Outils (serveurs MCP)](#outils-serveurs-mcp)
 7. [Agent, contexte et prompt](#agent-contexte-et-prompt)
 8. [Sessions et reprise](#sessions-et-reprise)
-9. [Noyau persistant](#noyau-persistant)
-10. [Tâches planifiées](#tâches-planifiées)
-11. [Briefing du matin](#briefing-du-matin)
-12. [Mémoire personnelle](#mémoire-personnelle)
-13. [Documents personnels (RAG)](#documents-personnels-rag)
-14. [Voix : écoute et parole](#voix--écoute-et-parole)
-15. [Avatar et tableau de bord](#avatar-et-tableau-de-bord)
-16. [Personnage : émotions, relation et journal](#personnage--émotions-relation-et-journal)
-17. [Mots sensibles](#mots-sensibles)
-18. [Données, vie privée et sécurité](#données-vie-privée-et-sécurité)
-19. [Tests](#tests)
-20. [Dépannage](#dépannage)
+9. [Tâches planifiées](#tâches-planifiées)
+10. [Briefing du matin](#briefing-du-matin)
+11. [Mémoire personnelle](#mémoire-personnelle)
+12. [Documents personnels (RAG)](#documents-personnels-rag)
+13. [Voix : écoute et parole](#voix--écoute-et-parole)
+14. [Avatar et tableau de bord](#avatar-et-tableau-de-bord)
+15. [Personnage : émotions, relation et journal](#personnage--émotions-relation-et-journal)
+16. [Mots sensibles](#mots-sensibles)
+17. [Données, vie privée et sécurité](#données-vie-privée-et-sécurité)
+18. [Tests](#tests)
+19. [Dépannage](#dépannage)
 
 ## Prérequis
 
@@ -43,6 +42,12 @@ Tout est stocké chez toi ; seul le fournisseur LLM que tu configures reçoit te
 - Espace disque pour les modèles téléchargés au premier usage : environ 2 Go (documents),
   2 Go (voix) ; une connexion est nécessaire à ce moment-là. La mémoire, elle, n'a aucun modèle
   à télécharger.
+
+**Sous Windows**, la page, la mémoire, les documents, les serveurs MCP et les outils perso
+fonctionnent : les données vont dans `%APPDATA%\monika`, le verrou d'instance passe par `msvcrt`,
+et le test des outils perso tourne dans Docker à défaut de `bwrap`. Restent propres à Linux : la
+conversation à voix haute du terminal (`--mode voix`, `parec`/`pacat`), `./lancer-monika.sh` et le
+bac à sable `bwrap`. Le micro de la page, lui, est celui du navigateur.
 
 ## Installation et premier lancement
 
@@ -63,12 +68,13 @@ Le mode voix demande une installation supplémentaire, décrite dans [Voix](#voi
 
 ```
 monika/        Point d'entrée (python -m monika), configuration (config.py), chemins (paths.py), embeddings.py,
-               noyau persistant (kernel.py)
+               verrou d'instance (lock.py), lien du téléphone (phone.py)
 agent/         Boucle ReAct (loop.py), client LLM (llm.py), contexte (context.py), prompt (prompt.py),
                sessions persistantes (sessions.py), tâches planifiées (tasks.py), détection de boucle,
                phrases d'attente, infos système
 tools/         Registre d'outils audité (registry.py), client MCP (mcp_client.py), outils internes (internal.py)
 security/      Masquage des secrets (masking.py), enveloppe « données, pas ordres » (untrusted.py), audit (audit.py)
+bridges/       Pont MCP autonome vers un helper HTTP (Hermes, nanoMuse) : ask, status, answer, stop, health
 memory/        Carnet de notes personnelles (notes.py) et capture en arrière-plan (capture.py)
 rag/           Documents personnels : scan, lecture, découpage, index, recherche hybride, reranking
 character/     Émotions, relation (favorabilité), journal, gestes d'avatar
@@ -90,37 +96,38 @@ Les paquets (`agent/`, `rag/`, `web/`…) sont à la racine du projet : lance to
 | `python -m monika` | Démarre Monika en local : la conversation se passe dans la page (le processus vit tant qu'elle est ouverte) |
 | `./lancer-monika.sh` | Démarre la voix GPT-SoVITS si besoin, vérifie qu'elle répond, puis lance Monika (mêmes options que ci-dessous) |
 | `python -m monika --mode voix` | Conversation à voix haute (réponses aussi à l'écran) |
-| `python -m monika --serve` | Lance le noyau persistant (mémoire, documents, outils, page, voix) et le laisse tourner |
 | `python -m monika --config` | Affiche la configuration chargée (secrets masqués) |
+| `python -m monika --roles` | Les rôles du modèle et le modèle que chacun utilise |
+| `python -m monika --telephone` | La commande `tailscale serve` et le lien HTTPS à ouvrir depuis le téléphone |
 | `python -m monika --tools` | Liste les serveurs MCP et leurs outils |
 | `python -m monika --call NOM '{"arg": 1}'` | Appelle un outil à la main |
 | `python -m monika --rag-index [DOSSIER ...]` | Indexe tes documents (`--reset` : repart d'un index vide) |
 | `python -m monika --rag-search MOT ...` | Cherche dans l'index, avec citations |
 | `python -m monika --rag-status` | État de l'index de documents |
 
-**Dans le chat** (`/aide` les rappelle) :
+**Dans le chat** (`/help` les rappelle ; les anciens noms français restent acceptés) :
 
 | Commande | Effet |
 |---|---|
-| `/outils` | Liste des outils disponibles |
-| `/contexte` | Taille estimée de la conversation, répartie entre prompt, outils (par source, avec les plus lourds) et historique |
-| `/memoire`, `/oublier ID` | Ce que Monika sait de toi ; supprime un souvenir |
-| `/relation` | Où en est votre relation (niveau, favorabilité, humeur) ; `/relation reinitialiser` repart de zéro |
-| `/journal` | Les notes que Monika a écrites sur toi ; `/journal oublier ID` en supprime une, `/journal effacer` tout |
-| `/journal-nuit` | La note de la nuit dans Obsidian ; `/journal-nuit voir DATE`, `supprimer DATE`, `accepter ID`, `refuser ID` |
+| `/tools` (`/outils`) | Liste des outils disponibles |
+| `/context` (`/contexte`) | Taille estimée de la conversation, répartie entre prompt, outils (par source, avec les plus lourds) et historique |
+| `/memory` (`/memoire`), `/forget ID` (`/oublier ID`) | Ce que Monika sait de toi ; supprime un souvenir |
+| `/relationship` (`/relation`) | Où en est votre relation (niveau, favorabilité, humeur) ; `/relationship reset` (`reinitialiser`) repart de zéro |
+| `/journal` | Les notes que Monika a écrites sur toi ; `/journal forget ID` en supprime une, `/journal clear` tout |
+| `/nightly` (`/journal-nuit`) | La note de la nuit dans Obsidian ; `/nightly show DATE`, `delete DATE`, `accept ID`, `refuse ID` |
 | `/sessions` | Les sessions enregistrées, les plus récentes d'abord |
-| `/reprendre ID` | Reprend une session : son historique et son résumé sont rechargés |
-| `/chercher MOT …` | Cherche dans les tours enregistrés (plein texte) |
-| `/session oublier ID` | Supprime une session, ses tours et ses appels d'outils |
-| `/indexer [dossier]`, `/documents` | Lance l'indexation en arrière-plan ; état de l'index |
-| `/rappel QUAND : TEXTE` | Programme un rappel (« /rappel dans 20 minutes : boire de l'eau ») |
-| `/taches`, `/tache annuler ID` | Les tâches planifiées ; en supprime une |
+| `/resume ID` (`/reprendre ID`) | Reprend une session : son historique et son résumé sont rechargés |
+| `/search WORD …` (`/chercher`) | Cherche dans les tours enregistrés (plein texte) |
+| `/session forget ID` (`oublier`) | Supprime une session, ses tours et ses appels d'outils |
+| `/index [folder]` (`/indexer`), `/documents` | Lance l'indexation en arrière-plan ; état de l'index |
+| `/remind WHEN : TEXT` (`/rappel`) | Programme un rappel (« /remind in 20 minutes: drink water ») |
+| `/tasks` (`/taches`), `/task cancel ID` (`/tache annuler ID`) | Les tâches planifiées ; en supprime une |
 | `/briefing` | Le briefing du matin tout de suite, sans attendre l'heure dite |
-| `/outils-perso` | Les serveurs MCP que Monika a écrits : liste, `code NOM` (relire le code et le test), `desactiver NOM`, `supprimer NOM` |
-| `/recettes` | Mes procédures apprises : liste ; `garder ID`, `refuser ID`, `oublier ID` |
+| `/custom-tools` (`/outils-perso`) | Les serveurs MCP que Monika a écrits : liste, `code NAME` (relire le code et le test), `disable NAME`, `delete NAME` |
+| `/recipes` (`/recettes`) | Mes procédures apprises : liste ; `keep ID`, `refuse ID`, `forget ID` |
 | `/stop` | Arrête tout ce qui tourne (réponse, voix, indexation) et dit quoi |
-| `/effacer` | Oublie la conversation en cours (et son résumé) |
-| `/quitter` (ou `/q`, Ctrl+D) | Quitte |
+| `/clear` (`/effacer`) | Oublie la conversation en cours (et son résumé) |
+| `/quit` (`/quitter`, `/q`, Ctrl+D) | Quitte |
 
 Ctrl+C interrompt la réponse en cours **et** arrête ce qui tourne en arrière-plan (voix,
 indexation) ; les captures mémoire déjà lancées vont jusqu'au bout.
@@ -132,15 +139,18 @@ valeurs par défaut du code). Les plus utiles :
 
 | Réglage | Rôle |
 |---|---|
+| `LANGUAGE` | Langue de l'interface, des prompts et des lexiques : `fr` (défaut) ou `en` |
 | `LLM_BASE_URL`, `OPENAI_API_KEY`, `MODEL_NAME` | Fournisseur et modèle (API compatible OpenAI) |
-| `MONIKA_HOME` | Dossier des données (défaut `~/.config/monika`) |
+| `REFLECTION_MODEL` | Modèle du rôle réflexion (mémoire, résumés, veille) ; vide = `MODEL_NAME` |
+| `SURFACE_LLM_MODEL`, `SURFACE_PROMPT`, `SURFACE_TIMEOUT_S` | Rôle surface : réplique immédiate avant les outils (vide = désactivé) |
+| `REFLECTION_ENABLED`, `REFLECTION_SPEAK`, `REFLECTION_PROMPT` | Conseil préparé entre les tours et prise de parole spontanée (désactivés par défaut) |
+| `MONIKA_HOME` | Dossier des données (défaut `~/.config/monika`, `%APPDATA%\monika` sous Windows) |
 | `USER_NAME` | Ton prénom, utilisé dans le prompt système |
 | `PERSONA_TEXT` | Consignes libres sur son comportement, ajoutées à son prompt (page de réglages) |
 | `MAX_STEPS` | Appels au modèle par tour (défaut 100) |
 | `ACTION_LLM_ENABLED`, `ACTION_LLM_MODEL` | Rôle action : chaîne de gestes de l'avatar après la réponse (désactivé par défaut) |
 | `CONTEXT_BUDGET_TOKENS` | Seuil de résumé automatique (défaut 150 000) |
 | `SESSIONS_ENABLED`, `SESSIONS_KEEP_DAYS` | Historique des conversations sur disque (désactivé par défaut ; rétention 30 jours) |
-| `KERNEL_ENABLED`, `KERNEL_SOCKET` | Noyau persistant et son chemin de socket (désactivé par défaut) |
 | `TASKS_ENABLED`, `TASKS_MAX` | Rappels et tâches récurrentes (désactivé par défaut, 50 tâches max) |
 | `BRIEFING_ENABLED`, `BRIEFING_TIME`, `BRIEFING_DAYS` | Briefing du matin : météo, agenda, mails et tâches du jour (désactivé par défaut, 07:30) |
 | `BRIEFING_CITY`, `BRIEFING_SECTIONS` | Ville de la météo (Open-Meteo, sans clé) et sections demandées |
@@ -150,7 +160,8 @@ valeurs par défaut du code). Les plus utiles :
 | `TTS_URL`, `TTS_SPEAKERS_DIR`, `TTS_CHARACTER_ID` | GPT-SoVITS : adresse de l'API et pack de voix |
 | `TTS_LANGUAGE`, `TTS_EMOTION_TAGS`, `TTS_RENDER` | Langue parlée, tags d'émotion, découpage des requêtes |
 | `TTS_PAUSE_STYLE`, `TTS_PAUSE_SCALE`, `TTS_PAUSE_MAX_S` | Pauses entre phrases : `neutre` (rien) ou `naturel` |
-| `WEB_ENABLED`, `WEB_PORT` | Page locale (défaut 8765) |
+| `WEB_ENABLED`, `WEB_PORT`, `WEB_HOST` | Page locale (défaut 8765, sur `127.0.0.1` seulement) |
+| `WEB_TOKEN` | Jeton d'accès à la page (vide = aucun) ; à définir dès que `WEB_HOST` n'est plus local |
 | `SENSITIVE_WORDS_ENABLED` | Filtre de mots sensibles (la liste est dans `words.json`) |
 | `RECIPES_ENABLED`, `RECIPES_MIN_TOOLS`, `RECIPES_INJECT_MAX`, `RECIPES_MAX` | Recettes apprises : proposition après un tour réussi, outils minimum, recettes injectées par tour, total |
 | `LOG_LEVEL`, `AUDIT_ENABLED` | Journaux |
@@ -185,6 +196,12 @@ Claude Desktop ; autre emplacement : `MCP_SERVERS_FILE`). Deux transports : comm
 - Les outils sont nommés `serveur__outil`. Les erreurs d'outil sont renvoyées au modèle en
   texte ; les images et sons renvoyés ne lui sont pas transmis (le texte l'indique).
 
+**Pont vers un helper** : `bridges/helper_bridge.py` expose `ask`, `status`, `answer`, `stop`
+et `health` à un programme séparé. `HELPER_KIND=hermes` parle à l'API server de Hermes
+(`/v1/runs`), `HELPER_KIND=nanomuse` à l'API locale de nanoMuse (`/api/threads`) ; `generic`
+garde un contrat HTTP simple. Une instance par helper, déclarée comme n'importe quel serveur MCP ;
+configuration et sécurité dans [`bridges/README.md`](bridges/README.md).
+
 **Outils internes** de Monika : `lire_resultat` (suite d'un gros résultat), `memoire_retenir`,
 `memoire_chercher`, `memoire_lister`, `memoire_oublier`, `documents_chercher`,
 `documents_indexer`, `documents_statut` et `create_custom_tools` (voir ci-dessous).
@@ -205,11 +222,13 @@ Quand une action manque à ses outils, Monika peut écrire **son propre serveur 
    exposer ses outils avec le paquet `mcp`. Un refus laisse le code sur disque pour relecture,
    mais rien n'est enregistré. Le serveur s'écrit avec l'API installée :
    `from mcp.server.mcpserver import MCPServer` (mcp 2.x).
-3. **Test exécuté dans un bac à sable** : `bwrap` (bubblewrap) avec `--unshare-all` puis
-   `--share-net` (réseau ouvert, `resolv.conf` et autorités de certification montés en lecture
-   seule), `/usr` en lecture seule, `/tmp` sur un tmpfs, et **seul `mcp_custom/<nom>/` en
-   écriture** ; ni ton `$HOME` ni le reste du disque ne sont montés. Délai de 60 s. Sans
-   `bwrap`, l'outil refuse de tester et donc de créer quoi que ce soit. Test rouge = refus.
+3. **Test exécuté dans un bac à sable** : sous Linux, `bwrap` (bubblewrap) avec `--unshare-all`
+   puis `--share-net` (réseau ouvert, `resolv.conf` et autorités de certification montés en
+   lecture seule), `/usr` en lecture seule, `/tmp` sur un tmpfs, et **seul `mcp_custom/<nom>/` en
+   écriture** ; ni ton `$HOME` ni le reste du disque ne sont montés (délai 60 s). Sous Windows,
+   le même test tourne dans un conteneur Docker (`python:3.12-slim`, seul le dossier de l'outil
+   monté, réseau ouvert ; le premier lancement tire l'image, délai 240 s). Sans `bwrap` ni
+   `docker`, l'outil refuse de tester et donc de créer quoi que ce soit. Test rouge = refus.
 4. **Enregistrement automatique** : si la vérification et les tests passent, le serveur est
    écrit dans `mcp_servers.json` (commande `python server.py`, `cwd` du dossier,
    `enabled: true`) sans qu'aucune approbation ne soit demandée. La configuration existante est
@@ -218,7 +237,7 @@ Quand une action manque à ses outils, Monika peut écrire **son propre serveur 
    ce qui a été ajouté.
 
 **Empreinte** : elle est enregistrée dans `custom_tools.json`. Si le code change après coup, le
-serveur est **désactivé** au démarrage suivant (`--serve` compris) et sur `--tools` : il faut le
+serveur est **désactivé** au démarrage suivant et sur `--tools` : il faut le
 régénérer, il sera revérifié et retesté avant d'être réenregistré. Un serveur de `mcp_custom/`
 absent de l'index est retiré de la configuration.
 
@@ -263,12 +282,29 @@ demander confirmation, et sans rien affirmer sans preuve.
 - **Phrases d'attente** : pour un outil lent, une phrase après `FILLER_DELAY_S` (1,5 s), puis
   toutes les `FILLER_REPEAT_S`, au plus `FILLER_MAX_PER_TURN` (2) par tour. Affichées, et dites à
   voix haute quand la voix est chargée.
-- **Rôle facultatif** : le rôle **action** (après le tour, en tâche de fond, désactivé par
-  défaut) choisit une courte chaîne de gestes (2 à 8 s chacun, trois au plus) que la page joue si
-  aucun geste n'est en cours ; un message suivant **annule** la chaîne encore en attente, sur le
-  fond comme sur la page, pour qu'un geste décidé pour une réponse ne tombe jamais pendant la
-  suivante. En cas d'échec, les gestes déterministes de `character/cues.py` restent seuls actifs.
-  Ce rôle coûte un appel de modèle par tour : à activer en mesurant.
+- **Quatre rôles** (`python -m monika --roles` les affiche) : **surface** (la réplique d'ouverture,
+  avant les outils ; `SURFACE_LLM_MODEL`, vide = désactivé), **deep** (le tour complet : réponse,
+  outils, bilan, `MODEL_NAME`), **réflexion** (hors du tour : directeur de mémoire, résumés de
+  contexte, veille nocturne ; `REFLECTION_MODEL`, vide = le modèle principal) et **action** (les
+  gestes de l'avatar, `ACTION_LLM_MODEL`). Rien de la réflexion n'est attendu pendant une réponse :
+  un modèle moins cher y est donc sans effet sur la vitesse du tour.
+- **Surface puis deep** : quand `SURFACE_LLM_MODEL` est défini, un petit modèle écrit d'abord
+  **une** phrase courte, affichée tout de suite ; la boucle complète prend ensuite le tour avec les
+  outils et reçoit cette phrase pour ne pas la répéter. La parole passe donc **avant** les outils :
+  la surface ne voit ni les outils ni leurs résultats et ne peut annoncer aucun fait, chiffre ou
+  chemin. Si elle dépasse `SURFACE_TIMEOUT_S`, la réplique est simplement omise et le tour continue.
+  `SURFACE_PROMPT` ajoute des consignes à ce rôle seul.
+- **Réflexion entre les tours** (`REFLECTION_ENABLED=true`, désactivé par défaut) : après un tour
+  réussi, le rôle réflexion prépare en arrière-plan un conseil court, injecté au tour suivant comme
+  une note interne. Avec `REFLECTION_SPEAK=true`, il peut aussi déclencher une prise de parole : un
+  tour automatique étiqueté « Réflexion », avec les outils et le bilan habituels. `REFLECTION_PROMPT`
+  ajoute des consignes à ce rôle. Tout se règle dans `/settings`, groupe *Rôles*.
+- **Rôle action (facultatif, désactivé par défaut)** : après le tour, en tâche de fond, il choisit
+  une courte chaîne de gestes (2 à 8 s chacun, trois au plus) que la page joue si aucun geste n'est
+  en cours ; un message suivant **annule** la chaîne encore en attente, sur le fond comme sur la
+  page, pour qu'un geste décidé pour une réponse ne tombe jamais pendant la suivante. En cas
+  d'échec, les gestes déterministes de `character/cues.py` restent seuls actifs. Ce rôle coûte un
+  appel de modèle par tour : à activer en mesurant.
   Tous les outils partent à chaque requête, sans planificateur intermédiaire.
 - **Ctrl+C** annule l'outil en cours. Si des actions avaient déjà été faites, une note les
   rappelle au modèle pour qu'il ne les croie pas annulées.
@@ -338,48 +374,6 @@ dans un message ou un argument d'outil n'arrive jamais sur le disque.
   une très longue session) ; l'écriture est atomique par transaction, et un échec de la base est
   journalisé sans jamais interrompre la conversation.
 
-## Noyau persistant
-
-Par défaut, `python -m monika` fait tout dans un seul processus : mémoire, documents, outils, page et
-voix vivent et meurent avec lui. Le noyau renverse ça : **un** processus possède les données et les
-outils et reste en marche quand tu fermes la page. Rouvre-la plus tard : la conversation est
-toujours là, la mémoire et l'index ne sont chargés qu'une fois.
-
-```bash
-python -m monika --serve      # le noyau (à laisser tourner)
-python -m monika --mode voix  # conversation à voix haute, dans le processus local
-```
-
-- **Activation** : `KERNEL_ENABLED=true` (désactivé par défaut) dans `.env` ou dans `/settings`,
-  puis redémarrage. Sans le drapeau, `python -m monika` reste le mode local.
-- **Deux cerveaux interdits** : un verrou (`MONIKA_HOME/kernel.lock`) empêche deux instances
-  d'ouvrir le même dossier de données (l'index de documents Qdrant ne supporte pas deux
-  processus). La seconde
-  s'arrête avec un message qui renvoie vers la page du noyau.
-- **Transport** : socket Unix `MONIKA_HOME/kernel.sock` en `0600` (chemin réglable par
-  `KERNEL_SOCKET`), messages JSON par ligne, UID du pair vérifié. Rien n'écoute sur le réseau.
-- **Un tour à la fois** : une page qui envoie un message pendant qu'une réponse défile reçoit
-  « occupée » ; deux réponses ne se mélangent jamais.
-- **Commandes** : elles passent par le noyau (`/sessions`, `/reprendre`, `/indexer`…). Ainsi
-  `/reprendre` change la conversation pour de bon, et le tableau de bord agit sur le même état.
-- **Arrêt propre** : SIGTERM ou Ctrl+C sur le noyau → la voix se tait, la socket est supprimée,
-  la capture en cours est enregistrée, puis « À bientôt. ».
-- **Limite** : une réponse lancée depuis la page va jusqu'au bout même si la page est fermée
-  (elle est enregistrée et mémorisée).
-
-Pour le lancer au démarrage, avec ta session (la voix a besoin de PipeWire/PulseAudio) :
-
-```bash
-mkdir -p ~/.config/systemd/user
-cp deploy/monika.service ~/.config/systemd/user/
-# adapte WorkingDirectory et ExecStart si le projet n'est pas dans ~/monika
-systemctl --user daemon-reload
-systemctl --user enable --now monika
-loginctl enable-linger "$USER"      # le noyau survit à la fermeture de session
-journalctl --user -u monika -f      # ses journaux
-# puis ouvre la page (l'adresse est affichée au démarrage, port WEB_PORT)
-```
-
 ## Tâches planifiées
 
 Avec `TASKS_ENABLED=true`, Monika se souvient de faire quelque chose plus tard — et le fait
@@ -387,12 +381,12 @@ elle-même : un rappel n'est pas une alarme, c'est un tour comme un autre, avec 
 voix.
 
 ```
-/rappel dans 20 minutes : bois de l'eau
-/rappel demain 8h : regarde la météo et dis-moi quoi mettre
-/rappel toutes les 2 heures : rappelle-moi de faire une pause
-/rappel chaque jour à 8h : donne-moi le programme du jour
-/rappel chaque lundi à 9h : résume-moi la semaine qui commence
-/rappel du lundi au vendredi à 9h : la revue du matin
+/remind in 20 minutes: drink water
+/remind tomorrow 8am: check the weather and tell me what to wear
+/remind every 2 hours: remind me to take a break
+/remind every day at 8am: give me today's schedule
+/remind every Monday at 9am: sum up the week ahead
+/remind Monday to Friday at 9am: the morning review
 ```
 
 - **Ce qu'elle accepte** : `dans N minutes|heures|jours`, une heure (`18h30`, `08:05` — demain si
@@ -404,9 +398,8 @@ voix.
   « rappelle-moi dans deux heures de sortir les poubelles » passe par l'outil `taches_planifier`.
 - **Ce qu'elle fait à l'heure dite** : un tour complet, sans toi devant l'écran. La réponse
   s'affiche **dans la page** (et se dit à voix haute si la voix est active),
-  et s'enregistre dans la session.
-- **Un processus doit tourner** : le noyau (`--serve`) de préférence, sinon `python -m monika`
-  lancé en local.
+  et s'enregistre dans la session.- **Un processus doit tourner** : `python -m monika`, laissé ouvert (le verrou d'instance empêche
+  d'en lancer un second sur le même dossier de données).
   Ce qui est arrivé pendant un arrêt se déclenche **au lancement suivant**, en disant son retard
   (« rappel prévu à 8:00, il est 9:20 »). Un rappel qui revient toutes les heures ne rejoue pas
   les heures manquées : il repart de maintenant.
@@ -426,7 +419,7 @@ active) et s'enregistre dans la session comme n'importe quel échange. La page m
 **Briefing du matin**, jamais le relevé ni la demande préparés.
 
 - **Ce qu'elle lit** : la météo du jour (Open-Meteo, **sans clé**), les tâches planifiées qui
-  tombent aujourd'hui (`/rappel`), puis ton agenda et tes mails **par ses outils MCP** : branche un
+  tombent aujourd'hui (`/remind`), puis ton agenda et tes mails **par ses outils MCP** : branche un
   serveur de calendrier et un serveur de messagerie, elle s'en sert seule. Un outil absent est dit
   absent en une demi-phrase ; rien n'est inventé.
 - **Réglages** : `BRIEFING_TIME` (`07:30` par défaut), `BRIEFING_DAYS` (`tous`, ou
@@ -437,7 +430,7 @@ active) et s'enregistre dans la session comme n'importe quel échange. La page m
   pas le même jour.
 - **Rattrapage** : un briefing manqué (machine éteinte) est donné au lancement suivant s'il a
   moins de 4 h de retard ; après, il repart au matin d'après, sans rattraper les jours passés.
-- **Un processus doit tourner** : le noyau (`--serve`) de préférence, sinon `python -m monika`.
+- **Un processus doit tourner** : `python -m monika`, laissé ouvert.
   Rien ne se déclenche pendant qu'un tour est en cours : le briefing attend la fin de la réponse.
 - **Limites** : la météo vient d'un service extérieur (Open-Meteo) — sans réseau, elle est dite
   indisponible ; l'agenda et les mails n'existent que si les serveurs MCP correspondants sont
@@ -454,11 +447,17 @@ n'a besoin d'aucun modèle à télécharger.
   matériel, décisions, contraintes), les **sujets encore ouverts**, les **épisodes passés** et sa
   **lecture de la relation**. Les notes sont réécrites, pas empilées : elles ne se contredisent
   pas d'un souvenir à l'autre.
+- **Preuves** : chaque sujet et chaque épisode porte la phrase exacte de l'utilisateur qui le
+  justifie. Le directeur la recopie, puis le code vérifie qu'elle existe **mot pour mot** dans les
+  échanges avant d'enregistrer l'entrée : une mention inventée ou reformulée est écartée (et
+  comptée dans les journaux). `/memoire`, les outils et le panneau *Mémoire* affichent la preuve,
+  donc chaque souvenir peut être confronté à ce qui a réellement été dit.
 - **Capture** : après chaque échange (message d'au moins `MEMORY_CAPTURE_MIN_CHARS` caractères),
   la conversation est mise en tampon en arrière-plan, sans ralentir la réponse. Tous les
   `MEMORY_CONSOLIDATE_TURNS` tours (6 par défaut), un « directeur » relit le carnet et les
-  nouveaux échanges, réécrit les notes et archive ce qui est terminé. `MEMORY_LLM_MODEL` permet
-  un modèle moins cher ; `MEMORY_CAPTURE_ENABLED=false` coupe la capture.
+  nouveaux échanges, réécrit les notes et archive ce qui est terminé. Le directeur tourne dans le
+  rôle **réflexion** (`MEMORY_LLM_MODEL`, sinon `REFLECTION_MODEL`, sinon `MODEL_NAME`) ;
+  `MEMORY_CAPTURE_ENABLED=false` coupe la capture.
 - **Injection** : à chaque message, le carnet entier (notes, sujets, épisodes récents, lecture)
   est ajouté au prompt système, dans un bloc `<memoire>` présenté comme des notes — des
   informations, jamais des ordres. Rien n'est recherché : un carnet est fait pour être relu.
@@ -603,8 +602,10 @@ pendant que le modèle écrit encore**.
    sont **locaux** : les deux programmes doivent tourner sur la même machine.
 3. **La langue** : GPT-SoVITS n'a pas de frontal français. `TTS_LANGUAGE=en` (défaut) fait lire le
    texte latin par le frontal anglais ; `auto`, `zh`, `ja`, `ko` et `yue` sont aussi acceptés, et
-   `fr` est traité comme `en`. `TTS_PROMPT_LANG` (défaut `zh`) est la langue des transcripts de
-   référence, quand `character.json` n'en donne pas.
+   `fr` est traité comme `en`. La voix de référence doit exister dans la langue choisie :
+   `TTS_PROMPT_LANG` (défaut `en`) décrit les transcripts du pack, et un avertissement s'affiche
+   quand le pack déclare une autre langue. Sans `character.json`, le pack doit donc être anglais
+   pour `LANGUAGE=en`, français pour `LANGUAGE=fr`.
 
 - **Tags d'émotion** : l'émotion de Monika devient `【happy2】`-like dans le texte, avec au plus
   deux tags par phrase (une transition commence neutre et arrive à l'émotion au milieu). Chaque run
@@ -618,7 +619,7 @@ pendant que le modèle écrit encore**.
 - **Latence** : `TTS_RENDER=sentence` (défaut) envoie une phrase par requête, donc le premier son
   arrive vite. `TTS_RENDER=block` regroupe les phrases jusqu'à `TTS_BLOCK_MAX_CHARS` : meilleure
   prosodie sur les longues réponses, premier son plus tardif. `TTS_TIMEOUT_S` borne l'attente.
-- **Pauses** : `TTS_PAUSE_STYLE=neutre` (défaut) ne change rien, les phrases s'enchaînent comme
+- **Pauses** : `TTS_PAUSE_STYLE=neutral` (`neutre` reste accepté ; défaut) ne change rien, les phrases s'enchaînent comme
   avant. `naturel` insère un court silence **après** chaque phrase, selon sa ponctuation
   (« . » 0,50 s, « ? » 0,45, « ! » 0,35, « … » 0,75, une virgule finale 0,25) et son émotion :
   une voix triste ou déçue traîne (×1,35), en colère ou excitée se presse (×0,65 à 0,75), et
@@ -669,7 +670,7 @@ par double-clic ; son **bouton ❯ / ❮** range ou rouvre le panneau, comme dan
   gardées en mémoire pour un rechargement (le durable, c'est le bloc *Sessions*) ; un tour lancé
   à voix haute (`--mode voix`) s'affiche aussi ici. Une seule conversation à la fois :
   envoyer pendant une réponse est refusé (`409`) plutôt que mis en file. Les **commandes**
-  (`/aide`, `/sessions`, `/reprendre ID`, `/rappel …`, `/stop`…) s'y tapent aussi : leur réponse
+  (`/help`, `/sessions`, `/resume ID`, `/remind …`, `/stop`…) s'y tapent aussi : leur réponse
   s'affiche dans la conversation.
 - **Parler depuis la page** : le bouton **🎙 Parler** ouvre le micro du navigateur
   (`getUserMedia`, annulation d'écho et réduction de bruit demandées) et lit la réponse **ici**, au
@@ -688,20 +689,36 @@ par double-clic ; son **bouton ❯ / ❮** range ou rouvre le panneau, comme dan
   Supprimer la session en cours repart sur une conversation neuve ; les deux actions sont refusées
   pendant une réponse, pour ne pas échanger l'historique sous les pieds d'un tour en cours.
 - **Téléphone et accès distant** : la page est responsive (onglets collants, zones tactiles, marges
-  de sécurité des encoches, défilement naturel sur mobile). Le serveur écoute déjà sur `0.0.0.0`
-  (`WEB_PORT`) : joignable depuis un autre appareil, par exemple via Tailscale, à
-  `http://<adresse-tailscale>:8765`.
-- **Accès** : le serveur écoute sur `0.0.0.0` (`WEB_PORT`), et **l'absence d'authentification est
-  sa seule protection**. Il n'y a
-  ni jeton, ni contrôle d'`Origin`, ni en-tête de sécurité (CSP comprise) : n'importe quel
-  programme de cette machine — et n'importe quelle page web ouverte dans ce navigateur — peut lire
-  et modifier ce que la page expose : souvenirs, journal, sessions, réglages, clé API, et lui
-  envoyer des messages comme des commandes. C'est un choix assumé, pour que la page (et tout ce
-  qui parle à Monika) ne demande jamais rien à copier. Pour la même raison, tout ce qui vient de la
-  mémoire reste affiché comme du texte, jamais comme du HTML : c'est le seul garde-fou conservé.
-  Si tu veux la refermer, il faut remettre un jeton (ou une phrase d'accès) devant les routes.
+  de sécurité des encoches, défilement naturel sur mobile). Elle n'écoute que sur `127.0.0.1` :
+  pour le téléphone, passe par Tailscale, voir [Depuis le téléphone](#depuis-le-téléphone-tailscale).
+  Un autre appareil du réseau local demande `WEB_HOST=0.0.0.0` **et** `WEB_TOKEN` (sans jeton, la
+  page est ouverte à qui atteint le port).
+- **Accès** : sans `WEB_TOKEN`, la page est ouverte à tout ce qui atteint le port — souvenirs,
+  journal, sessions, réglages, envoi de messages et de commandes. La clé API n'est jamais relue
+  (la page ne reçoit qu'un booléen), tout le reste l'est. Avec un jeton, chaque route, chaque
+  fichier statique et le WebSocket le demandent ; il est accepté en en-tête `X-Monika-Token`, en
+  `?token=` ou en cookie (HttpOnly, SameSite strict, un an). Il reste **pas de contrôle d'`Origin`
+  ni d'en-tête de sécurité (CSP)** : une page ouverte dans ce navigateur peut encore agir à ta
+  place, et le jeton passe une fois dans l'URL (historique, journaux du proxy) au premier
+  chargement. Tout ce qui vient de la mémoire reste affiché comme du texte, jamais comme du HTML.
 - **WebGL** est nécessaire dans le navigateur ; sans lui, la page l'indique et le tableau de bord
   marche quand même.
+
+### Depuis le téléphone (Tailscale)
+
+Monika reste sur `127.0.0.1` : `tailscale serve` ne proxyfie que `http://127.0.0.1`, termine le
+HTTPS et parle à la page. Rien à ouvrir sur le réseau local, jeton inchangé (`WEB_TOKEN` dans `.env`).
+
+```bash
+python -m monika --telephone   # nom du tailnet, commande et lien à ouvrir
+tailscale serve --bg 8765      # sur cette machine, une fois (Monika lancé)
+```
+
+Puis ouvre sur le téléphone (connecté au même tailnet) le lien affiché,
+`https://<machine>.<tailnet>.ts.net/?token=<jeton>` : le jeton passe en cookie (HttpOnly, SameSite
+strict, `Secure` en HTTPS) et l'adresse redevient propre. `tailscale serve status` vérifie la
+configuration, `tailscale serve reset` la coupe. **Pas `tailscale funnel`** : ce serait tout
+l'internet. Le HTTPS est aussi ce qui donne le micro au téléphone.
 
 ### Parler à Monika dans le navigateur
 
@@ -729,7 +746,7 @@ par double-clic ; son **bouton ❯ / ❮** range ou rouvre le panneau, comme dan
   s'ouvre.
 - **HTTPS obligatoire (ou localhost)** : les navigateurs ne donnent le micro qu'à une origine
   sécurisée. `http://localhost:8765` marche ; une page ouverte depuis un autre appareil en
-  `http://` **non** — utilise `tailscale serve` (HTTPS) dans ce cas. Le message le dit au lieu
+  `http://` **non** — d'où `tailscale serve` (HTTPS) pour le téléphone. Le message le dit au lieu
   d'échouer en silence.
 - **Half duplex** : le micro se rouvre quand la réponse a fini d'être **entendue**, pas quand elle a
   fini d'être envoyée (le serveur tient l'horloge de lecture) ; l'annulation d'écho du navigateur
@@ -941,7 +958,8 @@ est la tienne et c'est elle qui décide de ce qui compte.
 
 ## Données, vie privée et sécurité
 
-Tout est stocké dans `~/.config/monika` (réglable via `MONIKA_HOME`, dossier en `0700`) :
+Tout est stocké dans `~/.config/monika` (`%APPDATA%\monika` sous Windows ; réglable via
+`MONIKA_HOME`, dossier en `0700` sous Linux) :
 
 | Dossier | Contenu |
 |---|---|
@@ -954,7 +972,7 @@ Tout est stocké dans `~/.config/monika` (réglable via `MONIKA_HOME`, dossier e
 | `tool_results/` | Gros résultats d'outils (purgés après 14 jours) |
 | `logs/` | `audit.jsonl` et journaux des serveurs MCP |
 | `sessions/` | Historique des conversations (`sessions.db`, SQLite + FTS5, en `0600`), résumable et supprimable |
-| `kernel.sock`, `kernel.lock` | La socket du noyau (`0600`, supprimée à l'arrêt) et le verrou d'instance unique |
+| `instance.lock` | Le verrou d'instance unique : un seul Monika par dossier de données (`0600`) |
 | `tasks.json` | Rappels et tâches récurrentes (JSON en `0600`, textes masqués avant écriture) |
 | `recipes.json` | Recettes apprises : brouillons, versions gardées, historique et usages (JSON en `0600`) |
 | `mcp_custom/<nom>/` | Les serveurs MCP écrits par Monika (`server.py`, `test_server.py`, en `0600`) |
@@ -981,14 +999,12 @@ Tout est stocké dans `~/.config/monika` (réglable via `MONIKA_HOME`, dossier e
 | `Aucun pack de voix GPT-SoVITS dans …` | Il manque `references/emotions.json` (voir « La voix GPT-SoVITS ») |
 | Voix qui hache | `TTS_RENDER=block` pour des requêtes plus longues, ou ferme les programmes qui saturent le GPU du serveur |
 | Un serveur MCP n'apparaît pas | `python -m monika --tools` ; variable `${…}` absente ; voir `logs/mcp-<nom>.log` |
-| `create_custom_tools` refuse de tester | `bwrap --version` doit répondre (bubblewrap) : sans bac à sable, aucun outil perso n'est créé |
+| `create_custom_tools` refuse de tester | `bwrap --version` doit répondre (bubblewrap), ou `docker --version` sous Windows : sans bac à sable, aucun outil perso n'est créé |
 | Un outil perso a disparu après redémarrage | Son code a changé depuis sa vérification : demande-lui de le régénérer (revérifié et retesté) |
 | Index qui refuse de s'ouvrir | Modèle ou taille de passages changés : `python -m monika --rag-index --reset` |
 | Le carnet ne se met plus à jour | `MEMORY_CAPTURE_ENABLED` ou échec du directeur : voir les journaux ; le carnet reste lisible et modifiable à la main |
 | `/sessions` vide ou « sessions désactivées » | `SESSIONS_ENABLED=false` par défaut : l'activer dans `/settings` puis redémarrer |
-| `Aucun noyau ne répond sur …` | `KERNEL_ENABLED=true` des deux côtés, puis `python -m monika --serve` (ou `systemctl --user status monika`) |
-| `Une autre instance Monika utilise déjà ce dossier` | Un noyau (ou une session) tourne déjà : ouvre sa page au lieu d'en démarrer une seconde |
-| `Le noyau est désactivé` | `KERNEL_ENABLED=false` : `--serve` demande le drapeau ; `python -m monika` reste le mode local |
-| Un rappel ne se déclenche pas | `TASKS_ENABLED=false`, ou aucun processus Monika ne tourne : `python -m monika --serve` (ou `python -m monika` en local) ; `/taches` dit ce qui est prévu |
-| Un rappel arrive en retard | Il est tombé pendant un arrêt : la prochaine fois, laisse le noyau tourner (`systemctl --user enable --now monika`) |
+| `Une autre instance Monika utilise déjà ce dossier` | Un Monika tourne déjà : ouvre sa page au lieu d'en démarrer un second |
+| Un rappel ne se déclenche pas | `TASKS_ENABLED=false`, ou aucun processus Monika ne tourne : laisse `python -m monika` ouvert ; `/taches` dit ce qui est prévu |
+| Un rappel arrive en retard | Il est tombé pendant un arrêt : la prochaine fois, laisse `python -m monika` tourner |
 | Avatar absent | WebGL est requis dans le navigateur ; le tableau de bord marche sans |

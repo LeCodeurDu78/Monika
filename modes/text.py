@@ -13,30 +13,14 @@ from agent.llm import LLMError, TextDelta
 from agent.loop import Agent, AvatarCue, Filler, Notice, ToolEnd, ToolStart, TurnEnd
 from agent.recipes import RecipeError
 from agent.sessions import SessionsError
+from monika.i18n import command, subcommand, tr
 from security.masking import Masker
 from tools.registry import ToolFailure
 from voice.speech_text import SentenceSplitter
 
-HELP = (
-    "Commandes : /aide, /outils (liste des outils), /contexte (taille de la conversation), "
-    "/memoire (mon carnet sur toi), /oublier ID (supprime une entrée), "
-    "/relation (où nous en sommes ; « /relation reinitialiser » repart de zéro), "
-    "/journal (mes notes sur toi ; « /journal oublier ID », « /journal effacer »), "
-    "/journal-nuit (note de la nuit dans Obsidian ; « voir DATE », « supprimer DATE », "
-    "« accepter ID », « refuser ID »), "
-    "/sessions (sessions enregistrées ; « /reprendre ID », « /chercher MOT », "
-    "« /session oublier ID »), "
-    "/indexer [dossier] (indexe tes documents), /documents (état de l'index), "
-    "/rappel QUAND : TEXTE (dans 20 minutes, demain 8h, toutes les 2 heures, chaque jour à 8h, "
-    "chaque lundi et jeudi à 9h), "
-    "/taches (tâches planifiées ; « /tache annuler ID »), /briefing (le briefing du matin "
-    "tout de suite), /stop (arrête tout ce qui tourne), "
-    "/outils-perso (tes serveurs MCP : liste ; « code NOM », « desactiver NOM », "
-    "« supprimer NOM »), "
-    "/recettes (mes procédures apprises ; « garder ID », « refuser ID », « oublier ID »), "
-    "/effacer (oublie la conversation en cours), /quitter (ou Ctrl+D). "
-    "Ctrl+C interrompt la réponse et arrête ce qui tourne en arrière-plan."
-)
+
+def _help() -> str:
+    return tr("help.full")
 
 
 class _ChatOut:
@@ -112,12 +96,12 @@ class TextSession:
         self._out.flush()
         self._at_line_start = text.endswith("\n")
 
-    def set_output(self, out) -> None:
-        """Send what the session displays somewhere else (the kernel's clients)."""
-        self._out = out
-
     async def run(self) -> None:
-        self._write(f"{self._banner}\n" if self._banner else f"Monika est là. {HELP}\n")
+        self._write(
+            f"{self._banner}\n"
+            if self._banner
+            else f"{tr('cli.arrived')} {_help()}\n"
+        )
         while True:
             try:
                 line = (await self._read_line()).strip()
@@ -133,61 +117,59 @@ class TextSession:
         await self.close()
 
     async def handle_command(self, line: str) -> bool:
-        """Run one /command; returns False when the line is a message for Monika.
-
-        The kernel uses this to serve the terminal and the page through the same code.
-        """
-        if line in ("/quitter", "/q"):
-            return True  # the caller decides how to leave (the local loop breaks)
-        if line == "/aide":
-            self._write(HELP + "\n")
-        elif line == "/effacer":
-            self._agent.clear()
-            self._write("Conversation effacée.\n")
-        elif line == "/sessions":
-            self._sessions()
-        elif line.startswith("/reprendre"):
-            self._resume(line[len("/reprendre") :].strip())
-        elif line.startswith("/chercher"):
-            self._search(line[len("/chercher") :].strip())
-        elif line == "/session" or line.startswith("/session "):
-            self._forget_session(line[len("/session") :].strip())
-        elif line == "/outils":
-            self._show_tools()
-        elif line == "/outils-perso" or line.startswith("/outils-perso "):
-            self._personal_tools(line[len("/outils-perso") :].strip())
-        elif line == "/recettes" or line.startswith("/recettes "):
-            self._recipes_command(line[len("/recettes") :].strip())
-        elif line == "/contexte":
-            self._show_context()
-        elif line == "/memoire":
-            await self._show_memory()
-        elif line == "/journal-nuit" or line.startswith("/journal-nuit "):
-            await self._nightly_command(line[len("/journal-nuit") :].strip())
-        elif line.startswith("/journal"):
-            self._journal(line[len("/journal") :].strip())
-        elif line.startswith("/relation"):
-            self._relation(line[len("/relation") :].strip())
-        elif line.startswith("/indexer"):
-            self._start_indexing(line[len("/indexer") :].strip())
-        elif line == "/documents":
-            await self._show_documents()
-        elif line == "/stop":
-            self._write(self._stops(await self.stop_all()) + "\n")
-        elif line == "/taches":
-            self._tasks_list()
-        elif line == "/tache" or line.startswith("/tache "):
-            self._task_cancel(line[len("/tache") :].strip())
-        elif line == "/briefing":
-            self._briefing_now()
-        elif line.startswith("/rappel"):
-            self._remind(line[len("/rappel") :].strip())
-        elif line.startswith("/oublier"):
-            await self._forget(line[len("/oublier") :].strip())
-        elif line.startswith("/"):
-            self._write(f"Commande inconnue : {line}. {HELP}\n")
-        else:
+        """Run one /command; returns False when the line is a message for Monika."""
+        key, rest = command(line)
+        if key is None:
             return False
+        if key == "quit":
+            return True  # the caller decides how to leave (the local loop breaks)
+        if key == "help":
+            self._write(_help() + "\n")
+        elif key == "clear":
+            self._agent.clear()
+            self._write(tr("cli.cleared") + "\n")
+        elif key == "sessions":
+            self._sessions()
+        elif key == "resume":
+            self._resume(rest)
+        elif key == "search":
+            self._search(rest)
+        elif key == "session":
+            self._forget_session(rest)
+        elif key == "tools":
+            self._show_tools()
+        elif key == "custom-tools":
+            self._personal_tools(rest)
+        elif key == "recipes":
+            self._recipes_command(rest)
+        elif key == "context":
+            self._show_context()
+        elif key == "memory":
+            await self._show_memory()
+        elif key == "nightly":
+            await self._nightly_command(rest)
+        elif key == "journal":
+            self._journal(rest)
+        elif key == "relationship":
+            self._relation(rest)
+        elif key == "index":
+            self._start_indexing(rest)
+        elif key == "documents":
+            await self._show_documents()
+        elif key == "stop":
+            self._write(self._stops(await self.stop_all()) + "\n")
+        elif key == "tasks":
+            self._tasks_list()
+        elif key == "task":
+            self._task_cancel(rest)
+        elif key == "briefing":
+            self._briefing_now()
+        elif key == "remind":
+            self._remind(rest)
+        elif key == "forget":
+            await self._forget(rest)
+        else:
+            self._write(tr("cli.unknown", line=line, help=_help()) + "\n")
         return True
 
     async def close(self) -> None:
@@ -199,12 +181,12 @@ class TextSession:
         if (capture is not None and capture.pending) or (
             character is not None and character.journal_writing
         ):
-            self._write("Je termine d'enregistrer mes souvenirs…\n")
+            self._write(tr("cli.saving") + "\n")
         farewell = await self._start_farewell()
         left = await self._agent.aclose()
         if left:
-            self._write(f"{left} échange(s) n'ont pas pu être mémorisés.\n")
-        self._write("À bientôt.\n")
+            self._write(tr("cli.save_left", count=left) + "\n")
+        self._write(tr("cli.goodbye") + "\n")
         if farewell:
             await self._finish_speech()
 
@@ -213,7 +195,7 @@ class TextSession:
         if self._speaker is None:
             return False
         await self._speaker.cancel()
-        return self._speaker.say("À bientôt.")
+        return self._speaker.say(tr("cli.goodbye"))
 
     async def _finish_speech(self) -> None:
         try:
@@ -227,35 +209,29 @@ class TextSession:
     def _voice_error(self, message: str) -> None:
         """A problem of the voice itself (the text answer is unaffected)."""
         self._newline()
-        self._write(f"  [voix] {message}\n")
+        self._write(tr("cli.voice_error", error=message) + "\n")
 
     def _start_indexing(self, folder: str) -> None:
         rag = self._agent.rag
         if rag is None:
-            self._write(
-                "Index de documents désactivé ou indisponible (voir le message au lancement).\n"
-            )
+            self._write(tr("cli.rag_disabled") + "\n")
             return
         roots = None
         if folder:
             path = Path(folder).expanduser()
             if not path.is_dir():
-                self._write(f"Dossier introuvable : {folder}\n")
+                self._write(tr("cli.folder_missing", folder=folder) + "\n")
                 return
             roots = [path.resolve()]
         if rag.start_sync(roots):
-            self._write(
-                "Indexation lancée en arrière-plan. /documents pour suivre l'avancement.\n"
-            )
+            self._write(tr("cli.index_started") + "\n")
         else:
-            self._write(
-                "Une indexation est déjà en cours. /documents pour suivre l'avancement.\n"
-            )
+            self._write(tr("cli.index_running") + "\n")
 
     async def _show_documents(self) -> None:
         rag = self._agent.rag
         if rag is None:
-            self._write("Index de documents désactivé ou indisponible.\n")
+            self._write(tr("cli.documents_disabled") + "\n")
         else:
             self._write(await rag.status_text() + "\n")
 
@@ -263,7 +239,7 @@ class TextSession:
     def _remind(self, rest: str) -> None:
         """`/rappel QUAND : TEXTE`, without the model (the tool does the same from a sentence)."""
         if self._tasks is None:
-            self._write("Tâches planifiées désactivées (TASKS_ENABLED=false).\n")
+            self._write(tr("cli.tasks_disabled") + "\n")
             return
         if " : " in rest:
             quand, texte = rest.rsplit(" : ", 1)
@@ -272,12 +248,7 @@ class TextSession:
         else:
             quand, texte = "", ""
         if not quand.strip() or not texte.strip():
-            self._write(
-                "Usage : /rappel QUAND : TEXTE — par exemple « /rappel dans 20 minutes : "
-                "boire de l'eau », « /rappel toutes les 2 heures : boire de l'eau » ou "
-                "« /rappel chaque jour à 8h : la météo du jour » ou « /rappel du lundi au "
-                "vendredi à 9h : la revue du matin ».\n"
-            )
+            self._write(tr("cli.remind_usage") + "\n")
             return
         from agent.tasks import TasksError, parse_when
 
@@ -287,37 +258,36 @@ class TextSession:
         except TasksError as exc:
             self._write(f"{exc}\n")
             return
-        self._write(f"Tâche {task.id} : {when.says} — « {task.prompt} ».\n")
+        self._write(tr("cli.task_added", id=task.id, when=when.says, text=task.prompt) + "\n")
 
     def _tasks_list(self) -> None:
         if self._tasks is None:
-            self._write("Tâches planifiées désactivées (TASKS_ENABLED=false).\n")
+            self._write(tr("cli.tasks_disabled") + "\n")
             return
         tasks = self._tasks.all()
         if not tasks:
-            self._write(
-                "Aucune tâche planifiée. /rappel dans 20 minutes : boire de l'eau\n"
-            )
+            self._write(tr("cli.tasks_none") + "\n")
             return
-        self._write(f"Tâches planifiées ({len(tasks)}) :\n")
+        self._write(tr("cli.tasks_header", count=len(tasks)) + "\n")
         for task in tasks:
             self._write(task.describe() + "\n")
-        self._write("/tache annuler ID pour en supprimer une.\n")
+        self._write(tr("cli.task_cancel_hint") + "\n")
 
     def _task_cancel(self, rest: str) -> None:
         if self._tasks is None:
-            self._write("Tâches planifiées désactivées (TASKS_ENABLED=false).\n")
+            self._write(tr("cli.tasks_disabled") + "\n")
             return
-        if rest.startswith("annuler"):
-            rest = rest[len("annuler") :].strip()
+        first, _, tail = rest.partition(" ")
+        if subcommand(first) == "cancel":
+            rest = tail.strip()
         if not rest:
-            self._write("Usage : /tache annuler ID (les ids sont dans /taches).\n")
+            self._write(tr("cli.task_cancel_usage") + "\n")
             return
         task = self._tasks.cancel(rest)
         if task is None:
-            self._write(f"Aucune tâche avec l'id {rest}.\n")
+            self._write(tr("cli.task_not_found", id=rest) + "\n")
         else:
-            self._write(f"Tâche {task.id} supprimée : « {task.prompt} ».\n")
+            self._write(tr("cli.task_deleted", id=task.id, text=task.prompt) + "\n")
 
     @staticmethod
     def _date(stamp: str) -> str:
@@ -329,7 +299,7 @@ class TextSession:
     def _sessions(self) -> None:
         sessions = self._agent.sessions
         if sessions is None:
-            self._write("Les sessions sont désactivées (SESSIONS_ENABLED=false).\n")
+            self._write(tr("cli.sessions_disabled") + "\n")
             return
         try:
             rows = sessions.store.list(limit=15)
@@ -337,24 +307,25 @@ class TextSession:
             self._write(f"[sessions] {type(exc).__name__}: {exc}\n")
             return
         if not rows:
-            self._write("Aucune session enregistrée pour l'instant.\n")
+            self._write(tr("cli.sessions_none") + "\n")
             return
-        self._write("Sessions enregistrées, les plus récentes d'abord :\n")
+        self._write(tr("cli.sessions_header") + "\n")
         for row in rows:
-            mark = " ← en cours" if sessions.is_current(row.id) else ""
-            summary = ", résumé" if row.has_summary else ""
+            mark = tr("cli.current_mark") if sessions.is_current(row.id) else ""
+            summary = tr("cli.summary_mark") if row.has_summary else ""
             self._write(
-                f"  [{row.id}] {self._date(row.started_at)} · {row.turns} tour(s)"
-                f"{summary}{mark} · {row.title or '(sans titre)'}\n"
+                f"  [{row.id}] {self._date(row.started_at)} · {row.turns} "
+                f"{tr('cli.turns', count=row.turns)}"
+                f"{summary}{mark} · {row.title or tr('cli.untitled')}\n"
             )
-        self._write("  /reprendre ID, /session oublier ID\n")
+        self._write(tr("cli.sessions_hint") + "\n")
 
     def _resume(self, session_id: str) -> None:
         if self._agent.sessions is None:
             self._write("Les sessions sont désactivées (SESSIONS_ENABLED=false).\n")
             return
         if not session_id:
-            self._write("Usage : /reprendre ID (les ids s'affichent avec /sessions).\n")
+            self._write(tr("cli.resume_usage") + "\n")
             return
         try:
             message = self._agent.resume_session(session_id)
@@ -372,7 +343,7 @@ class TextSession:
             self._write("Les sessions sont désactivées (SESSIONS_ENABLED=false).\n")
             return
         if not query:
-            self._write("Usage : /chercher MOT (ou plusieurs mots).\n")
+            self._write(tr("cli.search_usage") + "\n")
             return
         try:
             hits = sessions.store.search(query, limit=10)
@@ -380,12 +351,12 @@ class TextSession:
             self._write(f"[sessions] {type(exc).__name__}: {exc}\n")
             return
         if not hits:
-            self._write(f"Aucun tour ne contient « {query} ».\n")
+            self._write(tr("cli.search_none", query=query) + "\n")
             return
-        self._write(f"{len(hits)} tour(s) trouvé(s) :\n")
+        self._write(tr("cli.search_header", count=len(hits)) + "\n")
         for hit in hits:
             self._write(f"  [{hit.session_id}] {self._date(hit.at)} · {hit.excerpt}\n")
-        self._write("  /reprendre ID pour reprendre la conversation.\n")
+        self._write(tr("cli.search_hint") + "\n")
 
     def _forget_session(self, argument: str) -> None:
         sessions = self._agent.sessions
@@ -393,10 +364,8 @@ class TextSession:
             self._write("Les sessions sont désactivées (SESSIONS_ENABLED=false).\n")
             return
         command, _, rest = argument.partition(" ")
-        if command != "oublier" or not rest.strip():
-            self._write(
-                "Usage : /session oublier ID (les ids s'affichent avec /sessions).\n"
-            )
+        if subcommand(command) != "forget" or not rest.strip():
+            self._write(tr("cli.session_forget_usage") + "\n")
             return
         session_id = rest.strip()
         try:
@@ -405,44 +374,52 @@ class TextSession:
             self._write(f"[sessions] {type(exc).__name__}: {exc}\n")
             return
         if not removed:
-            self._write(f"Aucune session avec l'id {session_id}.\n")
+            self._write(tr("cli.session_not_found", id=session_id) + "\n")
             return
         if sessions.is_current(session_id):
             self._agent.clear()  # the conversation being continued cannot outlive its file
-        self._write(f"Session {session_id} supprimée.")
+        self._write(tr("cli.session_deleted", id=session_id))
         self._write("\n")
 
     async def _show_memory(self) -> None:
         memory = self._agent.memory
         if memory is None:
-            self._write(
-                "Mon carnet est désactivé ou indisponible (voir le message au lancement).\n"
-            )
+            self._write(tr("cli.memory_disabled") + "\n")
             return
         try:
             items = await memory.list_all(limit=30)
         except Exception as exc:
-            self._write(f"[erreur mémoire] {type(exc).__name__}: {exc}\n")
+            self._write(tr("cli.memory_error", kind=type(exc).__name__, error=exc) + "\n")
             return
-        self._write(
-            "Ce que je sais de toi :\n" if items else "Je ne sais encore rien de toi.\n"
-        )
+        self._write(tr("cli.memory_header") + "\n" if items else tr("cli.memory_empty") + "\n")
         for item in items:
             self._write(f"  - {item.text}  [id {item.id}]\n")
+            if item.quote:
+                self._write(f"      « {item.quote} »\n")
         capture = self._agent.capture
         if capture is not None:
-            err = f" Dernière erreur : {capture.last_error}" if capture.failures else ""
+            err = (
+                " " + tr("cli.last_error", error=capture.last_error)
+                if capture.failures
+                else ""
+            )
             self._write(
-                f"Captures automatiques : {capture.captured} réussie(s), "
-                f"{capture.failures} échec(s), {capture.pending} en attente.{err}\n"
+                tr(
+                    "cli.memory_captures",
+                    captured=capture.captured,
+                    failures=capture.failures,
+                    pending=capture.pending,
+                    error=err,
+                )
+                + "\n"
             )
 
     async def _forget(self, memory_id: str) -> None:
         memory = self._agent.memory
         if memory is None:
-            self._write("Mon carnet est désactivé ou indisponible.\n")
+            self._write(tr("cli.memory_disabled") + "\n")
         elif not memory_id:
-            self._write("Usage : /oublier ID (les ids s'affichent avec /memoire).\n")
+            self._write(tr("cli.forget_usage") + "\n")
         else:
             try:
                 text = await memory.delete(memory_id)
@@ -450,42 +427,39 @@ class TextSession:
                 self._write(f"[erreur mémoire] {type(exc).__name__}: {exc}\n")
                 return
             self._write(
-                f"Oublié : {text}\n"
+                tr("cli.forgotten", text=text) + "\n"
                 if text is not None
-                else "Aucun souvenir avec cet id.\n"
+                else tr("cli.no_memory_id") + "\n"
             )
 
     def _journal(self, argument: str) -> None:
         character = self._agent.character
         entries = character.journal_entries() if character is not None else None
         if entries is None:
-            self._write("Le journal est désactivé.\n")
+            self._write(tr("cli.journal_disabled") + "\n")
             return
         command, _, rest = argument.partition(" ")
         rest = rest.strip()
-        if command == "effacer":
+        action = subcommand(command)
+        if action == "clear":
             character.journal_clear()
-            self._write("Journal effacé : je repars d'une page blanche.\n")
-        elif command == "oublier":
+            self._write(tr("cli.journal_cleared") + "\n")
+        elif action == "forget":
             if not rest:
-                self._write(
-                    "Usage : /journal oublier ID (les ids s'affichent avec /journal).\n"
-                )
+                self._write(tr("cli.journal_usage_forget") + "\n")
             elif character.journal_delete(rest):
-                self._write(f"Note {rest} supprimée.\n")
+                self._write(tr("cli.journal_note_deleted", id=rest) + "\n")
             else:
-                self._write(f"Aucune note avec l'id {rest}.\n")
+                self._write(tr("cli.journal_note_missing", id=rest) + "\n")
         elif command:
-            self._write("Usage : /journal, /journal oublier ID ou /journal effacer.\n")
+            self._write(tr("cli.journal_usage") + "\n")
         elif not (entries["impression"] or entries["threads"] or entries["notes"]):
-            self._write(
-                "Mon journal est encore vide : j'écris une note tous les quelques échanges.\n"
-            )
+            self._write(tr("cli.journal_empty") + "\n")
         else:
             if entries["impression"]:
-                self._write(f"Impression d'ensemble : {entries['impression']}\n")
+                self._write(tr("cli.journal_impression", text=entries['impression']) + "\n")
             if entries["threads"]:
-                self._write("À reprendre : " + " · ".join(entries["threads"]) + "\n")
+                self._write(tr("cli.journal_threads", text=" · ".join(entries["threads"])) + "\n")
             for note in entries["notes"]:
                 self._write(
                     f"[{note['id']}] ({note['at'][:16].replace('T', ' ')}) {note['text']}\n"
@@ -494,24 +468,31 @@ class TextSession:
     def _relation(self, argument: str) -> None:
         character = self._agent.character
         if character is None:
-            self._write("Le personnage (émotions et relation) est désactivé.\n")
+            self._write(tr("cli.relation_disabled") + "\n")
             return
-        if argument in ("reinitialiser", "réinitialiser"):
+        if subcommand(argument) == "reset" or argument in ("reinitialiser", "réinitialiser"):
             character.reset_relationship()
-            self._write("Relation réinitialisée : on repart de zéro.\n")
+            self._write(tr("cli.relation_reset") + "\n")
             return
         if argument:
-            self._write("Usage : /relation, ou /relation reinitialiser.\n")
+            self._write(tr("cli.relation_usage") + "\n")
             return
         snap = character.snapshot()
         if not snap:
-            self._write("État indisponible pour le moment.\n")
+            self._write(tr("cli.relation_unavailable") + "\n")
             return
-        mood = snap["dominant"] if snap["dominant"] != "neutre" else "égale"
+        mood = snap["dominant"] if snap["dominant"] != "neutre" else tr("character.neutral")
         self._write(
-            f"Relation : {snap['level_label']} (favorabilité {snap['favorability']:.2f}) · humeur : {mood} · "
-            f"{snap['messages']} messages, {snap['active_days']} jour(s) de présence, "
-            f"série en cours : {snap['streak']}.\n"
+            tr(
+                "cli.relation_line",
+                level=snap["level_label"],
+                favorability=snap["favorability"],
+                mood=mood,
+                messages=snap["messages"],
+                days=snap["active_days"],
+                streak=snap["streak"],
+            )
+            + "\n"
         )
 
     def _show_context(self) -> None:
@@ -520,19 +501,30 @@ class TextSession:
 
         st = self._agent.stats()
         summary = (
-            f"environ {fmt(st['summary_tokens'])} tokens"
+            tr("cli.tokens", count=fmt(st['summary_tokens']))
             if st["summary_tokens"]
-            else "aucun"
+            else tr("cli.context_none")
         )
         self._write(
-            f"Contexte : environ {fmt(st['tokens'])} tokens sur un budget de {fmt(st['budget'])} "
-            f"(fenêtre du modèle : {fmt(st['window'])}), {st['messages']} messages. "
-            f"Résumé des anciens échanges : {summary}.\n"
+            tr(
+                "cli.context_line",
+                tokens=fmt(st["tokens"]),
+                budget=fmt(st["budget"]),
+                window=fmt(st["window"]),
+                messages=st["messages"],
+                summary=summary,
+            )
+            + "\n"
         )
         self._write(
-            f"Répartition : prompt système ≈ {fmt(st['prompt_tokens'])}, "
-            f"outils ≈ {fmt(st['tools_tokens'])} ({st['tools_count']} outil(s)), "
-            f"historique ≈ {fmt(st['history_tokens'])} tokens.\n"
+            tr(
+                "cli.context_split",
+                prompt=fmt(st["prompt_tokens"]),
+                tools=fmt(st["tools_tokens"]),
+                count=st["tools_count"],
+                history=fmt(st["history_tokens"]),
+            )
+            + "\n"
         )
         costs = self._agent.tool_costs()
         if costs:
@@ -540,70 +532,65 @@ class TextSession:
             for _name, source, tokens in costs:
                 by_source.setdefault(source, []).append(tokens)
             parts = [
-                f"{src} : {len(v)} outil(s), ≈ {fmt(sum(v))}"
+                f"{src} : {len(v)} " + tr("cli.tools_count", count=len(v)) + f", ≈ {fmt(sum(v))}"
                 for src, v in sorted(by_source.items(), key=lambda kv: -sum(kv[1]))
             ]
-            self._write("Outils par source : " + " ; ".join(parts) + ".\n")
+            self._write(tr("cli.context_sources", sources=" ; ".join(parts)) + "\n")
             self._write(
-                "Les plus lourds : "
-                + ", ".join(f"{n} ({fmt(t)})" for n, _s, t in costs[:5])
-                + ".\n"
+                tr(
+                    "cli.context_heaviest",
+                    tools=", ".join(f"{n} ({fmt(t)})" for n, _s, t in costs[:5]),
+                )
+                + "\n"
             )
             if st["tools_tokens"] > 0.25 * st["budget"]:
-                self._write(
-                    "Les outils pèsent lourd à chaque message : limite-les avec « enabled_tools » "
-                    "ou « disabled_tools » dans mcp_servers.json.\n"
-                )
+                self._write(tr("cli.context_tools_heavy") + "\n")
 
     def _show_tools(self) -> None:
         tools = self._agent.registry.tools()
         if not tools:
-            self._write("Aucun outil disponible (voir mcp_servers.json).\n")
+            self._write(tr("cli.tools_none") + "\n")
         for t in tools:
-            self._write(f"  {t.name}{' (lent)' if t.slow else ''} — {t.source}\n")
+            self._write(f"  {t.name}{tr('cli.tool_slow') if t.slow else ''} — {t.source}\n")
 
     def _personal_tools(self, argument: str) -> None:
         """`/outils-perso` : liste, code, désactivation et suppression des outils perso."""
         if self._custom_tools is None:
-            self._write("Les outils perso ne sont pas disponibles dans cette session.\n")
+            self._write(tr("cli.custom_unavailable") + "\n")
             return
         command, _, rest = argument.partition(" ")
         rest = rest.strip()
+        action = subcommand(command)
         try:
             if not command:
                 self._write(self._custom_tools.status_text() + "\n")
-            elif command == "code" and rest:
+            elif action == "code" and rest:
                 self._write(self._custom_tools.show(rest) + "\n")
-            elif command == "desactiver" and rest:
+            elif action == "disable" and rest:
                 self._write(self._custom_tools.disable(rest) + "\n")
-            elif command == "supprimer" and rest:
+            elif action == "delete" and rest:
                 self._write(self._custom_tools.delete(rest) + "\n")
             else:
-                self._write(
-                    "Usage : /outils-perso, /outils-perso code NOM, "
-                    "/outils-perso desactiver NOM, /outils-perso supprimer NOM.\n"
-                )
+                self._write(tr("cli.custom_usage") + "\n")
         except ToolFailure as exc:
             self._write(f"{exc}\n")
 
     def _recipes_command(self, argument: str) -> None:
         """`/recettes` : seul l'utilisateur garde, refuse ou oublie une procédure."""
         if self._recipes_store is None:
-            self._write("Les recettes sont désactivées (RECIPES_ENABLED=false).\n")
+            self._write(tr("cli.recipes_disabled") + "\n")
             return
         command, _, rest = argument.partition(" ")
         rest = rest.strip()
+        action = subcommand(command)
         try:
             if not command:
                 self._write(self._recipes_store.list_text() + "\n")
-            elif command in ("garder", "refuser", "oublier") and rest:
-                action = getattr(self._recipes_store, command)
-                self._write(action(rest) + "\n")
+            elif action in ("keep", "refuse", "forget") and rest:
+                call = getattr(self._recipes_store, action)
+                self._write(call(rest) + "\n")
             else:
-                self._write(
-                    "Usage : /recettes, /recettes garder ID, /recettes refuser ID, "
-                    "/recettes oublier ID.\n"
-                )
+                self._write(tr("cli.recipes_usage") + "\n")
         except RecipeError as exc:
             self._write(f"{exc}\n")
 
@@ -615,17 +602,15 @@ class TextSession:
         """`/briefing` : tout de suite, dans un tour à part (la commande tient le verrou du tour)."""
         briefing = self._briefing
         if briefing is None:
-            self._write(
-                "Le briefing du matin est désactivé (BRIEFING_ENABLED=false).\n"
-            )
+            self._write(tr("cli.briefing_disabled") + "\n")
             return
-        self._write("Briefing du matin en préparation…\n")
+        self._write(tr("cli.briefing_wait") + "\n")
 
         async def run() -> None:
             try:
                 await briefing.run_now()
             except Exception as exc:  # noqa: BLE001 - un briefing ne casse pas la session
-                self._write(f"Briefing impossible ({type(exc).__name__}: {exc}).\n")
+                self._write(tr("cli.briefing_failed", kind=type(exc).__name__, error=exc) + "\n")
 
         task = asyncio.get_running_loop().create_task(run())
         self._briefing_tasks.add(task)
@@ -635,45 +620,38 @@ class TextSession:
         """`/journal-nuit` : lire ou supprimer une note, accepter ou refuser une consolidation."""
         nightly = self._nightly
         if nightly is None:
-            self._write(
-                "La veille nocturne est désactivée (NIGHTLY_ENABLED=false) ou "
-                "OBSIDIAN_VAULT n'est pas défini.\n"
-            )
+            self._write(tr("cli.nightly_disabled") + "\n")
             return
         command, _, rest = argument.partition(" ")
         rest = rest.strip()
+        action = subcommand(command)
         if not command:
             self._write(nightly.summary_text() + "\n")
-        elif command == "voir":
+        elif action == "show":
             if not rest:
-                self._write("Usage : /journal-nuit voir DATE (AAAA-MM-JJ).\n")
+                self._write(tr("cli.nightly_usage_show") + "\n")
                 return
             text = nightly.read_note(rest)
             if text is None:
-                self._write(f"Aucune note générée pour {rest}.\n")
+                self._write(tr("cli.nightly_no_note", date=rest) + "\n")
             else:
                 self._write(text if text.endswith("\n") else text + "\n")
-        elif command == "supprimer":
+        elif action == "delete":
             if not rest:
-                self._write("Usage : /journal-nuit supprimer DATE (AAAA-MM-JJ).\n")
+                self._write(tr("cli.nightly_usage_delete") + "\n")
             elif nightly.delete_note(rest):
-                self._write(f"Note du {rest} supprimée (et ses propositions).\n")
+                self._write(tr("cli.nightly_deleted", date=rest) + "\n")
             else:
-                self._write(f"Aucune note générée pour {rest}.\n")
-        elif command in ("accepter", "refuser"):
+                self._write(tr("cli.nightly_no_note", date=rest) + "\n")
+        elif action in ("accept", "refuse"):
             if not rest:
-                self._write(
-                    f"Usage : /journal-nuit {command} ID (les ids sont dans /journal-nuit).\n"
-                )
+                self._write(tr("cli.nightly_usage_accept", action=action) + "\n")
             else:
                 self._write(
-                    await nightly.resolve(rest, accept=command == "accepter") + "\n"
+                    await nightly.resolve(rest, accept=action == "accept") + "\n"
                 )
         else:
-            self._write(
-                "Usage : /journal-nuit, /journal-nuit voir DATE, /journal-nuit supprimer DATE, "
-                "/journal-nuit accepter ID, /journal-nuit refuser ID.\n"
-            )
+            self._write(tr("cli.nightly_usage") + "\n")
 
     def _summary(self, raw: str, limit: int = 100) -> str:
         try:
@@ -708,10 +686,10 @@ class TextSession:
         if not line.startswith("/"):
             await self.reply(line, source=source)
             return
-        if line in ("/quitter", "/q"):
+        if command(line)[0] == "quit":
             if self._chat is not None:
                 self._chat.begin(line, source=source)
-                self._chat.end("Cette commande n'agit qu'au terminal.")
+                self._chat.end(tr("cli.quit_terminal"))
             return
         async with self._turn_lock:
             previous = self._out
@@ -724,7 +702,7 @@ class TextSession:
             except asyncio.CancelledError:
                 self._out = previous
                 if self._chat is not None:
-                    self._chat.end("".join(out.parts).strip() or "Arrêté.")
+                    self._chat.end("".join(out.parts).strip() or tr("cli.stopped_short"))
                 raise
             finally:
                 self._out = previous
@@ -732,7 +710,7 @@ class TextSession:
                 await self._reply(line, source=source, announce=self._chat is None)
                 return
             if self._chat is not None:
-                self._chat.end("".join(out.parts).strip() or "Rien à afficher.")
+                self._chat.end("".join(out.parts).strip() or tr("cli.no_reply"))
 
     async def run_task(self, prompt: str, label: str | None = None) -> None:
         """Entry point of the scheduler in a local session: the reminder is an ordinary turn."""
@@ -744,24 +722,22 @@ class TextSession:
         The memory captures already queued are not cancelled: they go on to their end. Nothing here
         raises: an interruption must always leave a usable session.
         """
-        stopped = ["réponse"] if turn else []
+        stopped = [tr("cli.answer")] if turn else []
         self._cancel_action_tasks()
         if self._speaker is not None and self._speaker.busy:
             await self._speaker.cancel()
-            stopped.append("voix")
+            stopped.append(tr("cli.voice"))
         rag = getattr(self._agent, "rag", None)
         if rag is not None and rag.running:
             await rag.stop_sync()
-            stopped.append("indexation")
+            stopped.append(tr("cli.indexing"))
         if self._hub is not None:
             self._hub.set_state("idle")
         return stopped
 
     @staticmethod
     def _stops(stopped: list[str]) -> str:
-        return (
-            "Arrêté : " + ", ".join(stopped) + "." if stopped else "Rien ne tournait."
-        )
+        return tr("cli.stopped", items=", ".join(stopped)) if stopped else tr("cli.nothing_running")
 
     async def _reply(
         self,
@@ -794,7 +770,7 @@ class TextSession:
         if self._hub is not None:
             self._hub.set_state("thinking")
         try:
-            async for event in self._agent.run_turn(user_text):
+            async for event in self._agent.run_turn(user_text, auto=source != "user"):
                 if splitter is not None and not isinstance(
                     event, (TextDelta, AvatarCue)
                 ):
@@ -854,7 +830,7 @@ class TextSession:
                     self._spawn_action_chain(user_text, "".join(reply_parts))
         except LLMError as exc:
             self._newline()
-            self._write(f"[erreur] {exc}\n\n")
+            self._write(tr("cli.error", error=exc) + "\n\n")
             if self._chat is not None:
                 self._chat.end("".join(reply_parts), error=str(exc))
         except asyncio.CancelledError:
@@ -866,14 +842,14 @@ class TextSession:
             stopped = await self.stop_all(
                 turn=True
             )  # Ctrl+C stops everything, not only the reply
-            self._write("[interrompu]\n\n")
+            self._write(tr("cli.interrupted") + "\n\n")
             if self._chat is not None:
                 self._chat.end("".join(reply_parts), error="interrompu")
-            background = [s for s in stopped if s != "réponse"]
+            background = [s for s in stopped if s != tr("cli.answer")]
             if (
                 background
             ):  # Only when something else was running: stay quiet in the common case
-                self._write(f"  (aussi arrêté : {', '.join(background)})\n\n")
+                self._write(tr("cli.also_stopped", items=", ".join(background)) + "\n\n")
         finally:
             if self._chat is not None and self._chat.busy:
                 self._chat.end(

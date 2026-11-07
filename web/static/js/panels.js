@@ -1,7 +1,7 @@
 // The dashboard panels: pure rendering and the edits the person may request. Text only, never HTML.
 // (Kept apart from dashboard.js so it can be tested without a browser: see tests/js/panels.test.mjs.)
 
-export const fmt = (n) => new Intl.NumberFormat('fr-FR').format(n);
+export const fmt = (n) => new Intl.NumberFormat(document.documentElement.lang || 'fr-FR').format(n);
 
 export function el(tag, className, text) {
   const node = document.createElement(tag);
@@ -94,12 +94,15 @@ const MEMORY_KINDS = { notes: 'mon carnet', sujet: 'sujet en cours', 'événemen
 
 function factRow(fact, refresh) {
   const url = `/api/memory/${encodeURIComponent(fact.id)}`;
-  return editableRow({
+  const row = editableRow({
     text: fact.text, meta: MEMORY_KINDS[fact.kind] || '', channel: 'memory',
     label: 'Texte du souvenir', maxLength: 4000, refresh,
     onSave: (text) => apiRequest(url, 'PUT', { text }),
     onDelete: () => apiRequest(url, 'DELETE'),
   });
+  // The proof: the user's own words are kept beside the memory, so it can be checked
+  if (fact.quote) row.append(el('span', 'meta muted', `« ${fact.quote} »`));
+  return row;
 }
 
 function noteRow(note, refresh) {
@@ -145,7 +148,7 @@ function sessionRow(item, current, refresh) {
 
 function noteDate(at) {
   const date = new Date(at);
-  return Number.isNaN(date.getTime()) ? '' : date.toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' });
+  return Number.isNaN(date.getTime()) ? '' : date.toLocaleString(document.documentElement.lang || 'fr-FR', { dateStyle: 'short', timeStyle: 'short' });
 }
 
 const EMOTION_LABELS = { neutre: 'neutre', joyeuse: 'joyeuse', taquine: 'taquine', boudeuse: 'boudeuse', surprise: 'surprise' };

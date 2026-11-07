@@ -25,14 +25,12 @@ from pathlib import Path
 from typing import Any
 
 from character.models import fold_text
+from monika.i18n import tr
 
 TIERS: tuple[str, ...] = ("mild", "bad", "severe")
 MAX_WORD_CHARS = 64
 MAX_WORDS_PER_TIER = 500
-NOTE = (
-    "Une entrée par ligne, trois niveaux. Aucun mot n'est livré avec le projet : cette liste est la "
-    "tienne (SENSITIVE_WORDS_ENABLED=false pour couper le filtre)."
-)
+NOTE = "security.note"  # catalog key; resolved when the file is written
 
 _ZERO_WIDTH = re.compile(r"[\u200B-\u200D\uFEFF\u2060]")
 # `@` at a word boundary is a mention prefix (separator); inside a word it is leetspeak for `a`.
@@ -67,15 +65,11 @@ def clean_word(raw: str) -> str:
 def validate_tiers(raw: Any) -> dict[str, list[str]]:
     """Strict validation of what the page sends or what words.json holds. French error, nothing partial."""
     if not isinstance(raw, dict):
-        raise WordsError(
-            "La liste doit être un objet JSON avec les niveaux mild, bad et severe."
-        )
+        raise WordsError(tr("security.not_object"))
     unknown = set(raw) - set(TIERS) - {"_note"}
     if unknown:
         raise WordsError(
-            "Niveaux inconnus : "
-            + ", ".join(sorted(unknown))
-            + ". Attendu : mild, bad, severe."
+            tr("security.unknown_tiers", tiers=", ".join(sorted(unknown)))
         )
     cleaned: dict[str, list[str]] = {}
     for tier in TIERS:
@@ -85,21 +79,20 @@ def validate_tiers(raw: Any) -> dict[str, list[str]]:
         ):  # One word per line, as typed in the page's textarea
             values = values.splitlines()
         if not isinstance(values, list):
-            raise WordsError(f"« {tier} » doit être une liste de mots.")
+            raise WordsError(tr("security.tier_list", tier=tier))
         if len(values) > MAX_WORDS_PER_TIER:
-            raise WordsError(f"« {tier} » : {MAX_WORDS_PER_TIER} mots au maximum.")
+            raise WordsError(tr("security.tier_max", tier=tier, max=MAX_WORDS_PER_TIER))
         words: list[str] = []
         for value in values:
             if not isinstance(value, str):
-                raise WordsError(f"« {tier} » ne contient que du texte.")
+                raise WordsError(tr("security.tier_text", tier=tier))
             for line in value.splitlines():
                 word = clean_word(line)
                 if not word:
                     continue
                 if len(word) > MAX_WORD_CHARS:
                     raise WordsError(
-                        f"Mot trop long dans « {tier} » ({MAX_WORD_CHARS} caractères au "
-                        f"maximum) : {word[:20]}…"
+                        tr("security.word_too_long", tier=tier, max=MAX_WORD_CHARS, word=word[:20])
                     )
                 if word not in words:
                     words.append(word)
@@ -119,14 +112,14 @@ def read_words(path: Path) -> dict[str, list[str]]:
         return {tier: [] for tier in TIERS}
     except (OSError, ValueError) as exc:
         raise WordsError(
-            f"{path} est illisible ({exc}) : corrige ou supprime-le."
+            tr("security.read", path=path, error=exc)
         ) from exc
     return validate_tiers(data)
 
 
 def write_words(path: Path, tiers: dict[str, list[str]]) -> None:
     """Write the bank in one go, private to the user."""
-    payload = {"_note": NOTE, **{tier: list(tiers.get(tier, [])) for tier in TIERS}}
+    payload = {"_note": tr(NOTE), **{tier: list(tiers.get(tier, [])) for tier in TIERS}}
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         handle, temporary = tempfile.mkstemp(
@@ -139,7 +132,7 @@ def write_words(path: Path, tiers: dict[str, list[str]]) -> None:
         os.replace(temporary, path)
     except OSError as exc:
         raise WordsError(
-            f"Impossible d'écrire {path} : {exc.strerror or exc}."
+            tr("security.write", path=path, error=exc.strerror or exc)
         ) from exc
 
 

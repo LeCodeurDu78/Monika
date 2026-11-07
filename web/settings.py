@@ -40,6 +40,7 @@ PROBE_TIMEOUT_S = 1.5
 
 # What the page shows. A curated list stays readable; the rest stays editable by hand in settings.json.
 CATALOG: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("Langue", ("language",)),
     (
         "Modèle et génération",
         ("model_name", "llm_temperature", "llm_timeout_s", "max_steps"),
@@ -68,8 +69,15 @@ CATALOG: tuple[tuple[str, tuple[str, ...]], ...] = (
         ),
     ),
     (
-        "Rôle action",
+        "Rôles",
         (
+            "surface_llm_model",
+            "surface_prompt",
+            "surface_timeout_s",
+            "reflection_model",
+            "reflection_enabled",
+            "reflection_speak",
+            "reflection_prompt",
             "action_llm_enabled",
             "action_llm_model",
         ),
@@ -79,7 +87,6 @@ CATALOG: tuple[tuple[str, tuple[str, ...]], ...] = (
         ("memory_consolidate_turns", "memory_notes_max_chars", "memory_capture_enabled"),
     ),
     ("Sessions", ("sessions_enabled", "sessions_keep_days")),
-    ("Noyau persistant", ("kernel_enabled",)),
     ("Tâches planifiées", ("tasks_enabled", "tasks_max")),
     (
         "Briefing du matin",
@@ -146,7 +153,7 @@ def _kind(name: str, value: Any) -> str:
         return "bool"
     if isinstance(value, (int, float)):
         return "number"
-    if name == "persona_text" or (
+    if name in ("persona_text", "surface_prompt", "reflection_prompt") or (
         isinstance(value, str) and ("\n" in value or len(value) > 60)
     ):
         return "long"
@@ -198,6 +205,7 @@ class SettingsApi:
                 "OPENAI_API_KEY": bool(self._s.openai_api_key.get_secret_value())
             },
             "settings_file": str(settings_json_path()),
+            "language": self._s.language,
             "words": self._words(),
         }
 

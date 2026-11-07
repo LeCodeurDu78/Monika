@@ -1,8 +1,9 @@
-"""Local web server: serves the avatar page and streams live events. Reachable from this computer only.
+"""Local web server: serves the avatar page and streams live events.
 
-No access control: every route answers without a token and without an Origin check, and the page
-sends whatever it has to say (messages, /commands and, when it asks for it, microphone audio) to the
-agent.
+It listens on 127.0.0.1 by default. When `WEB_HOST` puts it on the network, `WEB_TOKEN` must be set:
+the token is accepted as an `X-Monika-Token` header, a `?token=` query or a cookie, and opening `/`
+with `?token=` once stores it in the cookie so the page itself needs nothing to copy. There is still
+no Origin check and no security header (CSP), so the token is the only lock.
 """
 
 from __future__ import annotations
@@ -11,6 +12,7 @@ import asyncio
 import contextlib
 import json
 import re
+import secrets
 import socket
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -18,7 +20,12 @@ from typing import Any
 
 import uvicorn
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import (
+    HTMLResponse,
+    JSONResponse,
+    PlainTextResponse,
+    RedirectResponse,
+)
 from fastapi.staticfiles import StaticFiles
 
 from character import emotion_spec
@@ -26,7 +33,9 @@ from character.journal import MAX_IMPRESSION_CHARS, MAX_NOTE_CHARS
 from web.hub import Hub
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
-HOST = "0.0.0.0"
+DEFAULT_HOST = "127.0.0.1"
+COOKIE = "monika_token"
+COOKIE_MAX_AGE = 60 * 60 * 24 * 365
 Snapshot = Callable[[], Awaitable[dict[str, Any]]]
 Actions = dict[str, Callable[..., Awaitable[None]]]
 MAX_TEXT_CHARS = 4000  # une note du carnet peut être longue (MEMORY_NOTES_MAX_CHARS)
@@ -52,11 +61,16 @@ def create_app(
     settings_api: Any | None = None,
     chat: Any = None,
     voice_factory: Any = None,
+    token: str = "",
 ) -> Any:
     app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     actions = actions or {}
     if settings_api is not None:
         actions = {**actions, **settings_api.actions()}  # Same act(), same ActionError
+
+    def allowed(given: str | None) -> bool:
+        """No token configured (127.0.0.1 only) means open; otherwise the token must match exactly."""
+        return not token or secrets.compare_digest(given or "", token)
 
     # A local app: its page, styles and scripts change with the code. Their URL carries the file's
     # mtime, so an updated file is never served from an old cache (see the middleware below).
@@ -74,6 +88,38 @@ def create_app(
         return HTMLResponse(
             asset_ref.sub(versioned, html), headers={"Cache-Control": "no-store"}
         )
+
+    @app.middleware("http")
+    async def require_token(request: Request, call_next: Any) -> Any:
+        """Every route and every file needs the token when one is configured."""
+        given = (
+            request.headers.get("x-monika-token")
+            or request.query_params.get("token")
+            or request.cookies.get(COOKIE)
+        )
+        if not allowed(given):
+            return PlainTextResponse(
+                "Jeton manquant ou incorrect : ouvre l'adresse avec ?token=…", status_code=401
+            )
+        if (
+            token
+            and request.method == "GET"
+            and request.url.path == "/"
+            and request.query_params.get("token")
+        ):  # keep the token out of the address bar and the history
+            response = RedirectResponse("/", status_code=303)
+            response.set_cookie(
+                COOKIE,
+                token,
+                httponly=True,
+                samesite="strict",
+                # Behind `tailscale serve` the proxy announces HTTPS (X-Forwarded-Proto,
+                # trusted from 127.0.0.1): the token then never travels over plain HTTP again.
+                secure=request.url.scheme == "https",
+                max_age=COOKIE_MAX_AGE,
+            )
+            return response
+        return await call_next(request)
 
     @app.middleware("http")
     async def no_store(request: Request, call_next: Any) -> Any:
@@ -274,6 +320,9 @@ def create_app(
 
     @app.websocket("/ws")
     async def live(ws: WebSocket) -> None:
+        if not allowed(ws.query_params.get("token") or ws.cookies.get(COOKIE)):
+            await ws.close(code=1008)  # the page must not open a live channel without it
+            return
         await ws.accept()
         queue = hub.subscribe()
         voice = (
@@ -352,7 +401,11 @@ class WebServer:
         settings_api: Any | None = None,
         chat: Any = None,
         voice_factory: Any = None,
+        host: str = DEFAULT_HOST,
+        token: str = "",
     ) -> None:
+        self.host = host
+        self._token = token
         self._actions = actions
         self._settings_api = settings_api
         self._chat = chat
@@ -372,7 +425,7 @@ class WebServer:
         """Start listening; returns the page address, or raises WebError."""
         probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:
-            probe.bind((HOST, self.port))
+            probe.bind((self.host, self.port))
         except OSError as exc:
             raise WebError(
                 f"Le port {self.port} est déjà utilisé ({exc.strerror}) : une autre instance de Monika "
@@ -388,10 +441,11 @@ class WebServer:
             self._settings_api,
             self._chat,
             self._voice_factory,
+            token=self._token,
         )
         config = uvicorn.Config(
             app,
-            host=HOST,
+            host=self.host,
             port=self.port,
             log_level="warning",
             access_log=False,

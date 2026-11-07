@@ -29,6 +29,8 @@ from tools.registry import Tool, ToolFailure, ToolRegistry
 
 MAX_CHARS = 60_000
 TEST_TIMEOUT_S = 60.0
+DOCKER_TIMEOUT_S = 240.0  # first run pulls the image and installs mcp
+DOCKER_IMAGE = "python:3.12-slim"
 
 _NAME = re.compile(r"^[a-z0-9][a-z0-9_-]{1,31}$")
 _LABELS = {
@@ -263,28 +265,64 @@ def sandbox_argv(folder: Path) -> list[str]:
     return [*argv, exe, "test_server.py"]
 
 
+def docker_argv(folder: Path) -> list[str]:
+    """Docker (Windows) : même garantie que bwrap — seul le dossier de l'outil est monté, réseau ouvert."""
+    tag = hashlib.sha256(str(folder).encode()).hexdigest()[:12]
+    return [
+        "docker",
+        "run",
+        "--rm",
+        "--name",
+        f"monika-outil-{tag}",
+        "--network",
+        "bridge",
+        "-v",
+        f"{folder}:/outil",
+        "-w",
+        "/outil",
+        "-v",
+        "monika-pip:/root/.cache/pip",  # mcp et les paquets restent en cache entre deux tests
+        "-e",
+        "PYTHONIOENCODING=utf-8",
+        DOCKER_IMAGE,
+        "sh",
+        "-lc",
+        "pip install --quiet --disable-pip-version-check mcp requests httpx "
+        "&& python test_server.py",
+    ]
+
+
+def sandbox_command(folder: Path) -> tuple[list[str], float]:
+    """Le bac à sable disponible ici, et combien de temps son test peut durer."""
+    if shutil.which("bwrap"):
+        return sandbox_argv(folder), TEST_TIMEOUT_S
+    if shutil.which("docker"):
+        return docker_argv(folder), DOCKER_TIMEOUT_S
+    raise ToolFailure(
+        "Aucun bac à sable disponible : sans lui, je ne crée pas d'outil perso. Sous Linux, "
+        "installe bubblewrap (sudo pacman -S bubblewrap) ; sous Windows, installe Docker "
+        "Desktop, puis réessaie."
+    )
+
+
 async def run_sandboxed(folder: Path) -> tuple[bool, str]:
     """Exécute test_server.py dans le bac à sable ; (réussi, sortie)."""
-    if shutil.which("bwrap") is None:
-        raise ToolFailure(
-            "bubblewrap (bwrap) est introuvable : sans bac à sable, je ne crée pas "
-            "d'outil perso. Installe-le (sudo pacman -S bubblewrap), puis réessaie."
-        )
+    argv, timeout_s = sandbox_command(folder)
     try:
         proc = await asyncio.create_subprocess_exec(
-            *sandbox_argv(folder),
+            *argv,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
         )
     except OSError as exc:
         raise ToolFailure(f"Bac à sable impossible à lancer : {exc}") from exc
     try:
-        async with asyncio.timeout(TEST_TIMEOUT_S):
+        async with asyncio.timeout(timeout_s):
             out, _ = await proc.communicate()
     except TimeoutError:
         proc.kill()
         await proc.wait()
-        return False, f"délai dépassé ({TEST_TIMEOUT_S:g} s)"
+        return False, f"délai dépassé ({timeout_s:g} s)"
     text = out.decode("utf-8", "replace").strip()
     return proc.returncode == 0, (text[-4000:] if text else "(aucune sortie)")
 

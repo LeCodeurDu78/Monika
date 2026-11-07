@@ -6,10 +6,9 @@ import re
 import unicodedata
 from collections.abc import Iterable
 
-CODE_NOTICE = (
-    "Je te laisse le code à l'écran."  # Spoken once instead of reading a code block
-)
-LINK_WORD = "un lien"  # Spoken instead of a bare URL
+from monika.i18n import is_english, tr, tr_dict
+
+# Resolved when spoken, so a language change does not need a module reload.
 
 _CLOSERS = "\"'»)]*_”’"
 _FENCE = re.compile(r"^\s{0,3}(?:`{3,}|~{3,})")
@@ -108,14 +107,16 @@ def _pick(count: str, names: tuple[str, str]) -> str:
 
 def _spoken_units(text: str) -> str:
     """Say "3 Go" as "3 gigaoctets": the name is used only when a number comes right before it."""
+    names = tr_dict("voice.unit_names") or _UNIT_NAMES
     text = _RATE.sub(
         lambda m: (
-            f"{m.group(1)} {_pick(m.group(1), _UNIT_NAMES[m.group(2)])} par seconde"
+            f"{m.group(1)} {_pick(m.group(1), names[m.group(2)])} "
+            + ("per second" if is_english() else "par seconde")
         ),
         text,
     )
     return _QUANTITY.sub(
-        lambda m: f"{m.group(1)} {_pick(m.group(1), _UNIT_NAMES[m.group(2)])}", text
+        lambda m: f"{m.group(1)} {_pick(m.group(1), names[m.group(2)])}", text
     )
 
 
@@ -129,6 +130,8 @@ def _path_name(match: re.Match[str]) -> str:
 
 def _time_words(match: re.Match[str]) -> str:
     hours, minutes = match.group(1), match.group(2)
+    if is_english():
+        return f"{hours}" if minutes == "00" else f"{hours} {minutes}"
     return f"{hours} h" if minutes == "00" else f"{hours} h {minutes}"
 
 
@@ -142,16 +145,16 @@ def clean_for_speech(text: str) -> str:
             return ""
         text = ", ".join(c for c in cells if c)
     text = _LINK.sub(r"\1", text)
-    text = _URL.sub(LINK_WORD, text)
+    text = _URL.sub(tr("voice.link"), text)
     text = _PATH.sub(_path_name, text)
     text = _HTML_TAG.sub("", text)
-    text = re.sub(r"(\d)\s*%", r"\1 pour cent", text).replace("%", " pour cent ")
-    text = re.sub(r"(\d)\s*€", r"\1 euros", text).replace("€", " euros ")
-    text = re.sub(r"(\d)\s*\$", r"\1 dollars", text)
-    text = re.sub(r"(\d)\s*°(?:\s*[CcFf]\b)?", r"\1 degrés", text)
+    text = re.sub(r"(\d)\s*%", lambda m: f"{m.group(1)} {tr('voice.percent')}", text).replace("%", f" {tr('voice.percent')} ")
+    text = re.sub(r"(\d)\s*€", lambda m: f"{m.group(1)} {tr('voice.euro_other' if float(m.group(1)) >= 2 else 'voice.euro_one')}", text).replace("€", f" {tr('voice.euro_other')} ")
+    text = re.sub(r"(\d)\s*\$", lambda m: f"{m.group(1)} {tr('voice.dollar_other' if float(m.group(1)) >= 2 else 'voice.dollar_one')}", text)
+    text = re.sub(r"(\d)\s*°(?:\s*[CcFf]\b)?", lambda m: f"{m.group(1)} {tr('voice.degree_other' if float(m.group(1)) >= 2 else 'voice.degree_one')}", text)
     text = _TIME.sub(_time_words, text)
     text = _spoken_units(text)
-    text = text.replace("&", " et ")
+    text = text.replace("&", f" {tr('voice.and')} ")
     text = re.sub(r"\s*(?:->|=>|→|⇒)\s*", ", ", text)
     text = text.replace("`", "").replace("*", "").replace("~", "").replace("|", ", ")
     text = re.sub(r"(?<=\w)_(?=\w)", " ", text).replace("_", "")
@@ -283,7 +286,7 @@ class SentenceSplitter:
 
     def _open_code(self) -> None:
         self._in_code = True
-        self._push(CODE_NOTICE, hard=True)
+        self._push(tr("voice.code_notice"), hard=True)
 
     def _line(self, line: str) -> None:
         """Handle the rest of a line that is now complete."""

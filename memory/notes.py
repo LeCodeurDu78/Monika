@@ -10,6 +10,10 @@ dans le prompt, comme une page qu'elle relit. C'est la différence avec mem0, qu
 découpait la conversation en « faits » isolés et décontextualisés, souvent faux ou
 contradictoires. Ici le fil des échanges est gardé : les notes se réécrivent au lieu
 de s'empiler.
+
+Chaque sujet et chaque épisode porte sa preuve : une phrase exacte de l'utilisateur, recopiée
+par le directeur puis vérifiée ici (`quote_supported`). Une entrée dont la citation ne se
+retrouve pas dans les échanges n'est pas enregistrée.
 """
 
 from __future__ import annotations
@@ -25,11 +29,20 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from agent.roles import REFLECTION_TEMPERATURE, memory_model
 from monika.config import Settings
+from monika.i18n import tr
 
 log = logging.getLogger("memory")
 
 USER_ID = "utilisateur"
+# Une consigne de forme (« rituel à maintenir au format demandé ») n'est pas un fait : elle décrit
+# comment je dois répondre, ce que mon prompt dit déjà.
+_RULE = re.compile(
+    r"(rituel|consigne|au format|format demand[ée]|ne pas oublier|sans titres?|"
+    r"maintenir .{0,20}format|prompt syst[èe]me)",
+    re.IGNORECASE,
+)
 _TAG = re.compile(r"<\s*/?\s*memoire\s*>", re.IGNORECASE)
 _WORD = re.compile(r"[0-9a-zà-öø-ÿ]{2,}", re.IGNORECASE)
 
@@ -38,34 +51,8 @@ MAX_BUFFER = 40  # turns kept while waiting for the director
 MAX_EVENTS = 20
 MAX_TOPICS = 8
 MAX_HISTORY = 10
-
-DIRECTOR_PROMPT = """\
-Tu tiens le carnet personnel de Monika, une IA qui vit sur l'ordinateur de son \
-utilisateur. Tu ne parles pas à l'utilisateur : tu réécris ce que Monika retient de lui.
-
-Règles :
-- Les notes sont à la première personne, du point de vue de Monika (« je »), sans \
-formule d'introduction ni date.
-- Garde ce qui est durable et utile : identité, goûts, habitudes, projets, relations, \
-matériel, décisions, contraintes, et le ton des échanges.
-- N'invente rien. N'écris jamais de mot de passe, de clé, de numéro de carte ni de secret.
-- Un sujet de « sujets en cours » qui ne revient pas dans les nouveaux échanges passe \
-dans « completed_events », en trois à cinq phrases maximum.
-- Un nouvel échange qui ouvre une question non résolue ajoute un sujet court.
-- « strategic_guidance » résume la relation telle qu'elle est maintenant (ton, \
-attentes, ce que Monika peut se permettre), en quelques phrases.
-- Les notes font au plus {max_chars} caractères.
-
-Réponds UNIQUEMENT par un objet JSON, sans texte autour :
-{{"notes": "...", "completed_events": ["..."], "ongoing_topics": ["..."], \
-"strategic_guidance": {{"lecture": "..."}}}}
-
-Carnet actuel :
-{state}
-
-Nouveaux échanges :
-{turns}
-"""
+MAX_NOTES_QUOTES = 6  # phrases qui justifient les notes en cours
+EVIDENCE_MIN_CHARS = 12  # en dessous, une citation ne prouve rien
 
 
 class MemoryUnavailable(Exception):
@@ -81,6 +68,7 @@ class MemoryItem:
     score: float | None = None
     created_at: str | None = None
     kind: str = ""
+    quote: str = ""  # la phrase exacte de l'utilisateur qui justifie l'entrée
 
 
 def _empty() -> dict[str, Any]:
@@ -88,6 +76,7 @@ def _empty() -> dict[str, Any]:
         "user_id": USER_ID,
         "notes": "",
         "notes_history": [],
+        "notes_quotes": [],
         "completed_events": [],
         "ongoing_topics": [],
         "strategic_guidance": {},
@@ -104,6 +93,11 @@ def _clean_text(value: Any, limit: int = 400) -> str:
     return text[:limit]
 
 
+def looks_like_rule(text: str) -> bool:
+    """Vrai pour une consigne sur ma façon de répondre : elle n'apprend rien de l'utilisateur."""
+    return bool(_RULE.search(text or ""))
+
+
 def _json_object(text: str) -> dict[str, Any] | None:
     """The first JSON object in a model answer, fences and chatter tolerated."""
     body = (text or "").strip()
@@ -115,6 +109,42 @@ def _json_object(text: str) -> dict[str, Any] | None:
     except ValueError:
         return None
     return data if isinstance(data, dict) else None
+
+
+def _words(text: str) -> str:
+    """Le texte réduit à ses mots : une citation se compare sans jouer sur la ponctuation."""
+    return " ".join(_WORD.findall((text or "").lower()))
+
+
+def quote_supported(quote: str, said: str) -> bool:
+    """Vrai si la citation est une phrase réellement écrite par l'utilisateur, et assez précise."""
+    needle = _words(quote)
+    return len(needle) >= EVIDENCE_MIN_CHARS and needle in _words(said)
+
+
+def _said_text(turns: list[dict[str, Any]]) -> str:
+    """Ce que l'utilisateur a écrit dans les échanges en attente de consolidation."""
+    return "\n".join(str(turn.get("user") or "") for turn in turns)
+
+
+def _row_text(row: Any, limit: int = 400) -> str:
+    """Le texte d'une entrée, qu'elle soit une chaîne (ancien carnet) ou un objet cité."""
+    if isinstance(row, dict):
+        return _clean_text(row.get("text") or row.get("event") or "", limit)
+    return _clean_text(row, limit)
+
+
+def _row_quote(row: Any) -> str:
+    return _clean_text(row.get("quote") or "", 400) if isinstance(row, dict) else ""
+
+
+def _row_at(row: Any) -> float | None:
+    at = row.get("at") if isinstance(row, dict) else None
+    return float(at) if isinstance(at, (int, float)) else None
+
+
+def _stamp(at: float | None) -> str | None:
+    return time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(at)) if at else None
 
 
 class NoteMemory:
@@ -146,7 +176,13 @@ class NoteMemory:
         for key in state:
             if key in data:
                 state[key] = data[key]
-        for key in ("notes_history", "completed_events", "ongoing_topics", "buffer"):
+        for key in (
+            "notes_history",
+            "notes_quotes",
+            "completed_events",
+            "ongoing_topics",
+            "buffer",
+        ):
             if not isinstance(state[key], list):
                 state[key] = []
         if not isinstance(state["strategic_guidance"], dict):
@@ -178,21 +214,25 @@ class NoteMemory:
         """Le carnet tel qu'il entre dans le prompt : des informations, pas des ordres."""
         lines: list[str] = []
         notes = _TAG.sub("", str(state.get("notes") or "")).strip()
+        if notes:  # Ce qu'un ancien directeur a gardé comme consigne ne part plus dans le prompt
+            notes = "\n".join(
+                line for line in notes.splitlines() if not looks_like_rule(line)
+            ).strip()
         if notes:
             lines.append(f"- Mon carnet sur toi :\n{notes}")
         topics = [
-            _clean_text(topic, 160)
-            for topic in state.get("ongoing_topics") or []
-            if _clean_text(topic, 160)
+            text
+            for text in (
+                _row_text(topic, 160) for topic in state.get("ongoing_topics") or []
+            )
+            if text and not looks_like_rule(text)
         ]
         if topics:
             lines.append("- Sujets encore ouverts : " + " ; ".join(topics))
         events = []
         for event in state.get("completed_events") or []:
-            text = _clean_text(
-                event.get("event", "") if isinstance(event, dict) else event, 400
-            )
-            if text:
+            text = _row_text(event)
+            if text and not looks_like_rule(text):
                 events.append(text)
         if events:
             lines.append("- Épisodes passés : " + " / ".join(events[-3:]))
@@ -216,25 +256,37 @@ class NoteMemory:
         items: list[MemoryItem] = []
         notes = str(state.get("notes") or "").strip()
         if notes:
-            items.append(MemoryItem("notes", notes, kind="notes"))
+            quotes = [
+                _clean_text(row.get("quote"), 240)
+                for row in state.get("notes_quotes") or []
+                if isinstance(row, dict)
+            ]
+            items.append(
+                MemoryItem("notes", notes, kind="notes", quote=" ; ".join(quotes[:2]))
+            )
         for index, topic in enumerate(state.get("ongoing_topics") or []):
-            text = _clean_text(topic)
+            text = _row_text(topic)
             if text:
-                items.append(MemoryItem(f"topic:{index}", text, kind="sujet"))
-        for index, event in enumerate(state.get("completed_events") or []):
-            if isinstance(event, dict):
-                text = _clean_text(event.get("event", ""))
-                at = event.get("at")
-            else:
-                text, at = _clean_text(event), None
-            if text:
-                stamp = (
-                    time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(float(at)))
-                    if isinstance(at, (int, float))
-                    else None
-                )
                 items.append(
-                    MemoryItem(f"event:{index}", text, created_at=stamp, kind="événement")
+                    MemoryItem(
+                        f"topic:{index}",
+                        text,
+                        created_at=_stamp(_row_at(topic)),
+                        kind="sujet",
+                        quote=_row_quote(topic),
+                    )
+                )
+        for index, event in enumerate(state.get("completed_events") or []):
+            text = _row_text(event)
+            if text:
+                items.append(
+                    MemoryItem(
+                        f"event:{index}",
+                        text,
+                        created_at=_stamp(_row_at(event)),
+                        kind="événement",
+                        quote=_row_quote(event),
+                    )
                 )
         return items[: max(1, limit)]
 
@@ -248,18 +300,17 @@ class NoteMemory:
             if isinstance(entry, dict) and float(entry.get("at") or 0) >= since_ts
         ]
         events = [
-            _clean_text(event.get("event"), 400)
-            for event in state.get("completed_events") or []
-            if isinstance(event, dict)
-            and isinstance(event.get("at"), (int, float))
-            and float(event["at"]) >= since_ts
-            and _clean_text(event.get("event"), 400)
+            text
+            for text, at in (
+                (_row_text(event), _row_at(event))
+                for event in state.get("completed_events") or []
+            )
+            if text and at is not None and at >= since_ts
         ]
         topics = [
             text
             for text in (
-                _clean_text(topic, 160)
-                for topic in state.get("ongoing_topics") or []
+                _row_text(topic, 160) for topic in state.get("ongoing_topics") or []
             )
             if text
         ]
@@ -292,6 +343,7 @@ class NoteMemory:
                         score=hits / len(words),
                         created_at=item.created_at,
                         kind=item.kind,
+                        quote=item.quote,
                     )
                 )
         scored.sort(key=lambda i: i.score or 0, reverse=True)
@@ -302,7 +354,7 @@ class NoteMemory:
         """Ajoute une ligne aux notes (ce que l'utilisateur demande explicitement)."""
         fact = _clean_text(text, 500)
         if not fact:
-            raise MemoryUnavailable("Le souvenir est vide.")
+            raise MemoryUnavailable(tr("memory.empty"))
 
         def change(state: dict[str, Any]) -> None:
             notes = str(state.get("notes") or "").strip()
@@ -322,6 +374,7 @@ class NoteMemory:
                     history = state.setdefault("notes_history", [])
                     history.append({"at": time.time(), "notes": old})
                     del history[:-MAX_HISTORY]
+                    state["notes_quotes"] = []  # les preuves de l'ancien texte ne le justifient plus
                 state["notes"] = clean
                 return True
             kind, _, raw = memory_id.partition(":")
@@ -334,12 +387,12 @@ class NoteMemory:
             rows = state.get(key) or []
             if index >= len(rows):
                 return False
-            if key == "completed_events":
-                row = rows[index]
-                at = row.get("at") if isinstance(row, dict) else None
-                rows[index] = {"at": at or time.time(), "event": clean}
-            else:
-                rows[index] = clean
+            row = rows[index]
+            rows[index] = {
+                "text": clean,
+                "quote": _row_quote(row),
+                "at": _row_at(row) or time.time(),
+            }
             return True
 
         return bool(await self._mutate(change))
@@ -353,6 +406,7 @@ class NoteMemory:
                 if not old:
                     return None
                 state["notes"] = ""
+                state["notes_quotes"] = []
                 return old
             kind, _, raw = memory_id.partition(":")
             if not raw.isdigit():
@@ -366,9 +420,7 @@ class NoteMemory:
                 return None
             row = rows.pop(index)
             state[key] = rows
-            if isinstance(row, dict):
-                return _clean_text(row.get("event", ""))
-            return _clean_text(row)
+            return _row_text(row)
 
         return await self._mutate(change)
 
@@ -407,9 +459,9 @@ class NoteMemory:
     def _turns_text(self, buffer: list[dict[str, Any]]) -> str:
         lines = []
         for turn in buffer:
-            lines.append(f"Toi : {turn.get('user', '')}")
+            lines.append(tr("memory.turn_you", text=turn.get('user', '')))
             if turn.get("monika"):
-                lines.append(f"Moi : {turn['monika']}")
+                lines.append(tr("memory.turn_me", text=turn['monika']))
         return "\n".join(lines)
 
     async def consolidate(self) -> bool:
@@ -437,23 +489,30 @@ class NoteMemory:
                 ]
                 self._save(current)
             return False
-        await self._merge(data)
+        await self._merge(data, _said_text(buffer))
         return True
 
     def _state_text(self, state: dict[str, Any]) -> str:
         parts = [
-            f"Notes : {state.get('notes') or '(aucune)'}",
-            "Sujets en cours : "
-            + json.dumps(state.get("ongoing_topics") or [], ensure_ascii=False),
-            "Lecture de la relation : "
-            + json.dumps(state.get("strategic_guidance") or {}, ensure_ascii=False),
+            tr("memory.state_notes", notes=state.get("notes") or tr("memory.notes_none")),
+            tr(
+                "memory.state_topics",
+                topics=json.dumps(
+                    [_row_text(topic, 160) for topic in state.get("ongoing_topics") or []],
+                    ensure_ascii=False,
+                ),
+            ),
+            tr(
+                "memory.state_guidance",
+                guidance=json.dumps(state.get("strategic_guidance") or {}, ensure_ascii=False),
+            ),
         ]
         return "\n".join(parts)
 
     async def _ask_director(
         self, state: dict[str, Any], buffer: list[dict[str, Any]]
     ) -> dict[str, Any] | None:
-        prompt = DIRECTOR_PROMPT.format(
+        prompt = tr("memory.director_prompt").format(
             max_chars=self._s.memory_notes_max_chars,
             state=self._state_text(state),
             turns=self._turns_text(buffer),
@@ -464,16 +523,12 @@ class NoteMemory:
                     [
                         {
                             "role": "system",
-                            "content": (
-                                "Tu es le directeur de mémoire de Monika. Tu réponds "
-                                "uniquement par un objet JSON, sans commentaire ni balise "
-                                "de code."
-                            ),
+                            "content": tr("memory.system"),
                         },
                         {"role": "user", "content": prompt},
                     ],
-                    temperature=0.3,
-                    model=self._s.memory_llm_model or None,
+                    temperature=REFLECTION_TEMPERATURE,
+                    model=memory_model(self._s),
                 ),
                 timeout=90,
             )
@@ -485,11 +540,52 @@ class NoteMemory:
             log.warning("Le directeur de mémoire n'a pas rendu de JSON exploitable.")
         return data
 
-    async def _merge(self, data: dict[str, Any]) -> None:
-        """Fusionne la réponse du directeur, en gardant les bornes de taille."""
+    async def _merge(self, data: dict[str, Any], said: str = "") -> None:
+        """Fusionne la réponse du directeur ; une entrée sans citation retrouvée est écartée.
+
+        `said` est ce que l'utilisateur a réellement écrit dans les échanges à consolider : la
+        seule preuve acceptée. Le directeur propose, ce code vérifie.
+        """
+        dropped = 0
+
+        def cited(raw: Any) -> list[dict[str, Any]]:
+            """Les entrées acceptées, telles qu'elles seront gardées : texte, preuve, date."""
+            nonlocal dropped
+            kept: list[dict[str, Any]] = []
+            for entry in raw if isinstance(raw, list) else []:
+                if not isinstance(entry, dict):
+                    dropped += 1
+                    continue
+                text = _clean_text(entry.get("text") or entry.get("texte") or "", 600)
+                quote = _clean_text(entry.get("quote") or entry.get("preuve") or "", 400)
+                if not text or looks_like_rule(text):
+                    continue
+                if not quote_supported(quote, said):
+                    dropped += 1
+                    continue
+                kept.append({"text": text, "quote": quote, "at": time.time()})
+            return kept
+
+        events = cited(data.get("completed_events"))
+        topics = cited(data.get("ongoing_topics"))
+        note_quotes: list[dict[str, Any]] = []
+        raw_quotes = data.get("notes_quotes")
+        for entry in raw_quotes if isinstance(raw_quotes, list) else []:
+            quote = _clean_text(entry, 400) if isinstance(entry, str) else ""
+            if quote_supported(quote, said):
+                note_quotes.append({"at": time.time(), "quote": quote})
+            elif quote:
+                dropped += 1
+        if dropped:
+            log.info(
+                "Carnet : %d entrée(s) écartée(s), citation absente des échanges.", dropped
+            )
 
         def change(state: dict[str, Any]) -> None:
-            notes = _TAG.sub("", str(data.get("notes") or "")).strip()
+            raw_notes = _TAG.sub("", str(data.get("notes") or "")).strip()
+            notes = "\n".join(
+                line for line in raw_notes.splitlines() if not looks_like_rule(line)
+            ).strip()
             if notes:
                 old = str(state.get("notes") or "")
                 if old and old != notes:
@@ -497,21 +593,12 @@ class NoteMemory:
                     history.append({"at": time.time(), "notes": old})
                     del history[:-MAX_HISTORY]
                 state["notes"] = notes[: self._s.memory_notes_max_chars]
-            events = state.get("completed_events") or []
-            completed = data.get("completed_events") or []
-            if isinstance(completed, list):
-                for event in completed:
-                    text = _clean_text(event, 600)
-                    if text:
-                        events.append({"at": time.time(), "event": text})
-            state["completed_events"] = events[-MAX_EVENTS:]
-            topics = data.get("ongoing_topics") or []
-            if isinstance(topics, list):
-                state["ongoing_topics"] = [
-                    text
-                    for text in (_clean_text(topic, 160) for topic in topics)
-                    if text
-                ][:MAX_TOPICS]
+                if note_quotes:
+                    state["notes_quotes"] = note_quotes[-MAX_NOTES_QUOTES:]
+            current = state.get("completed_events") or []
+            state["completed_events"] = (current + events)[-MAX_EVENTS:]
+            if topics:
+                state["ongoing_topics"] = topics[:MAX_TOPICS]
             guidance = data.get("strategic_guidance")
             if isinstance(guidance, dict):
                 state["strategic_guidance"] = {

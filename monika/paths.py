@@ -1,7 +1,8 @@
-"""Filesystem layout under the Monika home directory (~/.config/monika)."""
+"""Filesystem layout under the Monika home directory (~/.config/monika, %APPDATA%\\monika)."""
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -25,7 +26,6 @@ class Paths:
     mcp_config: Path
     custom_tools: Path
     custom_tools_index: Path
-    kernel_socket: Path
 
     @classmethod
     def from_settings(cls, settings: Settings) -> Paths:
@@ -44,7 +44,6 @@ class Paths:
             mcp_config=settings.mcp_servers_file or home / "mcp_servers.json",
             custom_tools=home / "mcp_custom",
             custom_tools_index=home / "custom_tools.json",
-            kernel_socket=settings.kernel_socket or home / "kernel.sock",
         )
 
     @property
@@ -123,14 +122,15 @@ class Paths:
         return self.briefing / "state.json"
 
     @property
-    def kernel_lock(self) -> Path:
-        """One kernel per data folder: memory and documents cannot be opened twice."""
-        return self.home / "kernel.lock"
+    def instance_lock(self) -> Path:
+        """One Monika per data folder: memory and documents cannot be opened twice."""
+        return self.home / "instance.lock"
 
     def ensure(self) -> None:
         """Create all directories; the home itself is private to the user."""
         self.home.mkdir(parents=True, exist_ok=True)
-        self.home.chmod(0o700)
+        if os.name != "nt":  # Windows has no Unix modes; chmod there would only toggle read-only
+            self.home.chmod(0o700)
         for path in (
             self.memory,
             self.voice,

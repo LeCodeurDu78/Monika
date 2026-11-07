@@ -1,8 +1,8 @@
 """Scheduled tasks: reminders and recurring jobs, kept on disk and fired by the running process.
 
-A task is a sentence plus a moment. When the moment comes, the kernel (or the local chat) runs a
-full turn with that sentence: Monika phrases the reminder herself, with her tools, and every
-attached terminal sees the answer. Nothing is scheduled behind the user's back: only `/rappel` (or
+A task is a sentence plus a moment. When the moment comes, the running process runs a full turn
+with that sentence: Monika phrases the reminder herself, with her tools, and the page shows the
+answer. Nothing is scheduled behind the user's back: only `/rappel` (or
 the `taches_planifier` tool, when the user asks for one) can create a task.
 
 Two forms only, written the way one says them:
@@ -31,6 +31,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+from monika.i18n import tr, tr_list
 from security.masking import Masker
 
 log = logging.getLogger(__name__)
@@ -54,14 +55,18 @@ _UNITS = {
     "h": HOUR,
     "heure": HOUR,
     "heures": HOUR,
+    "hour": HOUR,
+    "hours": HOUR,
     "j": DAY,
     "jour": DAY,
     "jours": DAY,
+    "day": DAY,
+    "days": DAY,
 }
 _EVERY = re.compile(
-    r"^(?:tous\s+les|toutes\s+les|chaque)\s+(\d{1,4})\s*([a-zé]+)\b", re.IGNORECASE
+    r"^(?:tous\s+les|toutes\s+les|chaque|every)\s+(\d{1,4})\s*([a-zé]+)\b", re.IGNORECASE
 )
-_DELAY = re.compile(r"^dans\s+(\d{1,4})\s*([a-zé]+)\b", re.IGNORECASE)
+_DELAY = re.compile(r"^(?:dans|in)\s+(\d{1,4})\s*([a-zé]+)\b", re.IGNORECASE)
 _CLOCK = re.compile(
     r"^(?:(demain)\s+)?(\d{1,2})\s*(?:h|:)\s*(\d{1,2})?$", re.IGNORECASE
 )
@@ -70,15 +75,22 @@ _DAILY = re.compile(
     r"(\d{1,2})\s*(?:h|:)\s*(\d{1,2})?$",
     re.IGNORECASE,
 )
+_DAILY_EN = re.compile(
+    r"^every\s+day(?:\s*,?\s*at)?\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$",
+    re.IGNORECASE,
+)
+_CLOCK_EN = re.compile(
+    r"^(?:(tomorrow)\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)$", re.IGNORECASE
+)
 # Python's Monday is 0; these are the names one says
 _WEEKDAYS = {
-    "lundi": 0,
-    "mardi": 1,
-    "mercredi": 2,
-    "jeudi": 3,
-    "vendredi": 4,
-    "samedi": 5,
-    "dimanche": 6,
+    "lundi": 0, "monday": 0,
+    "mardi": 1, "tuesday": 1,
+    "mercredi": 2, "wednesday": 2,
+    "jeudi": 3, "thursday": 3,
+    "vendredi": 4, "friday": 4,
+    "samedi": 5, "saturday": 5,
+    "dimanche": 6, "sunday": 6,
 }
 _WEEKDAY_NAMES = (
     "lundi",
@@ -89,13 +101,20 @@ _WEEKDAY_NAMES = (
     "samedi",
     "dimanche",
 )
-_DAY_WORD = r"(lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche)s?"
+_DAY_WORD = r"(lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche|monday|tuesday|wednesday|thursday|friday|saturday|sunday)s?"
 _TIME_TAIL = re.compile(
     r"\s*(?:,?\s*(?:à|a))?\s*(\d{1,2})\s*(?:h|:)\s*(\d{1,2})?$", re.IGNORECASE
 )
-_DAY_RANGE = re.compile(rf"^du\s+{_DAY_WORD}\s+au\s+{_DAY_WORD}$", re.IGNORECASE)
-_DAY_PREFIX = re.compile(r"^(?:tous\s+les|toutes\s+les|chaque)\s+(.+)$", re.IGNORECASE)
-_DAY_LIST_SEP = re.compile(r"\s*(?:,|&|\bet\b)\s*")
+_TIME_TAIL_EN = re.compile(
+    r"\s*(?:,?\s*at)?\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$", re.IGNORECASE
+)
+_DAY_RANGE = re.compile(
+    rf"^(?:du|from)\s+{_DAY_WORD}\s+(?:au|to)\s+{_DAY_WORD}$", re.IGNORECASE
+)
+_DAY_PREFIX = re.compile(
+    r"^(?:tous\s+les|toutes\s+les|chaque|every|on)\s+(.+)$", re.IGNORECASE
+)
+_DAY_LIST_SEP = re.compile(r"\s*(?:,|&|\bet\b|\band\b)\s*", re.IGNORECASE)
 
 
 class TasksError(Exception):
@@ -135,14 +154,14 @@ class Task:
         return self.every_s is not None or self.daily_at is not None
 
     def describe(self) -> str:
-        """One line for `/taches`."""
+        """One line for `/tasks`."""
         when = f"{self.next_at:%d/%m %H:%M}"
         if self.days:
-            when += f" ({_days_phrase(self.days)} à {self.daily_at})"
+            when += f" ({tr('tasks.describe_weekly', days=_days_phrase(self.days), time=self.daily_at)})"
         elif self.daily_at is not None:
-            when += f" (chaque jour à {self.daily_at})"
+            when += f" ({tr('tasks.describe_daily', time=self.daily_at)})"
         elif self.every_s is not None:
-            when += f" (toutes les {_duration(self.every_s)})"
+            when += f" ({tr('tasks.describe_every', duration=_duration(self.every_s))})"
         return f"  [{self.id}] {when} · {self.prompt}"
 
     def to_json(self) -> dict[str, Any]:
@@ -174,22 +193,20 @@ class Task:
 
 
 def _duration(seconds: int) -> str:
-    """A duration the way one says it: « 2 heures », « 90 minutes »."""
+    """A duration the way one says it: « 2 heures », “2 hours”."""
     if seconds % DAY == 0:
-        n, unit = seconds // DAY, "jour"
+        n, unit = seconds // DAY, "day"
     elif seconds % HOUR == 0:
-        n, unit = seconds // HOUR, "heure"
+        n, unit = seconds // HOUR, "hour"
     else:
         n, unit = seconds // MINUTE, "minute"
-    return f"{n} {unit}{'s' if n > 1 else ''}"
+    return tr(f"tasks.duration.{unit}.{'one' if n == 1 else 'other'}", n=n)
 
 
 def _unit(token: str) -> int:
     seconds = _UNITS.get(token)
     if seconds is None:
-        raise TasksError(
-            f"Je ne comprends pas « {token} » : écris minutes, heures ou jours."
-        )
+        raise TasksError(tr("tasks.unknown_unit", token=token))
     return seconds
 
 
@@ -198,26 +215,26 @@ def parse_when(text: str, now: datetime | None = None) -> When:
     now = now or datetime.now()
     raw = " ".join(text.strip().lower().split())
     if not raw:
-        raise TasksError(
-            "Quand ? « dans 20 minutes », « 18h30 », « demain 8h », "
-            "« toutes les 2 heures », « chaque jour à 8h »…"
-        )
+        raise TasksError(tr("tasks.when_required"))
 
     weekly = _parse_weekly(raw, text, now)
     if weekly is not None:
         return weekly
 
-    daily = _DAILY.match(raw)
+    daily = _DAILY.match(raw) or _DAILY_EN.match(raw)
     if daily:
-        hour, minute = int(daily.group(1)), int(daily.group(2) or 0)
+        hour = int(daily.group(1))
+        minute = int(daily.group(2) or 0)
+        ampm = daily.group(3) if daily.re is _DAILY_EN else None
+        hour = _hour24(hour, ampm)
         if hour > 23 or minute > 59:
-            raise TasksError(f"« {text.strip()} » n'est pas une heure valide.")
+            raise TasksError(tr("tasks.invalid_time", text=text.strip()))
         at_time = f"{hour:02d}:{minute:02d}"
         at = _next_daily(at_time, now)
         return When(
             at,
             None,
-            f"chaque jour à {at_time} (prochaine fois {_human_when(at, now)})",
+            tr("tasks.daily", time=at_time, next=_human_when(at, now)),
             daily_at=at_time,
         )
 
@@ -225,23 +242,23 @@ def parse_when(text: str, now: datetime | None = None) -> When:
     if every:
         seconds = int(every.group(1)) * _unit(every.group(2))
         if seconds <= 0:
-            raise TasksError("L'intervalle doit être d'au moins 1 minute.")
+            raise TasksError(tr("tasks.interval_min"))
         if seconds > MAX_DELAY.total_seconds():
-            raise TasksError("L'intervalle dépasse un an.")
+            raise TasksError(tr("tasks.interval_max"))
         at = now + timedelta(seconds=seconds)
         return When(
             at,
             seconds,
-            f"toutes les {_duration(seconds)} (prochaine fois {_human_when(at, now)})",
+            tr("tasks.every", duration=_duration(seconds), next=_human_when(at, now)),
         )
 
     delay = _DELAY.match(raw)
     if delay:
         seconds = int(delay.group(1)) * _unit(delay.group(2))
         if seconds <= 0:
-            raise TasksError("Le délai doit être d'au moins 1 minute.")
+            raise TasksError(tr("tasks.delay_min"))
         if seconds > MAX_DELAY.total_seconds():
-            raise TasksError("Le délai dépasse un an.")
+            raise TasksError(tr("tasks.delay_max"))
         return When(
             now + timedelta(seconds=seconds),
             None,
@@ -249,12 +266,15 @@ def parse_when(text: str, now: datetime | None = None) -> When:
         )
 
     clock = _CLOCK.match(raw)
-    if clock:
-        tomorrow = bool(clock.group(1))
-        hour = int(clock.group(2))
-        minute = int(clock.group(3) or 0)
+    english_clock = _CLOCK_EN.match(raw) if clock is None else None
+    if clock or english_clock:
+        tomorrow = bool((clock or english_clock).group(1))
+        hour = int((clock or english_clock).group(2))
+        minute = int(((clock or english_clock).group(3) or 0))
+        if english_clock is not None:
+            hour = _hour24(hour, english_clock.group(4))
         if hour > 23 or minute > 59:
-            raise TasksError(f"« {text.strip()} » n'est pas une heure valide.")
+            raise TasksError(tr("tasks.invalid_time", text=text.strip()))
         at = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
         if not tomorrow and at <= now:
             at += timedelta(days=1)  # « 8h » quand il est 20h : c'est demain
@@ -262,11 +282,7 @@ def parse_when(text: str, now: datetime | None = None) -> When:
             at += timedelta(days=1)
         return When(at, None, _human_when(at, now))
 
-    raise TasksError(
-        f"Je ne comprends pas « {text.strip()} ». Dis : « dans 20 minutes », "
-        "« 18h30 », « demain 8h », « toutes les 2 heures », « chaque jour à 8h », "
-        "« chaque lundi à 9h », « du lundi au vendredi à 9h »."
-    )
+    raise TasksError(tr("tasks.unknown_when", text=text.strip()))
 
 
 def _at_that_time(at_time: str, now: datetime) -> datetime:
@@ -301,32 +317,39 @@ def _read_days(data: dict[str, Any]) -> tuple[int, ...] | None:
 
 
 def _days_phrase(days: tuple[int, ...]) -> str:
-    """« chaque lundi », « chaque lundi et jeudi », « du lundi au vendredi »."""
-    names = [_WEEKDAY_NAMES[day] for day in days]
+    """ « chaque lundi », “every Monday and Thursday”, “Monday to Friday”. """
+    names = tr_list("tasks.weekdays") or list(_WEEKDAY_NAMES)
+    chosen = [names[day] for day in days]
     if len(days) >= 3 and all(days[i] + 1 == days[i + 1] for i in range(len(days) - 1)):
-        return f"du {names[0]} au {names[-1]}"
-    if len(names) == 1:
-        return f"chaque {names[0]}"
-    return "chaque " + ", ".join(names[:-1]) + f" et {names[-1]}"
+        return tr("tasks.day_range", first=chosen[0], last=chosen[-1])
+    if len(chosen) == 1:
+        return tr("tasks.each_day", day=chosen[0])
+    return tr("tasks.day_list", days=", ".join(chosen[:-1]) + f" {tr('tasks.and')} " + chosen[-1])
 
 
 def _parse_weekly(raw: str, original: str, now: datetime) -> When | None:
     """« chaque lundi à 9h », « lundi et jeudi à 9h », « du lundi au vendredi à 9h »."""
     tail = _TIME_TAIL.search(raw)
+    english = False
+    if tail is None:
+        tail = _TIME_TAIL_EN.search(raw)
+        english = tail is not None
     if tail is None:
         return None
     days = _parse_days(raw[: tail.start()])
     if not days:
         return None
     hour, minute = int(tail.group(1)), int(tail.group(2) or 0)
+    if english:
+        hour = _hour24(hour, tail.group(3))
     if hour > 23 or minute > 59:
-        raise TasksError(f"« {original.strip()} » n'est pas une heure valide.")
+        raise TasksError(tr("tasks.invalid_time", text=original.strip()))
     at_time = f"{hour:02d}:{minute:02d}"
     at = _next_weekly(days, at_time, now)
     return When(
         at,
         None,
-        f"{_days_phrase(days)} à {at_time} (prochaine fois {_human_when(at, now)})",
+        tr("tasks.weekly", days=_days_phrase(days), time=at_time, next=_human_when(at, now)),
         daily_at=at_time,
         days=days,
     )
@@ -337,11 +360,11 @@ def _parse_days(text: str) -> tuple[int, ...] | None:
     phrase = " ".join(text.strip().strip(",").split()).lower()
     if not phrase:
         return None
-    if phrase.startswith(("du ", "de ")):
+    if phrase.startswith(("du ", "de ", "from ")):
         match = _DAY_RANGE.match(phrase)
         if match is None:
             return None
-        start, end = _WEEKDAYS[match.group(1)], _WEEKDAYS[match.group(2)]
+        start, end = _WEEKDAYS[match.group(1).lower()], _WEEKDAYS[match.group(2).lower()]
         days, day = [start], start
         while day != end:  # « du vendredi au lundi » fait le tour de la semaine
             day = (day + 1) % 7
@@ -352,7 +375,7 @@ def _parse_days(text: str) -> tuple[int, ...] | None:
         return None
     days = set()
     for word in _DAY_LIST_SEP.split(prefix.group(1)):
-        name = word.strip()
+        name = word.strip().lower()
         if name.endswith("s") and name not in _WEEKDAYS:
             name = name[:-1]
         if name not in _WEEKDAYS:
@@ -362,15 +385,25 @@ def _parse_days(text: str) -> tuple[int, ...] | None:
 
 
 def _human_when(at: datetime, now: datetime | None = None) -> str:
-    """« demain à 08:00 », from today's point of view."""
+    """ “tomorrow at 08:00”, from today's point of view. """
     now = now or datetime.now()
+    names = tr_list("tasks.weekdays") or list(_WEEKDAY_NAMES)
     if at.date() == now.date():
-        day = "aujourd'hui"
+        day = tr("tasks.today")
     elif at.date() == (now + timedelta(days=1)).date():
-        day = "demain"
+        day = tr("tasks.tomorrow")
     else:
-        day = f"{_WEEKDAY_NAMES[at.weekday()]} {at:%d/%m}"  # « lundi 02/11 », clearer than a date
-    return f"{day} à {at:%H:%M}"
+        day = f"{names[at.weekday()]} {at:%d/%m}"
+    return tr("tasks.at", day=day, time=f"{at:%H:%M}")
+
+
+def _hour24(hour: int, ampm: str | None) -> int:
+    """Convert a 12-hour clock to 24 hours; leave a 24-hour value alone."""
+    if not ampm:
+        return hour
+    if not 1 <= hour <= 12:
+        return hour
+    return (hour % 12) + (12 if ampm.lower() == "pm" else 0)
 
 
 class TaskStore:
@@ -427,16 +460,11 @@ class TaskStore:
     def add(self, prompt: str, when: When, now: datetime | None = None) -> Task:
         prompt = " ".join(prompt.split())
         if not prompt:
-            raise TasksError(
-                "Il manque le texte de la tâche : « /rappel dans 20 minutes : boire de l'eau »."
-            )
+            raise TasksError(tr("tasks.missing_text"))
         if len(prompt) > 500:
-            raise TasksError("La tâche dépasse 500 caractères : résume-la.")
+            raise TasksError(tr("tasks.too_long"))
         if len(self._tasks) >= self.max_tasks:
-            raise TasksError(
-                f"Trop de tâches ({self.max_tasks}) : annule-en une avec "
-                "« /tache annuler ID »."
-            )
+            raise TasksError(tr("tasks.too_many", max=self.max_tasks))
         task = Task(
             id=secrets.token_hex(4),
             prompt=self._masker.mask_text(prompt),
@@ -513,9 +541,11 @@ class TaskStore:
 def task_prompt(task: Task, late: timedelta) -> str:
     """What the model is asked when a task fires; a late one is told to say so."""
     if late > LATE_AFTER:
-        return (
-            f"(Rappel prévu à {task.next_at:%H:%M}, il est {datetime.now():%H:%M} : dis en une "
-            f"phrase que tu es en retard.) {task.prompt}"
+        return tr(
+            "tasks.late",
+            planned=f"{task.next_at:%H:%M}",
+            now=f"{datetime.now():%H:%M}",
+            prompt=task.prompt,
         )
     return task.prompt
 

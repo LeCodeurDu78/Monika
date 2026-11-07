@@ -44,7 +44,7 @@ class Dashboard:
         self.agent: Any = None
         self.chat = chat  # web.chat.ChatView: what the page shows of the conversation
         self.chat_send: Callable[[str], Any] | None = (
-            None  # bound by run_chat (kernel or local)
+            None  # bound by run_chat
         )
         self.chat_stop: Callable[[], Any] | None = None
         self._clock = clock
@@ -70,6 +70,7 @@ class Dashboard:
                 "model": self._s.model_name,
                 "state": self._hub.state,
                 "ready": agent is not None,
+                "language": self._s.language,
             },
             "context": await self._section(lambda: agent.stats() if agent else None),
             "memory": await self._section(self._memory),
@@ -87,7 +88,12 @@ class Dashboard:
         return {
             "enabled": True,
             "facts": [
-                {"id": i.id, "text": i.text, "kind": getattr(i, "kind", "")}
+                {
+                    "id": i.id,
+                    "text": i.text,
+                    "kind": getattr(i, "kind", ""),
+                    "quote": getattr(i, "quote", ""),
+                }
                 for i in items
             ],
         }

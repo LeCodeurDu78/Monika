@@ -75,7 +75,72 @@ def show_config(settings: Settings, paths: Paths) -> None:
     env_state = "trouvé" if ENV_FILE.exists() else "absent (valeurs par défaut)"
     console.print(f"Fichier .env : {ENV_FILE} — {env_state}")
     console.print(f"Dossier de données : {paths.home}")
-    console.print(f"Socket du noyau : {paths.kernel_socket}")
+
+
+def show_phone(settings: Settings) -> int:
+    """--telephone : la commande et le lien à ouvrir depuis le téléphone (HTTPS par Tailscale)."""
+    from monika.phone import LOCAL_HOSTS, PhoneError, serve_link, tailscale_name
+
+    if not settings.web_enabled:
+        console.print(
+            "[red]WEB_ENABLED=false[/red] : active la page, sinon il n'y a rien à ouvrir."
+        )
+        return 1
+    token = settings.web_token.get_secret_value()
+    if not token:
+        console.print(
+            "[red]WEB_TOKEN est vide[/red] : sur le tailnet, la page donnerait tes souvenirs, "
+            "tes sessions et tes réglages à tout appareil connecté.\n"
+            "Génère-le une fois, recopie-le dans .env, puis relance :\n"
+            '  [bold]python -c "import secrets; print(secrets.token_urlsafe(32))"[/bold]'
+        )
+        return 1
+    if settings.web_host not in LOCAL_HOSTS:
+        console.print(
+            f"[yellow]⚠ WEB_HOST={settings.web_host}[/yellow] : `tailscale serve` ne parle qu'à "
+            "127.0.0.1. Laisse WEB_HOST=127.0.0.1 (Tailscale termine le HTTPS) et relance."
+        )
+        return 1
+    try:
+        name = tailscale_name()
+    except PhoneError as exc:
+        console.print(f"[red]{exc}[/red]")
+        return 1
+    console.print(
+        f"[green]✓[/green] Tailscale : {name}, port {settings.web_port}"
+    )
+    console.print(
+        "\n1. Sur cette machine, une fois (Monika lancé) :\n"
+        f"   [bold]tailscale serve --bg {settings.web_port}[/bold]\n"
+        "2. Sur le téléphone, connecté à ton tailnet, ouvre une fois :\n"
+        f"   [bold]{serve_link(name, token)}[/bold]\n"
+        "3. Le jeton passe en cookie et l'adresse redevient propre ; le micro de la page"
+        " demande HTTPS, c'est justement ce que donne Tailscale.\n"
+    )
+    console.print(
+        "[dim]`tailscale serve status` montre la configuration, `tailscale serve reset` la "
+        "coupe. N'utilise pas `tailscale funnel` : ce serait tout l'internet.[/dim]"
+    )
+    return 0
+
+
+def show_roles(settings: Settings) -> int:
+    """--roles : qui utilise quel modèle, et à quel moment."""
+    from agent.roles import roles
+
+    console.print("[bold]Rôles du modèle[/bold] (un réglage vide retombe sur MODEL_NAME)")
+    for role in roles(settings):
+        state = "[green]actif[/green]" if role.active else "[dim]coupé[/dim]"
+        console.print(
+            f"\n  [bold]{role.label}[/bold] · {role.model}  "
+            f"([dim]{role.chosen_by}[/dim], T={role.temperature:g}) · {state}"
+        )
+        console.print(f"    {role.when}")
+    console.print(
+        "\n[dim]La réflexion et l'action ne bloquent jamais une réponse : un modèle moins cher "
+        "dans REFLECTION_MODEL se règle sans rien perdre du tour.[/dim]"
+    )
+    return 0
 
 
 async def load_memory(settings: Settings, paths: Paths) -> NoteMemory | None:
@@ -600,45 +665,68 @@ async def start_web(
         settings_api=SettingsApi(settings, paths, health),
         chat=chat,
         voice_factory=factory,
+        host=settings.web_host,
+        token=settings.web_token.get_secret_value(),
     )
     try:
         await server.start()
     except WebError as exc:
         console.print(f"[yellow]{exc} Je continue sans la page web.[/yellow]")
         return None
+    if settings.web_token.get_secret_value():
+        scope = "jeton demandé"
+    elif settings.web_host in ("127.0.0.1", "localhost", "::1"):
+        scope = "sans jeton, visible depuis cet ordinateur seulement"
+    else:
+        scope = "SANS JETON : toute machine qui atteint ce port peut tout lire et tout modifier"
     console.print(
         f"[green]✓[/green] Page de Monika (avatar, tableau de bord et conversation) : "
-        f"{server.url} [dim](visible depuis cet ordinateur seulement)[/dim]"
+        f"{server.url} [dim]({scope})[/dim]"
     )
+    if not settings.web_token.get_secret_value() and settings.web_host not in (
+        "127.0.0.1",
+        "localhost",
+        "::1",
+    ):
+        console.print(
+            "[yellow]⚠ WEB_HOST n'est pas local : définis WEB_TOKEN, sinon la page est "
+            "ouverte à qui atteint ce port.[/yellow]"
+        )
+    if settings.web_token.get_secret_value():
+        console.print(
+            "[dim]Depuis le téléphone : python -m monika --telephone (Tailscale, HTTPS).[/dim]"
+        )
     return WebUI(hub, dashboard, server, chat, voice_targets)
 
 
 async def run_chat(
-    settings: Settings, paths: Paths, masker: Masker, voice: bool = False, server=None
+    settings: Settings, paths: Paths, masker: Masker, voice: bool = False
 ) -> int:
     """One chat per data folder: the instance lock goes before memory and documents open."""
-    from monika.kernel import InstanceLock, KernelError
+    from monika.lock import InstanceLock, LockError
 
-    lock = InstanceLock(paths.kernel_lock)
+    lock = InstanceLock(paths.instance_lock)
     try:
         lock.acquire()
-    except KernelError as exc:
+    except LockError as exc:
         console.print(f"[red]{exc}[/red]")
         return 1
     try:
-        return await _run_chat(settings, paths, masker, voice=voice, server=server)
+        return await _run_chat(settings, paths, masker, voice=voice)
     finally:
         lock.release()
 
 
 async def _run_chat(
-    settings: Settings, paths: Paths, masker: Masker, voice: bool = False, server=None
+    settings: Settings, paths: Paths, masker: Masker, voice: bool = False
 ) -> int:
     """Start Monika with tools, memory and documents: the page, or the microphone in voice mode.
 
     Nothing is read from the terminal: the page sends its messages through the same session, and
-    `server` (the kernel) keeps everything running until it stops.
+    this process keeps everything running until it is stopped.
     """
+    from agent.reflection import BetweenTurns
+    from agent.surface import SurfaceReflex
     from modes.text import TextSession
     from web.settings import Health
 
@@ -703,6 +791,7 @@ async def _run_chat(
             recipes, recipe_keeper = load_recipes(settings, paths, llm, masker)
             character = load_character(settings, paths, llm, hub, masker)
             action_director = load_action_director(settings, llm, hub)
+            reflection = BetweenTurns(settings, llm) if settings.reflection_enabled else None
             words = load_words(settings, paths)
             nightly, morning = load_nightly(
                 settings, paths, masker, llm, memory, sessions, recipes, character
@@ -722,6 +811,8 @@ async def _run_chat(
                 recipes=recipes,
                 recipe_keeper=recipe_keeper,
                 morning=morning,
+                surface=SurfaceReflex(settings, llm),
+                reflection=reflection,
             )
             health.agent = agent
             if web:
@@ -760,46 +851,44 @@ async def _run_chat(
                     raise EOFError
 
                 session = TextSession(agent, no_input, **session_kwargs)
+            if reflection is not None:
+
+                async def speak_reflection(intent: str) -> None:
+                    await session.run_task(
+                        "[Consigne interne de Monika, ne vient pas de l'utilisateur] Prends la "
+                        "parole de ta propre initiative, brièvement et naturellement, sur ce "
+                        "point préparé par ta réflexion : " + intent,
+                        "Réflexion",
+                    )
+
+                reflection.bind_speak(speak_reflection)
             if (
                 web is not None
             ):  # The page sends its messages through the same session as the terminal
-                if server is not None:
+                page_turn: dict[str, asyncio.Task | None] = {"task": None}
 
-                    async def submit(text: str) -> bool:
-                        return await server.submit(text)
+                async def submit(text: str) -> bool:
+                    task = page_turn["task"]
+                    if task is not None and not task.done():
+                        return False
+                    page_turn["task"] = asyncio.create_task(session.run_line(text))
+                    await asyncio.sleep(0)
+                    return True
 
-                    async def stop() -> str:
-                        return _stopped_sentence(await server.stop_everything())
-                else:
-                    page_turn: dict[str, asyncio.Task | None] = {"task": None}
-
-                    async def submit(text: str) -> bool:
-                        task = page_turn["task"]
-                        if task is not None and not task.done():
-                            return False
-                        page_turn["task"] = asyncio.create_task(session.run_line(text))
-                        await asyncio.sleep(0)
-                        return True
-
-                    async def stop() -> str:
-                        task = page_turn["task"]
-                        running = task is not None and not task.done()
-                        if running:
-                            task.cancel()
-                            await asyncio.gather(task, return_exceptions=True)
-                        return _stopped_sentence(await session.stop_all(turn=running))
+                async def stop() -> str:
+                    task = page_turn["task"]
+                    running = task is not None and not task.done()
+                    if running:
+                        task.cancel()
+                        await asyncio.gather(task, return_exceptions=True)
+                    return _stopped_sentence(await session.stop_all(turn=running))
 
                 web.dashboard.chat_send, web.dashboard.chat_stop = submit, stop
 
                 async def ask(
                     text: str,
                 ) -> None:  # The page's microphone: one whole turn, then silence
-                    if server is not None:
-                        task = server.submit_task(text)
-                        if task is not None:
-                            await asyncio.gather(task, return_exceptions=True)
-                    else:
-                        await session.reply(text)
+                    await session.reply(text)
 
                 web.voice_targets.update(speaker=speaker, ask=ask)
             if (
@@ -807,9 +896,7 @@ async def _run_chat(
             ):  # Before the chat starts: a missed reminder fires right away
                 from agent.tasks import Scheduler
 
-                scheduler = Scheduler(
-                    tasks, server.fire_task if server is not None else session.run_task
-                )
+                scheduler = Scheduler(tasks, session.run_task)
                 scheduler.start()
             if settings.briefing_enabled:  # Après la session : le briefing parle par elle
                 from agent.briefing import BriefingJob
@@ -818,7 +905,7 @@ async def _run_chat(
                     settings,
                     paths,
                     masker,
-                    server.fire_task if server is not None else session.run_task,
+                    session.run_task,
                     tasks=tasks,
                 )
                 session.set_briefing(briefing)
@@ -837,21 +924,9 @@ async def _run_chat(
                 )
             if nightly is not None:
                 nightly.start()
-            if server is not None:
-                try:
-                    await server.serve(
-                        session=session,
-                        hub=hub,
-                        speaker=speaker,
-                        voice_factory=lambda: start_voice(settings, paths),
-                    )
-                finally:
-                    if scheduler is not None:
-                        await scheduler.stop()
-                    await session.close()
-            elif listener is not None:
+            if listener is not None:
                 await session.run()
-            else:  # Sans noyau ni micro, la page est la seule entrée : on la laisse vivre
+            else:  # Sans micro, la page est la seule entrée : on la laisse vivre
                 try:
                     await asyncio.Event().wait()
                 finally:
@@ -938,37 +1013,6 @@ async def run_tools_command(
     return 0
 
 
-def run_kernel_command(settings: Settings, paths: Paths, masker: Masker) -> int:
-    """--serve: the kernel, in the foreground, serving the page."""
-    if not settings.kernel_enabled:
-        console.print(
-            "[red]Le noyau est désactivé[/red] (KERNEL_ENABLED=false). Active-le dans "
-            "/settings ou dans .env puis relance. Sans noyau, `python -m monika` reste le "
-            "mode local."
-        )
-        return 1
-    from monika.kernel import KernelError, KernelServer
-
-    try:
-        return asyncio.run(
-            run_chat(
-                settings,
-                paths,
-                masker,
-                voice=False,
-                server=KernelServer(paths.kernel_socket),
-            )
-        )
-    except KernelError as exc:
-        console.print(f"[red]{exc}[/red]")
-        return 1
-    except (
-        KeyboardInterrupt
-    ):  # Ctrl+C on the kernel itself: stop, and release the socket
-        console.print("\nNoyau arrêté.")
-        return 0
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="monika", description="Monika, assistante IA personnelle locale."
@@ -1006,14 +1050,19 @@ def main(argv: list[str] | None = None) -> int:
         help="Affiche l'état de l'index de documents et quitte.",
     )
     parser.add_argument(
+        "--roles",
+        action="store_true",
+        help="Affiche les rôles du modèle (surface, deep, réflexion, action), puis quitte.",
+    )
+    parser.add_argument(
+        "--telephone",
+        action="store_true",
+        help="Affiche la commande `tailscale serve` et le lien HTTPS de la page, puis quitte.",
+    )
+    parser.add_argument(
         "--tools",
         action="store_true",
         help="Liste les serveurs MCP et leurs outils, puis quitte.",
-    )
-    parser.add_argument(
-        "--serve",
-        action="store_true",
-        help="Lance le noyau persistant (mémoire, outils, page, voix) et le laisse tourner.",
     )
     parser.add_argument(
         "--call",
@@ -1039,6 +1088,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.config:
         show_config(settings, paths)
         return 0
+    if args.telephone:
+        return show_phone(settings)
+    if args.roles:
+        return show_roles(settings)
     if args.rag_index is not None or args.rag_search or args.rag_status:
         try:
             return asyncio.run(run_rag_command(settings, paths, args))
@@ -1046,9 +1099,6 @@ def main(argv: list[str] | None = None) -> int:
             return 130
     if args.tools or args.call:
         return asyncio.run(run_tools_command(settings, paths, masker, args.call))
-    if args.serve:
-        return run_kernel_command(settings, paths, masker)
-
     try:
         return asyncio.run(
             run_chat(settings, paths, masker, voice=(args.mode == "voix"))

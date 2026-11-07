@@ -9,27 +9,32 @@ import socket
 from datetime import datetime
 from pathlib import Path
 
-DAYS = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
-MONTHS = [
-    "janvier",
-    "février",
-    "mars",
-    "avril",
-    "mai",
-    "juin",
-    "juillet",
-    "août",
-    "septembre",
-    "octobre",
-    "novembre",
-    "décembre",
+from monika.i18n import is_english, tr
+
+DAYS_FR = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
+DAYS_EN = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+MONTHS_FR = [
+    "janvier", "février", "mars", "avril", "mai", "juin",
+    "juillet", "août", "septembre", "octobre", "novembre", "décembre",
+]
+MONTHS_EN = [
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December",
 ]
 
 
-def format_date_fr(now: datetime) -> str:
-    """Return e.g. 'jeudi 22 octobre 2026, 05:46 (CEST)', independent of the locale."""
-    day = f"{DAYS[now.weekday()]} {now.day} {MONTHS[now.month - 1]} {now.year}"
+def format_date(now: datetime) -> str:
+    """Return e.g. 'jeudi 22 octobre 2026, 05:46 (CEST)' or its English equivalent."""
+    if is_english():
+        day = f"{DAYS_EN[now.weekday()]} {MONTHS_EN[now.month - 1]} {now.day}, {now.year}"
+    else:
+        day = f"{DAYS_FR[now.weekday()]} {now.day} {MONTHS_FR[now.month - 1]} {now.year}"
     return f"{day}, {now:%H:%M} ({now.tzname()})"
+
+
+def format_date_fr(now: datetime) -> str:
+    """Backward-compatible alias; the active LANGUAGE decides the wording."""
+    return format_date(now)
 
 
 def _os_name() -> str:
@@ -44,16 +49,14 @@ def _os_name() -> str:
 
 def system_context() -> list[str]:
     """Return short factual lines about the machine (best effort, never raises)."""
-    lines = [
-        f"Système : {_os_name()}, noyau {platform.release()}, machine {socket.gethostname()}."
-    ]
+    lines = [tr("sysinfo.system", os=_os_name(), kernel=platform.release(), host=socket.gethostname())]
     try:
         lines.append(
-            f"Utilisateur du système : {getpass.getuser()}, dossier personnel {Path.home()}."
+            tr("sysinfo.user", user=getpass.getuser(), home=Path.home())
         )
     except (KeyError, OSError):
-        lines.append(f"Dossier personnel : {Path.home()}.")
-    lines.append(f"Dossier de travail actuel : {os.getcwd()}.")
+        lines.append(tr("sysinfo.home", home=Path.home()))
+    lines.append(tr("sysinfo.cwd", cwd=os.getcwd()))
     session = " / ".join(
         filter(
             None,
@@ -62,13 +65,10 @@ def system_context() -> list[str]:
     )
     shell = os.environ.get("SHELL")
     extras = [
-        x
-        for x in (
-            f"bureau {session}" if session else "",
-            f"shell {shell}" if shell else "",
-        )
-        if x
+        tr("sysinfo.desktop", session=session) if session else "",
+        tr("sysinfo.shell", shell=shell) if shell else "",
     ]
+    extras = [item for item in extras if item]
     if extras:
-        lines.append("Environnement : " + ", ".join(extras) + ".")
+        lines.append(tr("sysinfo.environment", items=", ".join(extras)))
     return lines

@@ -102,9 +102,12 @@ def register_memory_tools(registry: ToolRegistry, memory: NoteMemory) -> None:
         if not items:
             return "Aucun souvenir correspondant."
         return "\n".join(
-            f"- {i.text} [id {i.id}, pertinence {i.score:.2f}]"
-            if i.score is not None
-            else f"- {i.text} [id {i.id}]"
+            (
+                f"- {i.text} [id {i.id}, pertinence {i.score:.2f}]"
+                if i.score is not None
+                else f"- {i.text} [id {i.id}]"
+            )
+            + (f" — « {i.quote} »" if i.quote else "")
             for i in items
         )
 
@@ -112,7 +115,10 @@ def register_memory_tools(registry: ToolRegistry, memory: NoteMemory) -> None:
         items = await memory.list_all(limit=_int(args, "limite", 50))
         if not items:
             return "Mon carnet est vide pour l'instant."
-        return "\n".join(f"- {i.text} [id {i.id}]" for i in items)
+        return "\n".join(
+            f"- {i.text} [id {i.id}]" + (f" — « {i.quote} »" if i.quote else "")
+            for i in items
+        )
 
     async def oublier(args: dict[str, Any]) -> str:
         memory_id = str(args.get("id", "")).strip()

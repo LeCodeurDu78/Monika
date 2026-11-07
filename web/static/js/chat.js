@@ -71,7 +71,7 @@ export function mountChat() {
     stop.disabled = !value;
   }
 
-  /** One live message from the kernel (see web/chat.py). */
+  /** One live message from the server (see web/chat.py). */
   function receive(msg) {
     if (msg.kind === 'user') {
       pending = null;

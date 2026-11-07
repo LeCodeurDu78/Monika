@@ -13,6 +13,30 @@
       "headers": {"Authorization": "Bearer ${MON_TOKEN}"},
       "slow": true,
       "enabled_tools": ["outil_utile"]
+    },
+    "hermes": {
+      "enabled": false,
+      "command": "python",
+      "args": ["-m", "bridges.helper_bridge"],
+      "env": {
+        "HELPER_KIND": "hermes",
+        "HELPER_NAME": "Hermes",
+        "HELPER_URL": "${HERMES_URL}",
+        "HELPER_TOKEN": "${HERMES_TOKEN}"
+      },
+      "slow_tools": {"ask": ["Je passe la main à Hermes, une seconde."]}
+    },
+    "nanomuse": {
+      "enabled": false,
+      "command": "python",
+      "args": ["-m", "bridges.helper_bridge"],
+      "env": {
+        "HELPER_KIND": "nanomuse",
+        "HELPER_NAME": "nanoMuse",
+        "HELPER_URL": "${NANOMUSE_URL}",
+        "HELPER_TOKEN": "${NANOMUSE_TOKEN}"
+      },
+      "slow_tools": {"ask": ["Je demande à nanoMuse, un instant."]}
     }
   }
 }
