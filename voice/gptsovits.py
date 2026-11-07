@@ -199,7 +199,7 @@ def find_pack(root: Path, character_id: str = "") -> Path:
         raise TtsError(
             f"Aucun pack de voix GPT-SoVITS dans {root} : il faut un dossier contenant "
             f"{EMOTIONS_FILE} et ses enregistrements de référence (une voix par émotion). "
-            "Voir le README, section Voix."
+            "Voir docs/voix.md, section « La voix GPT-SoVITS »."
         )
     wanted = character_id.strip()
     if wanted:
