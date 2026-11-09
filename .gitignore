@@ -1,6 +1,7 @@
 .env
-node_modules/
 __pycache__/
+config/settings.json
+vendor/
 *.pyc
 .venv/
 *.egg-info/

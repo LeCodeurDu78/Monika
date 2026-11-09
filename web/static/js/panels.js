@@ -265,7 +265,6 @@ export const sections = {
   sessions(s, refresh) {
     if (!s) return fill('p-sessions', el('p', 'muted', 'Démarrage en cours…'));
     if (s.error) return fill('p-sessions', el('p', 'err', s.error));
-    if (!s.enabled) return fill('p-sessions', el('p', 'muted', 'Sessions désactivées (SESSIONS_ENABLED).'));
     const nodes = [];
     if (ui.messages.sessions) nodes.push(el('p', 'err', ui.messages.sessions));
     else if (ui.notices.sessions) nodes.push(el('p', 'muted', ui.notices.sessions));

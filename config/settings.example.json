@@ -1,0 +1,7 @@
+{
+  "language": "fr",
+  "llm_provider": "custom",
+  "rag_ocr_enabled": true,
+  "tts_enabled": true,
+  "tts_text_mode": true
+}

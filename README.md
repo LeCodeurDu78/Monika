@@ -23,16 +23,17 @@ browser. Everything is stored on your machine; only the LLM provider you configu
 
 | Topic | Document                                     |
 |---|----------------------------------------------|
-| Voice: listening, speaking, GPT-SoVITS, page microphone | [docs/voice.md](docs/voix.md)                |
-| Personal memory and documents (RAG) | [docs/memory.md](docs/memoire.md)            |
-| MCP tools, built-in tools and custom tools | [docs/tools.md](docs/outils.md)              |
-| Agent, context, recipes, sessions, tasks, briefing | [docs/agent.md](docs/agent.md)               |
-| Configuration and project structure | [docs/config.md](docs/configuration.md)      |
-| Terminal and chat commands | [docs/commands.md](docs/commandes.md)        |
-| Avatar, dashboard, settings, phone | [docs/dashboard.md](docs/page.md)            |
-| Character: emotions, relationship, journal | [docs/character.md](docs/personnage.md)      |
-| Data, privacy, security, sensitive words | [docs/security.md](docs/securite.md)         |
-| Troubleshooting | [docs/troubleshooting.md](docs/depannage.md) |
+| Voice: listening, speaking, GPT-SoVITS, page microphone | [docs/voice.md](docs/voice.md) |
+| Personal memory and documents (RAG), OCR | [docs/memory.md](docs/memory.md) |
+| MCP tools, built-in tools and custom tools | [docs/tools.md](docs/tools.md) |
+| Agent, context, recipes, sessions, tasks, briefing | [docs/agent.md](docs/agent.md) |
+| Configuration, providers and project structure | [docs/config.md](docs/config.md) |
+| Terminal and chat commands | [docs/commands.md](docs/commands.md) |
+| Avatar, dashboard, settings, phone | [docs/dashboard.md](docs/dashboard.md) |
+| Character: emotions, relationship, journal | [docs/character.md](docs/character.md) |
+| Data, privacy and security | [docs/security.md](docs/security.md) |
+| Updates | [docs/updating.md](docs/updating.md) |
+| Troubleshooting | [docs/troubleshooting.md](docs/troubleshooting.md) |
 
 MCP bridge to a helper (Hermes, nanoMuse): [bridges/README.md](bridges/README.md).
 
@@ -51,15 +52,60 @@ meant to be installed as a package).
   2 GB (voice); a connection is needed at that moment. Memory reuses the document
   embedding model (~1 GB) on its first exchange, unless `MEMORY_EMBEDDINGS_ENABLED=false`.
 
+The quickest path is the installer; it creates the venv, installs the requirements, copies
+`.env` and `config/settings.json`, then runs the first-run wizard:
+
+```bash
+./scripts/install.sh         # add --voice to install GPT-SoVITS in vendor/
+```
+
+Or do it by hand:
+
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env          # then edit LLM_BASE_URL, OPENAI_API_KEY, MODEL_NAME
+cp .env.example .env          # or let `python -m monika --setup` write it
+cp config/settings.example.json config/settings.json
+python -m monika --setup      # language, provider, key, optional voice
 python -m monika --config     # check the configuration (secrets masked)
 python -m monika               # start Monika: the conversation happens in the page
 ```
 
-Voice mode needs an extra installation, described in [docs/voix.md](docs/voix.md).
+**Providers.** `LLM_PROVIDER=custom` keeps your own OpenAI-compatible endpoint.
+`openrouter` and `ollama` fill the address and model automatically:
+
+```bash
+# OpenRouter
+LLM_PROVIDER=openrouter
+OPENAI_API_KEY=sk-or-...
+
+# Ollama, locally
+LLM_PROVIDER=ollama            # http://127.0.0.1:11434/v1, qwen2.5:7b
+```
+
+The settings page has the same choice, with the key field. A provider change needs a restart.
+
+**Speech recognition** uses **faster-whisper**, running locally on the CPU; the model
+(`STT_MODEL`, `small` by default) is downloaded on first use and `STT_LANGUAGE` sets the spoken
+language (empty follows `LANGUAGE`).
+
+**GPT-SoVITS** now lives in the project:
+
+```bash
+./scripts/install_gptsovits.sh          # vendor/GPT-SoVITS, pinned commit
+./scripts/install_gptsovits.sh --models # also the pretrained weights
+./lancer-monika.sh                      # reuses vendor/GPT-SoVITS by default
+```
+
+**Scanned PDFs** are read with RapidOCR (`pypdfium2` renders the page, `rapidocr-onnxruntime`
+recognises it). Tune it with `RAG_OCR_ENABLED`, `RAG_OCR_MIN_CHARS`, `RAG_OCR_MAX_PAGES` and
+`RAG_OCR_DPI`.
+
+**Interface language**: French or English. Use the selector on `/settings` or append
+`?lang=en` to the page address; prompts and built-in lexicons follow `LANGUAGE`.
+
+**Updates**: `python -m monika --update` compares the checkout with its git remote and prints
+the commands; it never pulls by itself. Details: [docs/updating.md](docs/updating.md).
 
 ## Running
 
@@ -70,4 +116,4 @@ python -m monika --mode voix   # conversation out loud (answers also shown on sc
 python -m monika --config      # shows the loaded configuration (secrets masked)
 ```
 
-All other options, chat commands and settings: [docs/commandes.md](docs/commandes.md).
+All other options, chat commands and settings: [docs/commandes.md](docs/commands.md).

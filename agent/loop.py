@@ -20,16 +20,14 @@ from agent.context import (
 from agent.filler import FillerState
 from agent.llm import Completion, LLMError, TextDelta
 from agent.loop_detect import LoopDetector
-from agent.prompt import build_system_prompt, sensitive_block
+from agent.prompt import build_system_prompt
 from agent.sessions import SessionsError, trim_history
-from character.cues import sensitive_cue
 from character.models import AvatarCue
 from memory.capture import MemoryCapture
 from memory.notes import NoteMemory
 from monika.config import Settings
 from monika.i18n import tr
 from security.untrusted import wrap_tool_output
-from security.words import WordBank
 from tools.registry import ToolRegistry
 
 if TYPE_CHECKING:
@@ -105,7 +103,6 @@ class Agent:
         capture: MemoryCapture | None = None,
         rag: Any | None = None,
         character: CharacterService | None = None,
-        words: WordBank | None = None,
         sessions: SessionRecorder | None = None,
         recipes: RecipeStore | None = None,
         recipe_keeper: RecipeKeeper | None = None,
@@ -128,12 +125,8 @@ class Agent:
         self._character_block = ""
         self._journal_block = ""
         self._morning_block = ""  # 1-2 thoughts written by the nightly review, this day only
-        self._tone_block = ""  # Sensitive-word tone for this message, this turn only
-        self.words = (
-            words  # The user's word bank; the settings page swaps it (hot reload)
-        )
         self.sessions = (
-            sessions  # Persistent conversation log; None when SESSIONS_ENABLED is false
+            sessions  # Persistent conversation log; None when the store could not open
         )
         self.recipes = recipes  # Learned procedures, injected as suggestions
         self.recipes_keeper = recipe_keeper  # Writes a draft after a long, clean turn
@@ -208,7 +201,6 @@ class Agent:
             journal_block=self._journal_block,
             morning_block=self._morning_block,
             recipe_block=self._recipe_block,
-            tone_block=self._tone_block,
             already_said=self._spoken,
             reflection_block=self._reflection_block,
         )
@@ -274,7 +266,6 @@ class Agent:
         self._morning_block = ""
         if self.morning is not None:
             self._morning_block = self.morning.take()  # once per day, then consumed
-        self._tone_block = ""
         self._spoken = ""
         self._reflection_block = (
             self.reflection.take() if self.reflection is not None else ""
@@ -303,18 +294,9 @@ class Agent:
             False  # Once the turn is complete, closing the generator must not roll back
         )
         try:
-            tier = self._sensitive_tier(user_text)
-            if tier is not None:
-                self._tone_block = sensitive_block(tier)
-                if tier in ("bad", "severe"):
-                    # Level only: the word itself never reaches the trail, nor the page
-                    self.registry.audit_event("sensitive", {"tier": tier})
-                cue = sensitive_cue(tier)
-                if cue is not None:
-                    yield cue  # Before anything else: the reaction is immediate
             # Surface first, tools after: a small model says one line while nothing is verified,
             # so its prompt forbids claiming any result. A absent or slow surface changes nothing.
-            if self.surface is not None and not auto and tier is None:
+            if self.surface is not None and not auto:
                 line = await self.surface.line(user_text, voice=self._voice)
                 if line:
                     self._spoken = line
@@ -475,7 +457,6 @@ class Agent:
                 self._rollback(start, user_text, actions, exc)
             raise
         finally:
-            self._tone_block = ""
             if turn is not None:
                 turn.close()  # An aborted turn leaves no trace: the background tone reading is cancelled
             if (
@@ -495,15 +476,6 @@ class Agent:
                 auto=auto,
             )
             self.turn_running = False
-
-    def _sensitive_tier(self, text: str) -> str | None:
-        """The level this message hits (or None). Deterministic, no model call, never buys a turn."""
-        if self.words is None or not self._s.sensitive_words_enabled:
-            return None
-        try:
-            return self.words.match(text)
-        except Exception:  # noqa: BLE001 - a broken bank must never break a turn
-            return None
 
     async def _recall(self, query: str) -> tuple[str, str | None]:
         """Fetch relevant memories for this message; a failure never blocks the turn."""

@@ -284,10 +284,10 @@ async def open_tools(settings: Settings, paths: Paths, masker: Masker, on_manage
     if not servers:
         console.print(
             "[dim]Aucun outil : pas de serveur MCP configuré "
-            f"({paths.mcp_config}).[/dim]"
+            f"({paths.mcp_config})."
         )
-        yield registry
-        return
+    # The manager always runs, even with no server: it watches mcp_servers.json, so creating or
+    # editing the file applies without restarting Monika.
     async with McpManager(
         servers,
         registry,
@@ -295,6 +295,7 @@ async def open_tools(settings: Settings, paths: Paths, masker: Masker, on_manage
         settings.mcp_start_timeout_s,
         settings.mcp_call_timeout_s,
         extra_env=dotenv_for_mcp(),
+        config_path=paths.mcp_config,
     ) as manager:
         for st in manager.statuses:
             if not st.ok:
@@ -323,7 +324,7 @@ async def start_voice(settings: Settings, paths: Paths):
     finally:
         await probe.close()
     console.print(
-        f"[dim]Chargement de la reconnaissance vocale (Whisper « {settings.stt_model} » ; "
+        f"[dim]Chargement de la reconnaissance vocale ({transcriber.model_name} ; "
         "le premier lancement télécharge le modèle)…[/dim]"
     )
     try:
@@ -408,9 +409,6 @@ async def start_speech(settings: Settings, paths: Paths, voice: bool, on_level=N
         engine.close()
         return None
     tagger = _emotion_tagger(settings, engine)
-    block_chars = (
-        settings.tts_block_max_chars if settings.tts_render_mode() == "block" else 0
-    )
     # Read at each gap: the pause settings apply from the page without a restart
     pauses = lambda: (
         settings.tts_pause_style,
@@ -421,7 +419,6 @@ async def start_speech(settings: Settings, paths: Paths, voice: bool, on_level=N
         engine,
         sink,
         tagger=tagger,
-        block_chars=block_chars,
         pauses=pauses,
     )
 
@@ -486,25 +483,6 @@ def load_character(settings: Settings, paths: Paths, llm, hub, masker):
         return None
 
 
-def load_words(settings: Settings, paths: Paths):
-    """The user's own sensitive-word bank (empty at first). A broken file disables the filter, never a turn."""
-    try:
-        from security.words import WordBank
-
-        bank = WordBank.load(paths.words_file)
-    except Exception as exc:  # noqa: BLE001
-        console.print(
-            f"[yellow]Mots sensibles ignorés ({type(exc).__name__}: {exc}) : je continue sans.[/yellow]"
-        )
-        return None
-    if bank.empty:
-        console.print(
-            f"[dim]Aucun mot sensible déclaré ({paths.words_file}) : le filtre ne fait rien "
-            "tant que la liste est vide.[/dim]"
-        )
-    return bank
-
-
 def load_recipes(settings: Settings, paths: Paths, llm, masker):
     """Recettes apprises (facultatif) : un souci ici ne doit jamais empêcher de démarrer."""
     if not settings.recipes_enabled:
@@ -531,12 +509,7 @@ def load_recipes(settings: Settings, paths: Paths, llm, masker):
 
 
 def load_sessions(settings: Settings, paths: Paths, masker: Masker, voice: bool):
-    """Open the conversation log (SQLite + FTS5), or explain why it stays off. Never stops the chat."""
-    if not settings.sessions_enabled:
-        console.print(
-            "[dim]Sessions enregistrées désactivées (SESSIONS_ENABLED=false).[/dim]"
-        )
-        return None
+    """Open the conversation log (SQLite + FTS5); a failure never stops the chat."""
     from agent.sessions import SessionRecorder, SessionsError, SessionStore
 
     try:
@@ -795,7 +768,6 @@ async def _run_chat(
             character = load_character(settings, paths, llm, hub, masker)
             action_director = load_action_director(settings, llm, hub)
             reflection = BetweenTurns(settings, llm) if settings.reflection_enabled else None
-            words = load_words(settings, paths)
             nightly, morning = load_nightly(
                 settings, paths, masker, llm, memory, sessions, recipes, character
             )
@@ -809,7 +781,6 @@ async def _run_chat(
                 rag=rag,
                 voice=voice,
                 character=character,
-                words=words,
                 sessions=sessions,
                 recipes=recipes,
                 recipe_keeper=recipe_keeper,
@@ -1031,6 +1002,16 @@ def main(argv: list[str] | None = None) -> int:
         help="Affiche la configuration chargée (secrets masqués) et quitte.",
     )
     parser.add_argument(
+        "--setup",
+        action="store_true",
+        help="Assistant de premier lancement : langue, fournisseur, clé, voix, .env.",
+    )
+    parser.add_argument(
+        "--update",
+        action="store_true",
+        help="Compare le dépôt local au distant et affiche les commandes de mise à jour.",
+    )
+    parser.add_argument(
         "--rag-index",
         nargs="*",
         metavar="DOSSIER",
@@ -1074,6 +1055,15 @@ def main(argv: list[str] | None = None) -> int:
         help='Appelle un outil, ex. --call fichiers__read_file \'{"path": "/tmp/a"}\'.',
     )
     args = parser.parse_args(argv)
+
+    if args.setup:
+        from monika.setup import run_setup
+
+        return run_setup()
+    if args.update:
+        from monika.update import report
+
+        return report()
 
     try:
         settings = get_settings()

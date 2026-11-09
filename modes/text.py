@@ -322,7 +322,7 @@ class TextSession:
 
     def _resume(self, session_id: str) -> None:
         if self._agent.sessions is None:
-            self._write("Les sessions sont désactivées (SESSIONS_ENABLED=false).\n")
+            self._write(tr("cli.sessions_unavailable") + "\n")
             return
         if not session_id:
             self._write(tr("cli.resume_usage") + "\n")
@@ -340,7 +340,7 @@ class TextSession:
     def _search(self, query: str) -> None:
         sessions = self._agent.sessions
         if sessions is None:
-            self._write("Les sessions sont désactivées (SESSIONS_ENABLED=false).\n")
+            self._write(tr("cli.sessions_unavailable") + "\n")
             return
         if not query:
             self._write(tr("cli.search_usage") + "\n")
@@ -361,7 +361,7 @@ class TextSession:
     def _forget_session(self, argument: str) -> None:
         sessions = self._agent.sessions
         if sessions is None:
-            self._write("Les sessions sont désactivées (SESSIONS_ENABLED=false).\n")
+            self._write(tr("cli.sessions_unavailable") + "\n")
             return
         command, _, rest = argument.partition(" ")
         if subcommand(command) != "forget" or not rest.strip():
@@ -761,7 +761,6 @@ class TextSession:
             await (
                 self._speaker.cancel()
             )  # A new message cuts whatever was still being said
-            self._speaker.start_block()  # Grouping stays for this whole answer (TTS_RENDER=block)
         splitter = (
             SentenceSplitter(max_chars=self._speech_max_chars)
             if self._speaker
@@ -778,7 +777,6 @@ class TextSession:
                     self._speak(
                         splitter.flush()
                     )  # Text before a tool call or the end is said now
-                    self._speaker.flush_block()
                 if isinstance(event, TextDelta) and self._chat is not None:
                     self._chat.delta(event.text)
                 if isinstance(event, TextDelta):
@@ -856,8 +854,6 @@ class TextSession:
                 self._chat.end(
                     "".join(reply_parts)
                 )  # An unexpected error must not leave the page busy
-            if self._speaker is not None:
-                self._speaker.end_block()  # Speak what is still buffered, then back to sentence mode
             if self._hub is not None:
                 self._hub.set_state("idle")
                 self._hub.activity("turn")

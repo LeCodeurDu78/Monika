@@ -1,4 +1,7 @@
-"""Local speech recognition (faster-whisper) and a filter for Whisper's well-known hallucinations."""
+"""Local speech recognition with faster-whisper.
+
+Whisper's known hallucinations on noise are filtered out, whichever language is spoken.
+"""
 
 from __future__ import annotations
 
@@ -97,7 +100,7 @@ def _default_model_factory(settings: Settings, paths: Paths) -> Any:
 
 
 class Transcriber:
-    """Loads the Whisper model once (lazily) and transcribes utterances on a worker thread."""
+    """Loads the Whisper model lazily and transcribes utterances on a worker thread."""
 
     def __init__(
         self,
@@ -108,25 +111,25 @@ class Transcriber:
         self._s = settings
         self._paths = paths
         self._factory = model_factory or _default_model_factory
-        self._model: Any = None
+        self._whisper: Any = None
         self._pool = ThreadPoolExecutor(max_workers=1, thread_name_prefix="monika-stt")
         self._lock = asyncio.Lock()
 
     async def load(self) -> float:
-        """Load the model (downloads it on first use); returns the loading time in seconds."""
+        """Load the model (downloads it on first use); returns the loading time."""
         async with self._lock:
-            if self._model is not None:
+            if self._whisper is not None:
                 return 0.0
             start = time.perf_counter()
             try:
-                self._model = await asyncio.get_running_loop().run_in_executor(
+                self._whisper = await asyncio.get_running_loop().run_in_executor(
                     self._pool, self._factory, self._s, self._paths
                 )
             except Exception as exc:
                 raise SttError(
                     tr(
                         "voice.load_error",
-                        model=self._s.stt_model,
+                        model=self.model_name,
                         kind=type(exc).__name__,
                         error=str(exc)[:200],
                     )
@@ -135,7 +138,7 @@ class Transcriber:
 
     @property
     def loaded(self) -> bool:
-        return self._model is not None
+        return self._whisper is not None
 
     @property
     def model_name(self) -> str:
@@ -158,9 +161,10 @@ class Transcriber:
             return Transcript(
                 "", self._s.stt_language, audio_s, 0.0, filtered=tr("voice.too_short")
             )
-        segments, info = self._model.transcribe(
+        language = None if self._s.stt_language in ("", "auto") else self._s.stt_language
+        segments, info = self._whisper.transcribe(
             audio,
-            language=self._s.stt_language or None,
+            language=language,
             beam_size=self._s.stt_beam_size,
             initial_prompt=self._s.stt_prompt or None,
             condition_on_previous_text=False,  # Each utterance stands alone: no drift between sentences

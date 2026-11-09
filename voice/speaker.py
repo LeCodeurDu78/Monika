@@ -11,7 +11,6 @@ import numpy as np
 
 from voice.errors import PlaybackError, VoiceError
 from voice.pauses import pause_after
-from voice.speech_text import group_blocks
 
 log = logging.getLogger(__name__)
 
@@ -61,7 +60,6 @@ class Speaker:
         on_error: Callable[[str], None] | None = None,
         lookahead_chunks: int = 6,
         tagger: Tagger | None = None,
-        block_chars: int = 0,
         pauses: Pauses | None = None,
     ) -> None:
         self._engine = engine
@@ -81,9 +79,6 @@ class Speaker:
             tagger  # Emotion tags: None means the engine takes plain text, without tags
         )
         self._mood: tuple[str, float] = ("neutre", 0.0)
-        self._block_chars = max(0, block_chars)  # 0 = one sentence per request
-        self._block: list[str] = []  # Sentences waiting to be spoken as one block
-        self._blocking = False  # Only while a turn is being answered
         self._sentences: asyncio.Queue = asyncio.Queue()
         self._audio: asyncio.Queue = asyncio.Queue(maxsize=lookahead_chunks)
         self._pending = 0  # Sentences accepted but not completely played yet
@@ -102,7 +97,7 @@ class Speaker:
     @property
     def busy(self) -> bool:
         """True while a sentence is queued, buffered or being heard."""
-        return self._pending > 0 or self._sink.is_open or bool(self._block)
+        return self._pending > 0 or self._sink.is_open
 
     def use_sink(self, sink: _Sink | None) -> None:
         """Send the voice somewhere else (the page's WebAudio), or back to the default output."""
@@ -121,35 +116,11 @@ class Speaker:
             return (
                 False  # A waiting phrase never talks over, or right after, real speech
             )
-        if self._blocking and self._block_chars > 0 and not filler:
-            self._block.append(text)
-            if (
-                sum(len(part) for part in self._block) + len(self._block) - 1
-                >= self._block_chars
-            ):
-                self._flush_block()  # Reaches the limit: speak what we have, it is one request
-            else:
-                self._idle.clear()  # Buffered text still counts as speech waiting to be heard
-            return True
         self._enqueue(text)
         return True
 
-    def start_block(self) -> None:
-        """From now on, sentences are grouped (up to `block_chars`) into a single voice request."""
-        self._blocking = self._block_chars > 0
-
-    def flush_block(self) -> None:
-        """Speak the sentences buffered so far, without ending the block mode."""
-        self._flush_block()
-
-    def end_block(self) -> None:
-        """Speak what is buffered and go back to one sentence per request."""
-        self._flush_block()
-        self._blocking = False
-
     async def wait_idle(self, timeout: float | None = None) -> bool:
         """Wait until everything queued has been played; False if the timeout came first."""
-        self._flush_block()  # Buffered sentences would otherwise never be spoken
         try:
             await asyncio.wait_for(self._idle.wait(), timeout)
         except TimeoutError:
@@ -163,8 +134,6 @@ class Speaker:
             while not queue.empty():
                 queue.get_nowait()
         self._pending = 0
-        self._block.clear()
-        self._blocking = False
         self._last = None  # A new answer starts without a leading silence
         await self._sink.stop()
         self._idle.set()
@@ -183,11 +152,6 @@ class Speaker:
         self._idle.clear()
         self._pending += 1
         self._sentences.put_nowait((text, self._generation))
-
-    def _flush_block(self) -> None:
-        sentences, self._block = self._block, []
-        for block in group_blocks(sentences, self._block_chars):
-            self._enqueue(block)
 
     def _tag(self, text: str) -> str:
         """Text with emotion tags; a broken tagger must never cost the sentence."""

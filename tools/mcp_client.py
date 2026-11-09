@@ -20,6 +20,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
 from tools.registry import Tool, ToolFailure, ToolRegistry, safe_name
 
 _UNRESOLVED_VAR = re.compile(r"\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?")
+WATCH_INTERVAL_S = 2.0
 
 
 class McpConfigError(Exception):
@@ -168,6 +169,7 @@ class McpManager:
         start_timeout: float = 30.0,
         call_timeout: float = 120.0,
         extra_env: Mapping[str, str] | None = None,
+        config_path: Path | None = None,
     ) -> None:
         self._env = {
             **(extra_env or {}),
@@ -178,7 +180,10 @@ class McpManager:
         self._log_dir = log_dir
         self._start_timeout = start_timeout
         self._call_timeout = call_timeout
+        self._config_path = config_path
         self._stack = AsyncExitStack()
+        self._reload_lock = asyncio.Lock()
+        self._watch_task: asyncio.Task | None = None
         self.statuses: list[ServerStatus] = []
 
     async def __aenter__(self) -> Self:
@@ -186,7 +191,26 @@ class McpManager:
         return self
 
     async def __aexit__(self, *exc_info: object) -> None:
+        await self._stop_watch()
         await self._stack.aclose()
+
+    async def reload(self) -> list[ServerStatus]:
+        """Close every session, re-read the config and reconnect; tools are swapped in place."""
+        if self._config_path is None:
+            raise McpConfigError("le chemin de mcp_servers.json n'est pas connu")
+        async with self._reload_lock:
+            return await self._reload_locked()
+
+    async def _reload_locked(self) -> list[ServerStatus]:
+        old_names = list(self._servers)
+        await self._stack.aclose()
+        self._stack = AsyncExitStack()
+        for name in old_names:
+            self._registry.remove_source(f"MCP:{name}")
+        self.statuses = []
+        self._servers = load_mcp_config(self._config_path)
+        await self.start()
+        return self.statuses
 
     async def start(self) -> None:
         """Connect to every enabled server; one failing server never blocks the others."""
@@ -216,6 +240,45 @@ class McpManager:
                         f" (noms inconnus dans la configuration : {', '.join(unknown)})"
                     )
                 self.statuses.append(ServerStatus(name, True, detail, tool_names))
+        self._start_watch()
+
+    # ------------------------------------------------------------------ automatic config reload
+    def _config_stamp(self) -> tuple[int, int] | None:
+        """What changes when mcp_servers.json is written: mtime and size."""
+        if self._config_path is None:
+            return None
+        try:
+            stat = self._config_path.stat()
+        except OSError:
+            return None
+        return stat.st_mtime_ns, stat.st_size
+
+    def _start_watch(self) -> None:
+        """Watch mcp_servers.json in the background so an edit applies without a restart."""
+        if self._config_path is None or self._watch_task is not None:
+            return
+        self._watch_task = asyncio.get_running_loop().create_task(self._watch_config())
+
+    async def _stop_watch(self) -> None:
+        task, self._watch_task = self._watch_task, None
+        if task is None:
+            return
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+    async def _watch_config(self) -> None:
+        last = self._config_stamp()
+        while True:
+            await asyncio.sleep(WATCH_INTERVAL_S)
+            stamp = self._config_stamp()
+            if stamp == last:
+                continue
+            try:
+                await self.reload()
+            except Exception:  # a half-written file: keep the current tools and retry next tick
+                last = None
+            else:
+                last = stamp
 
     async def _connect(
         self, name: str, cfg: McpServerConfig

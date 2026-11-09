@@ -83,7 +83,7 @@ eligible turn (`RECIPES_ENABLED=false` to turn it off).
 
 ## Sessions and resuming
 
-With `SESSIONS_ENABLED=true` (disabled by default), each conversation is saved in
+Each conversation is saved in
 `~/.config/monika/sessions/sessions.db`: SQLite with **FTS5 full-text search**, file in
 `0600`. One row per session, one per turn, one per tool call, plus the history as the
 model saw it — that snapshot is what makes `/resume` exact, tool calls included.

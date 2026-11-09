@@ -3246,6 +3246,11 @@ var colorSpaceEncodingMap = {
   srgb: 3001
 };
 function setTextureColorSpace(texture, colorSpace) {
+  // Monika: a VRM can reference a texture the parser could not resolve. Skip that map instead of
+  // aborting the whole model ("cannot read property 'colorSpace' of undefined").
+  if (texture == null) {
+    return;
+  }
   if (parseInt(THREE17.REVISION, 10) >= 152) {
     texture.colorSpace = colorSpace;
   } else {

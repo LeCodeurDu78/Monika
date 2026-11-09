@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from rag.filters import find_secret
+from rag.ocr import OcrOptions, ocr_pdf
 
 TEXT_EXT = {
     ".txt",
@@ -135,7 +136,13 @@ def classify(path: Path) -> str | None:
     return None
 
 
-def load(path: Path, kind: str, max_text_kb: int, max_doc_mb: int) -> Loaded:
+def load(
+    path: Path,
+    kind: str,
+    max_text_kb: int,
+    max_doc_mb: int,
+    ocr: OcrOptions | None = None,
+) -> Loaded:
     """Read a file or raise SkipFile with the reason."""
     size = path.stat().st_size
     if size == 0:
@@ -151,12 +158,16 @@ def load(path: Path, kind: str, max_text_kb: int, max_doc_mb: int) -> Loaded:
             raise SkipFile(
                 f"trop gros ({size // (1024 * 1024)} Mo, limite RAG_MAX_DOC_MB={max_doc_mb})"
             )
-        loaded = _load_pdf(path) if kind == "pdf" else _load_docx(path)
+        loaded = _load_pdf(path, ocr) if kind == "pdf" else _load_docx(path)
     text = loaded.full_text()
     if not text.strip():
         raise SkipFile(
             "aucun texte extractible"
-            + (" (PDF scanné ? l'OCR n'est pas géré)" if kind == "pdf" else "")
+            + (
+                " (PDF scanné ? active RAG_OCR_ENABLED ou installe l'OCR)"
+                if kind == "pdf"
+                else ""
+            )
         )
     reason = find_secret(text)
     if reason:
@@ -179,21 +190,30 @@ def _load_text(path: Path, kind: str) -> Loaded:
     return Loaded(kind=kind, lines=lines)
 
 
-def _load_pdf(path: Path) -> Loaded:
+def _load_pdf(path: Path, ocr: OcrOptions | None = None) -> Loaded:
     from pypdf import PdfReader
 
     try:
         reader = PdfReader(str(path))
         if reader.is_encrypted and not reader.decrypt(""):
             raise SkipFile("PDF chiffré")
-        pages = []
+        texts: dict[int, str] = {}
         for number, page in enumerate(reader.pages, start=1):
             try:
-                text = page.extract_text() or ""
+                texts[number] = page.extract_text() or ""
             except Exception:  # One broken page must not lose the whole document
-                text = ""
-            if text.strip():
-                pages.append((number, text))
+                texts[number] = ""
+        if ocr is not None and ocr.enabled:
+            weak = {n for n, t in texts.items() if len(t.strip()) < ocr.min_chars}
+            if weak:
+                try:
+                    for number, text in ocr_pdf(path, ocr, weak).items():
+                        if len(text.strip()) > len(texts.get(number, "").strip()):
+                            texts[number] = text
+                except Exception:
+                    # OCR is optional: a missing wheel or a broken page never loses the text layer.
+                    pass
+        pages = [(n, t) for n, t in sorted(texts.items()) if t.strip()]
     except SkipFile:
         raise
     except Exception as exc:

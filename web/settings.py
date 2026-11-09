@@ -15,7 +15,10 @@ from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import urlparse
 
+from pydantic import SecretStr
+
 from monika.config import (
+    PROVIDER_PRESETS,
     Settings,
     SettingsError,
     apply_settings_changes,
@@ -24,90 +27,20 @@ from monika.config import (
     restart_required_fields,
     settings_json_path,
     write_env_secret,
+    write_env_settings,
 )
+from monika.i18n import normalize_language
 from monika.paths import Paths
-from security.words import (
-    TIERS,
-    WordBank,
-    WordsError,
-    read_words,
-    validate_tiers,
-    write_words,
-)
 from web.server import ActionError
 
 PROBE_TIMEOUT_S = 1.5
 
-# What the page shows. A curated list stays readable; the rest stays editable by hand in settings.json.
+# What the page shows. A short, curated list stays readable; everything else stays editable by hand
+# in settings.json. Titles, labels and hints are French: the page translates them like the rest of
+# the interface.
 CATALOG: tuple[tuple[str, tuple[str, ...]], ...] = (
-    ("Langue", ("language",)),
-    (
-        "Modèle et génération",
-        ("model_name", "llm_temperature", "llm_timeout_s", "max_steps"),
-    ),
-    (
-        "Comportement",
-        (
-            "user_name",
-            "persona_text",
-            "context_budget_tokens",
-            "context_keep_recent_tokens",
-            "filler_delay_s",
-            "filler_repeat_s",
-            "filler_max_per_turn",
-        ),
-    ),
-    (
-        "Personnage",
-        (
-            "character_enabled",
-            "affect_llm_enabled",
-            "affect_timeout_s",
-            "journal_enabled",
-            "journal_every_turns",
-            "journal_max_chars",
-        ),
-    ),
-    (
-        "Rôles",
-        (
-            "surface_llm_model",
-            "surface_prompt",
-            "surface_timeout_s",
-            "reflection_model",
-            "reflection_enabled",
-            "reflection_speak",
-            "reflection_prompt",
-            "action_llm_enabled",
-            "action_llm_model",
-        ),
-    ),
-    (
-        "Mémoire",
-        ("memory_consolidate_turns", "memory_notes_max_chars", "memory_capture_enabled"),
-    ),
-    ("Sessions", ("sessions_enabled", "sessions_keep_days")),
-    ("Tâches planifiées", ("tasks_enabled", "tasks_max")),
-    (
-        "Briefing du matin",
-        (
-            "briefing_enabled",
-            "briefing_time",
-            "briefing_days",
-            "briefing_city",
-            "briefing_sections",
-        ),
-    ),
-    (
-        "Veille nocturne",
-        (
-            "nightly_enabled",
-            "nightly_time",
-            "obsidian_journal_dir",
-            "nightly_llm_model",
-        ),
-    ),
-    ("Documents", ("rag_top_k", "rag_min_score", "rag_rerank_enabled")),
+    ("Général", ("user_name", "persona_text")),
+    ("Modèle", ("model_name", "llm_temperature", "llm_timeout_s", "max_steps")),
     (
         "Voix",
         (
@@ -115,15 +48,139 @@ CATALOG: tuple[tuple[str, tuple[str, ...]], ...] = (
             "tts_text_mode",
             "tts_speed",
             "tts_emotion_tags",
-            "tts_render",
             "tts_pause_style",
             "tts_pause_scale",
-            "tts_pause_max_s",
+            "stt_model",
+            "stt_language",
         ),
     ),
-    ("Mots sensibles", ("sensitive_words_enabled",)),
-    ("Page et journaux", ("web_port", "log_level")),
+    (
+        "Mémoire et documents",
+        (
+            "memory_capture_enabled",
+            "memory_consolidate_turns",
+            "rag_top_k",
+            "rag_min_score",
+            "rag_rerank_enabled",
+            "rag_ocr_enabled",
+        ),
+    ),
+    ("Personnage", ("character_enabled", "affect_llm_enabled", "journal_enabled")),
+    (
+        "Automatisations",
+        (
+            "tasks_enabled",
+            "briefing_enabled",
+            "briefing_time",
+            "briefing_city",
+            "nightly_enabled",
+            "nightly_time",
+        ),
+    ),
+    ("Avancé", ("log_level", "context_budget_tokens")),
 )
+
+# Label and one-line explanation per field (French; translated by the page).
+FIELD_META: dict[str, tuple[str, str]] = {
+    "user_name": ("Ton prénom", "Le prénom que Monika utilise pour s'adresser à toi."),
+    "persona_text": (
+        "Consignes de comportement",
+        "Ajoutées à son prompt : ton, habitudes, ce qu'elle doit éviter.",
+    ),
+    "model_name": ("Modèle", "Le modèle servi par ton fournisseur."),
+    "llm_temperature": (
+        "Température",
+        "Plus bas = plus stable, plus haut = plus créatif.",
+    ),
+    "llm_timeout_s": ("Délai maximal", "Au-delà, l'appel au modèle est abandonné (secondes)."),
+    "max_steps": ("Appels d'outils par tour", "Nombre maximal d'outils utilisés dans un tour."),
+    "tts_enabled": ("Synthèse vocale", "GPT-SoVITS doit tourner sur la machine."),
+    "tts_text_mode": (
+        "Parler en mode texte",
+        "Fait parler Monika même quand tu écris dans la page.",
+    ),
+    "tts_speed": ("Vitesse de la voix", "1 = vitesse normale."),
+    "tts_emotion_tags": (
+        "Émotions dans la voix",
+        "Auto n'utilise que les émotions enregistrées dans ta voix.",
+    ),
+    "tts_pause_style": ("Pauses", "Neutre n'ajoute aucun silence entre les phrases."),
+    "tts_pause_scale": ("Longueur des pauses", "Multiplie les pauses calculées."),
+    "stt_model": (
+        "Reconnaissance vocale",
+        "small est un bon compromis ; medium et large sont plus lents.",
+    ),
+    "stt_language": (
+        "Langue parlée",
+        "Langue de ton micro ; auto laisse Whisper la deviner.",
+    ),
+    "memory_capture_enabled": (
+        "Mémoriser automatiquement",
+        "Retient les faits cités pendant la conversation.",
+    ),
+    "memory_consolidate_turns": (
+        "Consolidation",
+        "Réécrit le carnet tous les N tours (minimum 2).",
+    ),
+    "rag_top_k": ("Passages cités", "Nombre de passages envoyés au modèle."),
+    "rag_min_score": (
+        "Seuil de pertinence",
+        "Sous ce score, un passage est écarté (0 = tout garder).",
+    ),
+    "rag_rerank_enabled": (
+        "Reclassement",
+        "Reclasse les passages avant de répondre.",
+    ),
+    "rag_ocr_enabled": (
+        "OCR des PDF scannés",
+        "Lit le texte des pages sans couche texte (RapidOCR, CPU).",
+    ),
+    "character_enabled": (
+        "Émotions et relation",
+        "Humeur, favorabilité et gestes de l'avatar.",
+    ),
+    "affect_llm_enabled": (
+        "Lire le ton",
+        "Petit appel au modèle ; le lexique reste le repli.",
+    ),
+    "journal_enabled": (
+        "Journal de Monika",
+        "Elle écrit quelques notes sur toi en arrière-plan.",
+    ),
+    "tasks_enabled": (
+        "Tâches planifiées",
+        "Rappels et tâches récurrentes, tant que Monika tourne.",
+    ),
+    "briefing_enabled": (
+        "Briefing du matin",
+        "Météo, agenda, mails et tâches une fois par jour.",
+    ),
+    "briefing_time": ("Heure du briefing", "Heure locale, HH:MM."),
+    "briefing_city": ("Ville (météo)", "Vide : pas de météo dans le briefing."),
+    "nightly_enabled": (
+        "Veille nocturne",
+        "Une note de la journée et des idées pour le lendemain.",
+    ),
+    "nightly_time": ("Heure de la veille", "Heure locale, HH:MM."),
+    "log_level": ("Niveau de journal", "DEBUG, INFO, WARNING, ERROR ou CRITICAL."),
+    "context_budget_tokens": (
+        "Budget de contexte",
+        "Au-delà, les anciens messages sont résumés.",
+    ),
+}
+
+# Fields rendered as a drop-down instead of a free text box.
+OPTIONS: dict[str, tuple[tuple[str, str], ...]] = {
+    "tts_emotion_tags": (("auto", "Auto"), ("on", "Toujours"), ("off", "Jamais")),
+    "tts_pause_style": (("neutre", "Neutre"), ("naturel", "Naturel")),
+    "log_level": (
+        ("DEBUG", "DEBUG"),
+        ("INFO", "INFO"),
+        ("WARNING", "WARNING"),
+        ("ERROR", "ERROR"),
+        ("CRITICAL", "CRITICAL"),
+    ),
+}
 
 
 @dataclass
@@ -149,6 +206,8 @@ def _short(exc: BaseException, limit: int = 120) -> str:
 
 
 def _kind(name: str, value: Any) -> str:
+    if name in OPTIONS:
+        return "select"
     if isinstance(value, bool):
         return "bool"
     if isinstance(value, (int, float)):
@@ -188,8 +247,14 @@ class SettingsApi:
             fields = [
                 {
                     "name": name,
+                    "label": FIELD_META[name][0],
+                    "hint": FIELD_META[name][1],
                     "kind": _kind(name, values[name]),
                     "value": values[name],
+                    "options": [
+                        {"value": value, "label": label}
+                        for value, label in OPTIONS.get(name, ())
+                    ],
                     "pinned": name in pinned,
                 }
                 for name in names
@@ -206,19 +271,10 @@ class SettingsApi:
             },
             "settings_file": str(settings_json_path()),
             "language": self._s.language,
-            "words": self._words(),
+            "provider": self._s.llm_provider,
+            "base_url": self._s.llm_base_url,
+            "model": self._s.model_name,
         }
-
-    def _words(self) -> dict[str, list[str]]:
-        """The bank the running agent actually matches (or the file, before the agent exists)."""
-        agent = self._health.agent
-        bank = getattr(agent, "words", None) if agent is not None else None
-        if bank is not None:
-            return bank.words
-        try:
-            return read_words(self._paths.words_file)
-        except WordsError:
-            return {tier: [] for tier in TIERS}
 
     # ------------------------------------------------------------------------------------ health
     async def health(self) -> dict[str, Any]:
@@ -284,12 +340,12 @@ class SettingsApi:
             return _row(
                 "Reconnaissance vocale",
                 True,
-                f"Whisper « {transcriber.model_name} » sur {transcriber.device}",
+                f"{transcriber.model_name} sur {transcriber.device}",
             )
         return _row(
             "Reconnaissance vocale",
             None,
-            f"Whisper « {transcriber.model_name} » : modèle non chargé",
+            f"{transcriber.model_name} : modèle non chargé",
         )
 
     async def _tts_row(self) -> dict[str, Any]:
@@ -379,22 +435,9 @@ class SettingsApi:
         return {
             "settings_update": self._update,
             "settings_secret": self._secret,
-            "settings_words": self._words_update,
+            "settings_provider": self._provider,
+            "settings_language": self._language,
         }
-
-    async def _words_update(self, tiers: dict[str, Any]) -> dict[str, Any]:
-        """Validate, write the bank, then swap it into the running agent (hot reload)."""
-        try:
-            cleaned = validate_tiers(tiers)
-            write_words(self._paths.words_file, cleaned)
-        except WordsError as exc:
-            raise ActionError(str(exc), 400) from exc
-        bank = WordBank(cleaned)
-        agent = self._health.agent
-        if agent is not None:
-            agent.words = bank
-        self._activity()
-        return {"words": bank.counts}
 
     async def _update(self, patch: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(patch, dict):
@@ -417,6 +460,65 @@ class SettingsApi:
             raise ActionError(str(exc), 400) from exc
         self._activity()
         return {"restart_required": ["openai_api_key"], "secret": True}
+
+    async def _provider(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Apply OpenRouter/Ollama/custom in one gesture, with the key when one is given."""
+        name = str(payload.get("provider") or "").strip().lower()
+        if name not in {"custom", "openrouter", "ollama"}:
+            raise ActionError("Fournisseur inconnu : custom, openrouter ou ollama.", 400)
+        values = {"LLM_PROVIDER": name}
+        preset = PROVIDER_PRESETS.get(name)
+        if preset is not None:
+            values.update(
+                {
+                    "LLM_BASE_URL": preset["llm_base_url"],
+                    "MODEL_NAME": preset["model_name"],
+                }
+            )
+            self._s.llm_base_url = preset["llm_base_url"]
+            self._s.model_name = preset["model_name"]
+        else:
+            base_url = str(payload.get("base_url") or "").strip()
+            if not base_url:
+                raise ActionError(
+                    "URL de base requise pour le fournisseur custom.", 400
+                )
+            values["LLM_BASE_URL"] = base_url.rstrip("/")
+            model = str(payload.get("model") or "").strip()
+            if model:
+                values["MODEL_NAME"] = model
+        key = str(payload.get("key") or "").strip()
+        try:
+            write_env_settings(values)
+            self._s.llm_base_url = values["LLM_BASE_URL"].rstrip("/")
+            if "MODEL_NAME" in values:
+                self._s.model_name = values["MODEL_NAME"]
+            if key:
+                write_env_secret("OPENAI_API_KEY", key)
+                self._s.openai_api_key = SecretStr(key)
+            elif name == "ollama" and not self._s.openai_api_key.get_secret_value():
+                write_env_secret("OPENAI_API_KEY", "ollama")
+                self._s.openai_api_key = SecretStr("ollama")
+        except SettingsError as exc:
+            raise ActionError(str(exc), 400) from exc
+        self._activity()
+        return {
+            "restart_required": ["llm_provider", "llm_base_url", "model_name", "openai_api_key"],
+            "provider": name,
+        }
+
+    async def _language(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Switch the interface and prompts live, writing LANGUAGE to .env so it survives a restart."""
+        code = normalize_language(str(payload.get("language") or ""), default="")
+        if not code:
+            raise ActionError("Langue inconnue : fr ou en.", 400)
+        try:
+            write_env_settings({"LANGUAGE": code})
+        except SettingsError as exc:
+            raise ActionError(str(exc), 400) from exc
+        self._s.language = code
+        self._activity()
+        return {"language": code}
 
     def _activity(self) -> None:
         hub = self._health.hub

@@ -39,12 +39,27 @@ def _home_from_environment() -> Path:
 
 
 def settings_json_path() -> Path:
-    """Where the settings page writes: <MONIKA_HOME>/settings.json."""
+    """Where the settings page writes: MONIKA_SETTINGS_FILE, or <MONIKA_HOME>/settings.json.
+
+    The project-local `config/settings.json` (same layout as Amika) is selected by putting
+    MONIKA_SETTINGS_FILE=config/settings.json in .env; relative paths resolve from the project.
+    """
+    raw = os.environ.get("MONIKA_SETTINGS_FILE", "").strip()
+    if not raw and ENV_FILE.exists():
+        from dotenv import dotenv_values
+
+        raw = str(dotenv_values(ENV_FILE).get("MONIKA_SETTINGS_FILE") or "").strip()
+    if raw:
+        path = Path(raw).expanduser()
+        return path if path.is_absolute() else (PROJECT_ROOT / path).resolve()
     return _home_from_environment() / "settings.json"
 
 
 # GPT-SoVITS text front-ends; French is read by the English one, hence the aliases.
 _LANGUAGES = frozenset({"auto", "en", "zh", "ja", "ko", "yue"})
+DEFAULT_LLM_BASE_URL = "https://api.libertai.io/v1"
+DEFAULT_MODEL_NAME = "deepseek-v4.1-flash"
+
 _LANGUAGE_NAMES = {
     "chinese": "zh",
     "english": "en",
@@ -95,10 +110,12 @@ class Settings(BaseSettings):
             file_secret_settings,
         )
 
-    # LLM (OpenAI-compatible API)
-    llm_base_url: str = "https://api.libertai.io/v1"
+    # LLM (OpenAI-compatible API). `custom` keeps LLM_BASE_URL as typed; `openrouter` and
+    # `ollama` fill the address and model from PROVIDER_PRESETS when they are still the defaults.
+    llm_provider: str = "custom"
+    llm_base_url: str = DEFAULT_LLM_BASE_URL
     openai_api_key: SecretStr = SecretStr("")
-    model_name: str = "deepseek-v4.1-flash"
+    model_name: str = DEFAULT_MODEL_NAME
     llm_temperature: float = Field(0.7, ge=0.0, le=2.0)
     llm_timeout_s: float = Field(120.0, gt=0)
     llm_max_retries: int = Field(2, ge=0, le=10)
@@ -134,7 +151,6 @@ class Settings(BaseSettings):
     tool_results_keep_days: int = Field(14, ge=1)
 
     # Sessions: the conversation log on disk (SQLite + FTS5), searchable and resumable (`/sessions`)
-    sessions_enabled: bool = False
     sessions_keep_days: int = Field(30, ge=1)
 
     # Scheduled tasks: reminders and recurring jobs, fired by the running process (`/rappel`).
@@ -226,8 +242,14 @@ class Settings(BaseSettings):
     # score has another scale). Raise it to be stricter; -100 keeps everything (useful to see scores).
     rag_min_score: float = Field(0.0, ge=-100.0, le=100.0)
     rag_reranker_model: str = "jinaai/jina-reranker-v2-base-multilingual"
+    # OCR des PDF scannés : les pages sans texte extractible passent par RapidOCR (ONNX, sans
+    # binaire système). Désactivable ; les dépendances restent optionnelles au chargement.
+    rag_ocr_enabled: bool = True
+    rag_ocr_min_chars: int = Field(40, ge=0, le=5000)
+    rag_ocr_max_pages: int = Field(50, ge=1, le=500)
+    rag_ocr_dpi: int = Field(200, ge=72, le=600)
 
-    # Speech recognition: faster-whisper (CPU by default) + Silero voice activity detection
+    # Speech recognition: faster-whisper, with Silero voice activity detection.
     stt_model: str = "small"
     stt_device: str = (
         "auto"  # auto = cpu, to keep the GPU memory for the voice synthesis
@@ -268,12 +290,6 @@ class Settings(BaseSettings):
         "en"  # Language of the reference transcripts when character.json is silent
     )
     tts_emotion_tags: str = "auto"  # auto = only the tags the voice pack has, on = trust the mapper, off = never
-    tts_render: str = (
-        "auto"  # auto = one sentence per request, or force block | sentence
-    )
-    tts_block_max_chars: int = Field(
-        600, ge=60, le=4000
-    )  # One request = one audio; bounds the wait
     tts_timeout_s: float = Field(45.0, gt=0)  # Longest wait for one spoken sentence
     tts_language: str = (
         "en"  # Text front-end: en, zh, ja, ko, yue or auto (French is read as en)
@@ -307,9 +323,6 @@ class Settings(BaseSettings):
     filler_delay_s: float = Field(1.5, ge=0)
     filler_repeat_s: float = Field(8.0, gt=0)
     filler_max_per_turn: int = Field(2, ge=0)
-
-    # Sensitive words: a deterministic three-level filter on the user's own list (no word is shipped)
-    sensitive_words_enabled: bool = True
 
     # Logging and audit trail
     log_level: str = "INFO"
@@ -451,6 +464,14 @@ class Settings(BaseSettings):
             raise ValueError(tr("config.tts_url"))
         return value
 
+    @field_validator("llm_provider")
+    @classmethod
+    def _llm_provider(cls, value: str) -> str:
+        value = value.strip().lower()
+        if value not in {"custom", "openrouter", "ollama"}:
+            raise ValueError("LLM_PROVIDER doit être custom, openrouter ou ollama.")
+        return value
+
     @field_validator("stt_device")
     @classmethod
     def _stt_device(cls, value: str) -> str:
@@ -475,14 +496,6 @@ class Settings(BaseSettings):
             raise ValueError(tr("config.tts_emotion"))
         return value
 
-    @field_validator("tts_render")
-    @classmethod
-    def _tts_render(cls, value: str) -> str:
-        value = value.strip().lower()
-        if value not in {"auto", "sentence", "block"}:
-            raise ValueError(tr("config.tts_render"))
-        return value
-
     @field_validator("log_level")
     @classmethod
     def _upper_level(cls, value: str) -> str:
@@ -495,6 +508,15 @@ class Settings(BaseSettings):
     def _loop_thresholds(self) -> Settings:
         if not self.stt_language.strip():
             self.stt_language = self.language
+        # A provider chosen in .env must work even when only LLM_PROVIDER was set.
+        preset = PROVIDER_PRESETS.get(self.llm_provider)
+        if preset is not None:
+            if self.llm_base_url.rstrip("/") == DEFAULT_LLM_BASE_URL:
+                self.llm_base_url = preset["llm_base_url"]
+            if self.model_name == DEFAULT_MODEL_NAME:
+                self.model_name = preset["model_name"]
+            if self.llm_provider == "ollama" and not self.openai_api_key.get_secret_value():
+                self.openai_api_key = SecretStr("ollama")
         if not self.stt_prompt.strip():
             self.stt_prompt = tr("voice.stt_prompt")
         if self.loop_stop_after <= self.loop_warn_after:
@@ -508,12 +530,6 @@ class Settings(BaseSettings):
         ):
             raise ValueError(tr("config.context_order"))
         return self
-
-    def tts_render_mode(self) -> str:
-        """`sentence` (fastest first sound, the default) or `block` (one request per few sentences)."""
-        if self.tts_render != "auto":
-            return self.tts_render
-        return "sentence"
 
     def rag_root_paths(self) -> list[Path]:
         """Expanded folders to index."""
@@ -626,6 +642,7 @@ NOT_EDITABLE = frozenset(
 # works, but they only take effect after a restart and the page says so.
 RESTART_REQUIRED = frozenset(
     {
+        "llm_provider",
         "llm_base_url",
         "llm_timeout_s",
         "llm_max_retries",
@@ -650,6 +667,10 @@ RESTART_REQUIRED = frozenset(
         "rag_chunk_chars",
         "rag_chunk_overlap_chars",
         "rag_reranker_model",
+        "rag_ocr_enabled",
+        "rag_ocr_min_chars",
+        "rag_ocr_max_pages",
+        "rag_ocr_dpi",
         "rag_embed_batch",
         "rag_threads",
         "rag_exclude",
@@ -665,8 +686,6 @@ RESTART_REQUIRED = frozenset(
         "tts_character_id",
         "tts_prompt_lang",
         "tts_emotion_tags",
-        "tts_render",
-        "tts_block_max_chars",
         "tts_language",
         "tts_timeout_s",
         "tts_text_mode",
@@ -688,7 +707,6 @@ RESTART_REQUIRED = frozenset(
         "tool_results_keep_days",
         "audit_enabled",
         "audit_max_chars",
-        "sessions_enabled",
         "sessions_keep_days",
         "tasks_enabled",
         "tasks_max",
@@ -705,6 +723,19 @@ RESTART_REQUIRED = frozenset(
 )
 
 EDITABLE = frozenset(Settings.model_fields) - NOT_EDITABLE
+
+
+# Provider presets: the settings page and `--setup` use the same values.
+PROVIDER_PRESETS: dict[str, dict[str, str]] = {
+    "openrouter": {
+        "llm_base_url": "https://openrouter.ai/api/v1",
+        "model_name": "openai/gpt-4o-mini",
+    },
+    "ollama": {
+        "llm_base_url": "http://127.0.0.1:11434/v1",
+        "model_name": "qwen2.5:7b",
+    },
+}
 ENV_WRITABLE = frozenset(
     {"OPENAI_API_KEY"}
 )  # The only secret the page may write, one line in .env
@@ -779,6 +810,78 @@ def apply_settings_changes(
         if name in EDITABLE and before[name] != value
     }
     return sorted(changed & RESTART_REQUIRED)
+
+
+ENV_SETTINGS_WRITABLE = frozenset(
+    {"LANGUAGE", "LLM_PROVIDER", "LLM_BASE_URL", "MODEL_NAME"}
+)
+
+
+def write_env_settings(values: dict[str, str]) -> None:
+    """Write a few non-secret settings to .env (the page's provider and language selectors).
+
+    They are written there rather than in settings.json because .env has priority: otherwise the
+    change would look applied until the next launch, when the old value would win again.
+    """
+    keys = {str(k).strip().upper(): str(v).strip() for k, v in values.items()}
+    unknown = sorted(set(keys) - ENV_SETTINGS_WRITABLE)
+    if unknown:
+        raise SettingsError(tr("config.bad_secret"))
+    for key, value in keys.items():
+        if not value or "\n" in value or "\r" in value:
+            raise SettingsError(tr("config.secret_line"))
+    if "LANGUAGE" in keys:
+        keys["LANGUAGE"] = normalize_language(keys["LANGUAGE"], default="")
+        if not keys["LANGUAGE"]:
+            raise SettingsError(tr("config.language"))
+    if "LLM_PROVIDER" in keys and keys["LLM_PROVIDER"] not in {
+        "custom",
+        "openrouter",
+        "ollama",
+    }:
+        raise SettingsError("LLM_PROVIDER doit être custom, openrouter ou ollama.")
+    if "LLM_BASE_URL" in keys:
+        keys["LLM_BASE_URL"] = keys["LLM_BASE_URL"].rstrip("/")
+        if not keys["LLM_BASE_URL"].startswith(("http://", "https://")):
+            raise SettingsError("LLM_BASE_URL doit commencer par http:// ou https://.")
+    try:
+        lines = (
+            ENV_FILE.read_text(encoding="utf-8").splitlines()
+            if ENV_FILE.exists()
+            else []
+        )
+    except OSError as exc:
+        raise SettingsError(
+            tr("config.read_env", path=ENV_FILE, error=exc.strerror or exc)
+        ) from exc
+    for key, value in keys.items():
+        replaced = False
+        out: list[str] = []
+        for line in lines:
+            head = line.split("=", 1)[0].strip().upper()
+            if not line.lstrip().startswith("#") and head == key:
+                out.append(f"{key}={value}")
+                replaced = True
+            else:
+                out.append(line)
+        if not replaced:
+            out.append(f"{key}={value}")
+        lines = out
+    _atomic_write(ENV_FILE, "\n".join(lines) + "\n")
+    live = get_settings()
+    old_language = live.language
+    for key, value in keys.items():
+        if key == "LANGUAGE":
+            live.language = value
+            set_language(value)
+            if live.stt_language == old_language:
+                live.stt_language = value
+        elif key == "LLM_PROVIDER":
+            live.llm_provider = value
+        elif key == "LLM_BASE_URL":
+            live.llm_base_url = value
+        elif key == "MODEL_NAME":
+            live.model_name = value
 
 
 def write_env_secret(name: str, value: str) -> None:

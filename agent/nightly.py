@@ -206,7 +206,7 @@ class Digest:
 
     day: date
     sessions: list[dict[str, Any]] = field(default_factory=list)
-    sessions_enabled: bool = True
+    sessions_available: bool = True
     turns: int = 0
     failures: list[dict[str, Any]] = field(default_factory=list)
     audit_enabled: bool = True
@@ -465,7 +465,7 @@ class NightlyJob:
         digest = Digest(day=day)
         digest.audit_enabled = bool(self._s.audit_enabled)
         digest.recipes_enabled = bool(self._s.recipes_enabled)
-        digest.sessions_enabled = self._sessions is not None
+        digest.sessions_available = self._sessions is not None
 
         if self._sessions is not None:
             try:
@@ -1077,9 +1077,9 @@ def build_note(
         "",
         "## Sessions",
     ]
-    if not digest.sessions_enabled:
+    if not digest.sessions_available:
         lines.append(
-            "Les sessions ne sont pas enregistrées (SESSIONS_ENABLED=false) : je n'ai pas de trace de la journée."
+            "Les sessions ne sont pas disponibles : je n'ai pas de trace de la journée."
         )
     elif not digest.sessions:
         lines.append("Aucune session enregistrée aujourd'hui.")

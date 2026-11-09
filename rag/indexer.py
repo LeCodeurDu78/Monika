@@ -14,6 +14,7 @@ from monika.config import Settings
 from rag.chunking import chunk_document
 from rag.filters import PathFilter
 from rag.loaders import SkipFile, classify, load
+from rag.ocr import OcrOptions
 from rag.manifest import FileRow
 from rag.store import RagStore, build_nodes, file_id_for
 
@@ -238,7 +239,17 @@ class Indexer:
                 progress.unchanged += 1
                 return
             loaded = await asyncio.to_thread(
-                load, c.path, c.kind, self._s.rag_max_text_kb, self._s.rag_max_doc_mb
+                load,
+                c.path,
+                c.kind,
+                self._s.rag_max_text_kb,
+                self._s.rag_max_doc_mb,
+                OcrOptions(
+                    self._s.rag_ocr_enabled,
+                    self._s.rag_ocr_min_chars,
+                    self._s.rag_ocr_max_pages,
+                    self._s.rag_ocr_dpi,
+                ),
             )
             chunks = chunk_document(
                 loaded, self._s.rag_chunk_chars, self._s.rag_chunk_overlap_chars

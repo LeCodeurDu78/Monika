@@ -45,30 +45,6 @@ _REACTIONS: tuple[tuple[str, tuple[tuple[int, str, str], ...]], ...] = (
 )
 
 
-def sensitive_cue(tier: str | None) -> AvatarCue | None:
-    """Immediate reaction to a coarse or hurtful word: a face, never a wall. 'mild' gets nothing."""
-    if tier == "bad":
-        # Above the character's own reaction (priority 2): otherwise the mood cue, which arrives just after,
-        # replaces it on the page and the pout never shows.
-        return AvatarCue(
-            emotion="boudeuse",
-            intensity=0.55,
-            clip="Pout",
-            reason="user:sensitive:bad",
-            priority=3,
-        )
-    if tier == "severe":
-        # Folded arms and a cool face: quieter than anger, and never hostile back.
-        return AvatarCue(
-            emotion="froide",
-            intensity=0.7,
-            clip="FoldArms",
-            reason="user:sensitive:severe",
-            priority=4,
-        )
-    return None
-
-
 def level_index(snapshot: dict[str, Any]) -> int:
     level = snapshot.get("level")
     return LEVELS.index(level) if level in LEVELS else 1

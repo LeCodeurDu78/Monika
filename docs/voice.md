@@ -7,7 +7,11 @@ pip install -r requirements.txt   # no voice model here (see "The GPT-SoVITS voi
 ```
 
 `sounddevice` (through PortAudio) is the microphone and the audio output, and works on Linux and
-Windows. Monika loads no voice model herself: she talks to **GPT-SoVITS**, started separately. If
+Windows. Speech recognition uses **faster-whisper**, running locally on the CPU; the model
+(`STT_MODEL`, `small` by default) is downloaded on first use into
+`~/.config/monika/voice/models/whisper`.
+
+Monika loads no voice model for synthesis: she talks to **GPT-SoVITS**, started separately. If
 PortAudio or the audio output is missing, Monika says so at startup and continues without voice.
 
 On Linux, install PortAudio (`sudo apt install libportaudio2` on Debian/Ubuntu, or
@@ -23,9 +27,10 @@ devices with `python -m sounddevice`.
   starts after a few confident frames (clicks are ignored) and the sentence ends after
   `VAD_END_SILENCE_MS` (700 ms) of silence, with a little audio kept before and after so words are not
   cut off.
-- **Transcription**: faster-whisper on the **CPU** (`small` model, int8, French), to leave the
-  VRAM for synthesis. A filter removes Whisper's known hallucinations on noise
-  ("Subtitles by…", repetitions); discarded sentences trigger nothing.
+- **Transcription**: faster-whisper (`small`, int8) on the **CPU**, to leave the VRAM for
+  synthesis. `STT_LANGUAGE` fixes the spoken language (empty = `LANGUAGE`; `auto` lets Whisper
+  guess). A filter removes Whisper's known hallucinations on noise ("Subtitles by…",
+  repetitions); discarded sentences trigger nothing.
 - **Half-duplex**: Monika does not listen while she is generating her reply or while she is
   speaking (plus `VOICE_RESUME_DELAY_MS`, 400 ms): she does not hear herself. No
   voice interruption, and **no wake word**: she listens continuously. With speakers, headphones remain the safest choice.
@@ -58,17 +63,23 @@ its HTTP API (`api_v2.py`), receives a WAV and plays it through `sounddevice`. M
 
 ## The GPT-SoVITS voice
 
-1. **Start the server** (in your GPT-SoVITS copy, with its own models):
+1. **Install and start the server** (inside the project):
 
    ```bash
-   python api_v2.py -a 127.0.0.1 -p 9880
+   ./scripts/install_gptsovits.sh          # vendor/GPT-SoVITS, pinned commit
+   ./scripts/install_gptsovits.sh --models # also the pretrained weights
+   ./lancer-monika.sh                      # starts it and checks a real sentence
    ```
 
-   Simpler: `./lancer-monika.sh` does everything — it starts `api_v2.py` in the background if it is not
-   already running, waits for it to listen, synthesizes a real sentence with your voice pack
-   to check it (voice name, sample rate, tags, duration), then opens Monika; on exit it stops
-   the server it started. `GPT_SOVITS_DIR` says where it is (default
-   `~/Applications/GPT-SoVITS`), `GPT_SOVITS_LOG` where to write its log.
+   `lancer-monika.sh` starts `api_v2.py` in the background if it is not already running, waits
+   for it to listen, synthesizes a real sentence with your voice pack to check it (voice name,
+   sample rate, tags, duration), then opens Monika; on exit it stops the server it started.
+   `GPT_SOVITS_DIR` overrides the location (default `vendor/GPT-SoVITS`, then
+   `~/Applications/GPT-SoVITS`), `GPT_SOVITS_LOG` where to write its log. To run it by hand:
+
+   ```bash
+   cd vendor/GPT-SoVITS && .venv/bin/python api_v2.py -a 127.0.0.1 -p 9880
+   ```
 
    Monika connects at startup (`TTS_URL`, `http://127.0.0.1:9880` by default) and sends it
    a short sentence to warm up the model: the first call can take about ten
@@ -104,9 +115,8 @@ its HTTP API (`api_v2.py`), receives a WAV and plays it through `sounddevice`. M
 - **Sample rate**: the one announced by the warm-up WAV (32000 Hz for GPT-SoVITS). If the
   server later answers at another rate, Monika resamples: the sound is neither too fast
   nor too slow.
-- **Latency**: `TTS_RENDER=sentence` (default) sends one sentence per request, so the first sound
-  arrives quickly. `TTS_RENDER=block` groups sentences up to `TTS_BLOCK_MAX_CHARS`: better
-  prosody on long replies, later first sound. `TTS_TIMEOUT_S` bounds the wait.
+- **Latency**: one sentence per request, so the first sound arrives quickly.
+  `TTS_TIMEOUT_S` bounds the wait for each sentence.
 - **Pauses**: `TTS_PAUSE_STYLE=neutral` (`neutre` is also accepted; default) changes nothing, sentences follow one
   another as before. `naturel` inserts a short silence **after** each sentence, based on its punctuation
   ("." 0.50 s, "?" 0.45, "!" 0.35, "…" 0.75, a final comma 0.25) and its emotion:

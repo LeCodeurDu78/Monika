@@ -1,6 +1,6 @@
-// Settings page: builds every control with textContent (never innerHTML), reads and writes through the
-// API. Requests are made here rather than with panels.apiRequest() because the write answer tells which
-// keys need a restart, and apiRequest() only returns an error string or null.
+// Settings page: builds every control with textContent (never innerHTML), reads and writes through
+// the API. Requests are made here rather than with panels.apiRequest() because the write answer
+// tells which keys need a restart.
 import { setLanguage, startI18n } from './i18n.js';
 
 startI18n();
@@ -8,11 +8,16 @@ startI18n();
 const stateText = document.getElementById('save-state');
 const restartBox = document.getElementById('restart');
 const groupsBox = document.getElementById('groups');
+const navBox = document.getElementById('settings-nav');
 const healthBox = document.getElementById('health');
 const healthNote = document.getElementById('health-note');
 const secretState = document.getElementById('secret-state');
-const wordsState = document.getElementById('words-state');
-const WORD_TIERS = ['mild', 'bad', 'severe'];
+const providerState = document.getElementById('provider-state');
+const providerSelect = document.getElementById('provider-select');
+const providerUrl = document.getElementById('provider-url');
+const providerUrlField = document.getElementById('provider-url-field');
+const languageSelect = document.getElementById('language-select');
+const settingsFile = document.getElementById('settings-file');
 
 let values = {};   // name -> value as loaded, to know what actually changed
 const HEALTH_EVERY_MS = 5000;
@@ -54,15 +59,23 @@ function inputValue(input) {
 
 function fieldControl(field) {
   const wrapper = element('div', `field${field.kind === 'long' ? ' wide' : ''}`);
-  const label = element('label', '', (field.pinned ? '🔒 ' : '') + field.name);
+  const label = element('label', '', (field.pinned ? '🔒 ' : '') + field.label);
   let input;
   if (field.kind === 'bool') {
     input = element('input');
     input.type = 'checkbox';
     input.checked = !!field.value;
+  } else if (field.kind === 'select') {
+    input = element('select');
+    for (const option of field.options || []) {
+      const node = element('option', '', option.label);
+      node.value = option.value;
+      input.append(node);
+    }
+    input.value = String(field.value ?? '');
   } else if (field.kind === 'long') {
     input = element('textarea');
-    input.rows = 4;
+    input.rows = 5;
     input.value = String(field.value ?? '');
   } else {
     input = element('input');
@@ -75,50 +88,52 @@ function fieldControl(field) {
   input.dataset.kind = field.kind;
   input.disabled = !!field.pinned;
   label.htmlFor = input.id;
-  input.addEventListener('input', () => { wrapper.classList.toggle('dirty', inputValue(input) !== values[field.name]); });
+  const mark = () => wrapper.classList.toggle('dirty', inputValue(input) !== values[field.name]);
+  input.addEventListener('input', mark);
+  input.addEventListener('change', mark);
   wrapper.append(label, input);
+  if (field.hint) wrapper.append(element('span', 'hint', field.hint));
   if (field.pinned) wrapper.append(element('span', 'hint', 'figé par .env'));
   return wrapper;
 }
 
 function renderGroups(data) {
   groupsBox.replaceChildren();
+  navBox.replaceChildren();
   values = {};
-  for (const group of data.groups || []) {
-    groupsBox.append(element('h3', 'group-title', group.title));
+  (data.groups || []).forEach((group, index) => {
+    const section = element('section', 'panel settings-card');
+    section.id = `group-${index}`;
+    const title = element('h2', '', group.title);
+    section.append(title);
     const box = element('div', 'fields');
     for (const field of group.fields) {
       values[field.name] = field.value;
       box.append(fieldControl(field));
     }
-    groupsBox.append(box);
-  }
-  document.getElementById('settings-file').textContent = data.settings_file || 'settings.json';
+    section.append(box);
+    groupsBox.append(section);
+
+    const link = element('a', '', group.title);
+    link.href = `#${section.id}`;
+    link.addEventListener('click', () => {
+      navBox.querySelectorAll('a').forEach((node) => node.classList.toggle('active', node === link));
+    });
+    navBox.append(link);
+  });
+  navBox.querySelector('a')?.classList.add('active');
+  settingsFile.textContent = data.settings_file || 'settings.json';
+  languageSelect.value = data.language === 'en' ? 'en' : 'fr';
+  providerSelect.value = data.provider || 'custom';
+  providerUrl.value = data.base_url || '';
+  updateProviderFields();
 }
 
-function renderWords(words) {
-  for (const tier of WORD_TIERS) {
-    document.getElementById(`words-${tier}`).value = ((words && words[tier]) || []).join('\n');
-  }
-}
-
-async function saveWords() {
-  const body = {};
-  for (const tier of WORD_TIERS) {
-    body[tier] = document.getElementById(`words-${tier}`).value
-      .split('\n').map((line) => line.trim()).filter(Boolean);
-  }
-  const result = await request('/api/settings/words', 'POST', body);
-  if (!result.ok) {
-    wordsState.textContent = result.error;
-    wordsState.className = 'hint err';
-    return;
-  }
-  const counts = (result.data && result.data.words) || {};
-  await load();
-  wordsState.textContent = `Liste enregistrée : ${counts.mild || 0} mild, ${counts.bad || 0} bad, `
-    + `${counts.severe || 0} severe.`;
-  wordsState.className = 'hint';
+/** The base URL only matters for a custom endpoint; presets fill it server-side. */
+function updateProviderFields() {
+  const custom = providerSelect.value === 'custom';
+  providerUrlField.hidden = !custom;
+  providerUrl.disabled = !custom;
 }
 
 function renderSecret(defined) {
@@ -133,7 +148,6 @@ async function load() {
   if (!result.ok) { say(result.error, 'error'); return; }
   if (result.data.language) setLanguage(result.data.language);
   renderGroups(result.data);
-  renderWords(result.data.words);
   renderSecret(!!(result.data.secrets || {}).OPENAI_API_KEY);
   restartBox.hidden = true;
   say('');
@@ -151,8 +165,8 @@ async function save() {
   if (!Object.keys(patch).length) { say('Rien à enregistrer.'); return; }
   const result = await request('/api/settings', 'POST', patch);
   if (!result.ok) { say(result.error, 'error'); return; }
-  await load();
   const restart = (result.data && result.data.restart_required) || [];
+  await load();
   if (restart.length) {
     restartBox.hidden = false;
     restartBox.textContent = 'Redémarre Monika pour appliquer : ' + restart.join(', ') + '.';
@@ -177,6 +191,39 @@ async function refreshHealth() {
   renderHealth(result.data.rows || [], result.data.took_ms ?? 0);
 }
 
+async function saveProvider() {
+  const provider = providerSelect.value;
+  const baseUrl = providerUrl.value.trim();
+  if (provider === 'custom' && !baseUrl) {
+    providerState.textContent = "Indique l'URL de base du fournisseur custom.";
+    providerState.className = 'hint err';
+    return;
+  }
+  const key = document.getElementById('provider-key').value.trim();
+  const result = await request('/api/settings/provider', 'POST', { provider, key, base_url: baseUrl });
+  if (!result.ok) {
+    providerState.textContent = result.error;
+    providerState.className = 'hint err';
+    return;
+  }
+  document.getElementById('provider-key').value = '';
+  await load();
+  const restart = (result.data && result.data.restart_required) || [];
+  providerState.textContent = restart.length
+    ? `Fournisseur appliqué. Redémarre Monika : ${restart.join(', ')}.`
+    : 'Fournisseur appliqué.';
+  providerState.className = 'hint';
+}
+
+async function changeLanguage() {
+  const language = languageSelect.value === 'en' ? 'en' : 'fr';
+  setLanguage(language);
+  const result = await request('/api/settings/language', 'POST', { language });
+  if (!result.ok) { say(result.error, 'error'); return; }
+  say('Langue appliquée.');
+  await load();
+}
+
 async function saveSecret() {
   const input = document.getElementById('secret');
   const value = input.value.trim();
@@ -194,7 +241,9 @@ document.getElementById('save').addEventListener('click', save);
 document.getElementById('reload').addEventListener('click', load);
 document.getElementById('health-refresh').addEventListener('click', refreshHealth);
 document.getElementById('secret-save').addEventListener('click', saveSecret);
-document.getElementById('words-save').addEventListener('click', saveWords);
+document.getElementById('provider-save').addEventListener('click', saveProvider);
+providerSelect.addEventListener('change', updateProviderFields);
+languageSelect.addEventListener('change', changeLanguage);
 
 load();
 refreshHealth();

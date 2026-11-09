@@ -8,7 +8,7 @@
 > `Monika` = le projet à la racine ; `OpenAmika` = le projet dans `OpenAmika-main/`.
 > Les deux ne sont pas deux versions du même logiciel : Monika est une adaptation francophone
 > personnelle qui reprend plusieurs briques d'OpenAmika et d'OpenSakura (mémoire-preuve,
-> moteur d'avatar, mapping TTS, mots sensibles, directeur d'actions).
+> moteur d'avatar, mapping TTS, directeur d'actions).
 
 ---
 
@@ -72,8 +72,8 @@ avec un écosystème public.
 | Ports | 8765 (page), 9880 (TTS externe) | 53000, 5202, 8011, 8014, 5215, 8002 | **Monika** |
 | Démarrage | Immédiat, page servie par le même processus | ~20 s pour le TTS, health-gated, ouverture quand speech est prêt | **Monika** |
 | Diagnostic | `/settings` : 7 voyants, test à la demande | Lignes `OK`/`!!` du launcher, `/flow`, `/api/health` | **OpenAmika** |
-| Configuration | `.env` prioritaire, `settings.json` pour le reste | `settings.json`, page Setup, wizard premier lancement | **OpenAmika** pour le guidage |
-| Mise à jour | Manuelle | Manuelle aussi, mais scripts `--verify` et manifestes | **OpenAmika** |
+| Configuration | `.env` prioritaire + `config/settings.json` projet, page Réglages, wizard | `settings.json`, page Setup, wizard premier lancement | Égalité |
+| Mise à jour | `--update` (git distant, lecture seule) + documentation | Manuelle aussi, mais scripts `--verify` et manifestes | **Monika** pour l'aide intégrée |
 | Conflits de ports | Un seul port applicatif, peu de risque | 8002 peut entrer en conflit avec OpenSakura | **Monika** |
 
 **Meilleure : Monika pour la portabilité et la simplicité ; OpenAmika pour le diagnostic et
@@ -81,9 +81,8 @@ l'installation guidée sur une machine dédiée.**
 
 **Améliorations**
 
-- Monika : ajouter un `pyproject.toml`, un mode Docker et un vrai installateur (le README suffit
-  aujourd'hui, mais un nouvel utilisateur doit encore créer son venv à la main) ; un wizard de
-  premier lancement avec aperçu vocal, comme OpenAmika.
+- Monika : ajouter un `pyproject.toml` et un mode Docker ; l'installateur et le wizard de
+  premier lancement sont désormais présents.
 - OpenAmika : réduire les 5 processus et les 4 venvs (un venv partagé, vision et messengers
   chargés à la demande) ; tester réellement Linux ; détecter automatiquement un port TTS occupé
   au lieu de demander de éditer `settings.json`.
@@ -94,7 +93,7 @@ l'installation guidée sur une machine dédiée.**
 
 | Fonctionnalité | Monika | OpenAmika | Avantage |
 |---|---|---|---|
-| Fournisseurs | Un endpoint compatible OpenAI (`LLM_BASE_URL`) | OpenRouter par défaut, Alibaba Model Studio, Ollama local | **OpenAmika** |
+| Fournisseurs | Presets OpenRouter, Ollama et endpoint compatible OpenAI | OpenRouter par défaut, Alibaba Model Studio, Ollama local | Égalité |
 | Rôles | surface, deep, reflection, action | surface, deep, reflection, memory_write | **OpenAmika** (rôle mémoire séparé) |
 | Configuration des rôles | `.env` + page Réglages, un modèle par rôle | `config/llm_roles.json`, presets, page Setup, hot-reload | **OpenAmika** |
 | Suivi des coûts | Aucun | Ledger d'usage, `pricing.json`, règlement, cache | **OpenAmika** |
@@ -102,7 +101,7 @@ l'installation guidée sur une machine dédiée.**
 | Boucle d'outils | ReAct, 100 étapes, détection de boucles, revue honnête | Clerk post-parole, outils après la réponse | **Monika** pour les tâches longues |
 | Streaming | Réponse écrite au fil de l'eau, voix par phrase | Deep en streaming, TTS par phrase, barge-in | **OpenAmika** pour la voix |
 | Contexte | Résumé automatique à 150 k tokens | Prompt cache-first, historique + mémoire + scène | Égalité |
-| Mode local | Possible via un endpoint Ollama, mais non documenté | Mode Fully Local documenté et testé | **OpenAmika** |
+| Mode local | Ollama documenté et preset intégré | Mode Fully Local documenté et testé | Égalité |
 | Budget/plafond | Pas de plafond de coût | Pas de plafond par tour documenté non plus | Égalité |
 
 **Meilleure : OpenAmika pour le confort de configuration et le temps réel ; Monika pour les
@@ -110,8 +109,7 @@ tâches agentiques longues et la sobriété.**
 
 **Améliorations**
 
-- Monika : presets Ollama/OpenRouter, compteur de tokens et de coût par tour, plafond
-  quotidien ; documentation d'un mode 100 % local.
+- Monika : compteur de tokens et de coût par tour, plafond quotidien.
 - OpenAmika : plafond de dépense par tour et par jour, alerte avant dépassement ; un mode
   « réponse d'abord, outils ensuite » déjà présent, mais à exposer clairement dans l'UI.
 
@@ -121,7 +119,7 @@ tâches agentiques longues et la sobriété.**
 
 | Fonctionnalité | Monika | OpenAmika | Avantage |
 |---|---|---|---|
-| STT | faster-whisper `small`, CPU, français, filtre anti-hallucinations | SenseVoiceSmall local GPU, partiels, multilingue | **Monika** en français ; **OpenAmika** en multilingue/temps réel |
+| STT | faster-whisper `small`, CPU, multilingue, filtre anti-hallucinations | SenseVoiceSmall local GPU, partiels, multilingue | **OpenAmika** en temps réel |
 | VAD | Silero via faster-whisper, 700 ms de silence | Silero VAD | Égalité |
 | Tour de parole | Half-duplex : elle n'écoute pas pendant qu'elle parle | Barge-in : tu peux l'interrompre | **OpenAmika** |
 | Réveil | Aucun mot-clé, écoute continue | Aucun mot-clé non plus | Égalité |
@@ -214,7 +212,7 @@ Monika utilise **le GPT-SoVITS de base** (`api_v2.py`, port 9880). Elle compense
 
 - elle résout elle-même les tags `【happy2】` et choisit le clip de référence et son transcript
   pour chaque run (`voice/gptsovits.py`) ;
-- elle envoie une phrase par requête (`TTS_RENDER=sentence`) ou un bloc ;
+- elle envoie une phrase par requête ;
 - elle insère ses propres pauses `naturel` et nettoie le texte (unités, liens, code) ;
 - elle rééchantillonne si le serveur répond à un autre taux et coupe la voix après 3 échecs.
 
@@ -270,6 +268,7 @@ et la lisibilité de l'interface.**
 | Rappel | BM25 maison + fastembed, fusion par rang | BM25 + bge-m3 local (768 dims), numpy | Égalité, bge-m3 plus lourd |
 | Budget mémoire | 1 800 caractères par bloc | Budgets par section, transcript roulant | Égalité |
 | RAG documents | Oui : llama-index + Qdrant local, PDF/DOCX/code, citations chemin+lignes/page | Non | **Monika** |
+| OCR des PDF scannés | Oui : RapidOCR + pypdfium2, pages faibles seulement | Non | **Monika** |
 | Recherche hybride + rerank | Oui, reranker Jina, seuil `RAG_MIN_SCORE` | Non | **Monika** |
 | Index incrémental | Oui, manifeste SQLite, reprise | Non applicable | **Monika** |
 | Exclusion des secrets | Oui, fichiers et contenu | Non documentée | **Monika** |
@@ -282,8 +281,8 @@ sauvegarde/restauration de sa mémoire conversationnelle.**
 
 **Améliorations**
 
-- Monika : OCR des PDF scannés, veille de dossiers, mémoires par projet, détection de
-  contradictions entre faits, décroissance temporelle.
+- Monika : veille de dossiers, mémoires par projet, détection de contradictions entre faits,
+  décroissance temporelle.
 - OpenAmika : ingestion de documents avec citations (la brique manque le plus pour un usage
   « assistant »), déduplication des faits, export lisible.
 
@@ -294,6 +293,7 @@ sauvegarde/restauration de sa mémoire conversationnelle.**
 | Fonctionnalité | Monika | OpenAmika | Avantage |
 |---|---|---|---|
 | MCP | stdio et HTTP, `${VAR}`, `enabled_tools`/`disabled_tools`, outils lents | stdio et HTTP, page Tools, autostart, health probes | Égalité |
+| Rechargement MCP | Oui : bouton Réglages, sans redémarrer | Non documenté | **Monika** |
 | Outils intégrés | Mémoire, documents, `lire_resultat`, planification | Outils généraux, IoT, helpers | **OpenAmika** en breadth |
 | Auto-écriture d'outils | `create_custom_tools` : génération, vérification statique, sandbox bwrap/Docker, empreinte | Non | **Monika** |
 | Approbation des actions | Aucune : elle agit directement | Clerk post-parole, citation vérifiée, approbations | **OpenAmika** |
@@ -308,8 +308,7 @@ que l'IA étende elle-même ses capacités.**
 **Améliorations**
 
 - Monika : approbation optionnelle par niveau de risque (lecture libre, écriture confirmée,
-  commandes système confirmées) ; sandbox aussi à l'exécution, pas seulement au test ;
-  hot-reload des serveurs sans redémarrage.
+  commandes système confirmées) ; sandbox aussi à l'exécution, pas seulement au test.
 - OpenAmika : reprise de `create_custom_tools`, mais avec approbation et sandbox permanente ;
   un registre unifié des outils avec poids de contexte.
 
@@ -325,7 +324,7 @@ que l'IA étende elle-même ses capacités.**
 | Réflexion entre les tours | Oui, optionnelle, peut prendre la parole | Oui : indice, plan, prise de parole | **OpenAmika** pour la structure |
 | Scènes quotidiennes | Non | Oui : 5 possibilités par créneau, seedées par date | **OpenAmika** |
 | Journal/relation | Oui : favor, journal, revue nocturne Obsidian | Non : mémoire seulement | **Monika** |
-| Mots sensibles | Oui : 3 niveaux, liste utilisateur, audit | Aucun filtre équivalent documenté | **Monika** |
+| Mots sensibles | Non (filtre retiré) | Aucun filtre équivalent documenté | Égalité |
 | Proactivité | Réflexion, briefing, rappels | Scènes, coach, parole spontanée | **OpenAmika** pour la présence |
 | Contrôle utilisateur | Commandes, panneaux, tout supprimable | Page Use, approbations | **Monika** |
 
@@ -374,16 +373,16 @@ quotidienne et le jeu de rôle.**
 | Nuage par défaut | Un seul fournisseur configuré | OpenRouter par défaut | **Monika** |
 | Mode 100 % local | Possible, non guidé | Ollama documenté | **OpenAmika** |
 | Approbation des actions | Aucune | Oui, clerk + IoT | **OpenAmika** |
-| Filtre de mots sensibles | Oui | Non documenté | **Monika** |
-| En-têtes web | Pas de CSP ni de contrôle d'`Origin` (documenté) | Non documenté | Égalité, les deux faibles |
+| Filtre de mots sensibles | Non (retiré) | Non documenté | Égalité |
+| En-têtes web | CSP + contrôle d'`Origin` sur les écritures et le WebSocket | Non documenté | **Monika** |
 
 **Meilleure : Monika pour la confidentialité des données et la traçabilité ; OpenAmika pour
 la sécurité des actions et la domotique.**
 
 **Améliorations**
 
-- Monika : CSP et contrôle d'`Origin`, chiffrement optionnel de `sessions.db` et de
-  `notes.json`, approbation des outils destructifs, rotation du token.
+- Monika : chiffrement optionnel de `sessions.db` et de `notes.json`, approbation des
+  outils destructifs, rotation du token.
 - OpenAmika : token de page, masquage des secrets dans les logs, chiffrement des sauvegardes,
   plafond de dépense, et un premier lancement qui propose explicitement le mode local.
 
@@ -394,7 +393,7 @@ la sécurité des actions et la domotique.**
 | Fonctionnalité | Monika | OpenAmika | Avantage |
 |---|---|---|---|
 | Tests | 13 fichiers pytest | 59 fichiers, workflow GitHub Actions, `-k "not live"` | **OpenAmika** |
-| CI | Pas de workflow visible | Oui | **OpenAmika** |
+| CI | GitHub Actions (`.github/workflows/tests.yml`) | Oui | Égalité |
 | Docs | 10 documents ciblés, en anglais | 3 README (EN/JA/ZH), manuel agent de ~1 000 lignes, 7 docs | **OpenAmika** en volume |
 | Docs pour francophone | README et interface FR, docs techniques EN | Rien en français | **Monika** |
 | Code | ~petit, lisible, paquets à la racine | Plus gros, contrats, tests de parité | Selon l'usage |
@@ -440,11 +439,11 @@ un francophone qui veut lire et modifier un petit code.**
 | P0 | TTS français natif (Piper/XTTS/F5-TTS) ou fine-tuning GPT-SoVITS FR | Très élevé | Moyen |
 | P0 | Barge-in + annulation d'écho, écoute pendant la parole | Très élevé | Moyen |
 | P0 | Reprendre les correctifs du serveur OpenAmika (phrases, EOS, dropout, trim, refs longues) | Élevé | Moyen |
-| P1 | Presets Ollama/OpenRouter + compteur de coût par tour | Élevé | Faible |
-| P1 | CI, `pyproject.toml`, Docker, installateur | Moyen | Faible |
-| P1 | CSP, contrôle d'`Origin`, approbation des outils destructifs | Élevé | Faible |
+| P1 | Compteur de coût par tour | Élevé | Faible |
+| P1 | `pyproject.toml`, Docker | Moyen | Faible |
+| P1 | Approbation des outils destructifs, rotation du token | Élevé | Faible |
 | P2 | Vision caméra via MCP, passerelle Discord/Telegram | Moyen | Moyen |
-| P2 | OCR PDF, veille de dossiers, mémoires par projet | Moyen | Moyen |
+| P2 | Veille de dossiers, mémoires par projet | Moyen | Moyen |
 | P2 | Scènes quotidiennes et humeur de fond | Moyen | Faible |
 
 ### 15.2 OpenAmika
@@ -468,7 +467,8 @@ un francophone qui veut lire et modifier un petit code.**
   approbation et un sandbox permanent.
 - **OpenAmika → Monika** : le nuage par défaut, l'absence de token de page et les 5 processus.
   Monika doit rester locale, légère et traçable.
-- **Les deux** : l'absence de CSP et de contrôle d'`Origin` sur la page web.
+- **OpenAmika** : l'absence de CSP et de contrôle d'`Origin` sur la page web (Monika les a
+  maintenant).
 
 ---
 
@@ -480,8 +480,8 @@ un francophone qui veut lire et modifier un petit code.**
   Monika et OpenAmika ne visent pas le même utilisateur.
 - Le code évolue vite (le dépôt a quelques semaines) ; ce document décrit l'état du
   9 novembre 2026.
-- Certaines fonctionnalités d'OpenAmika n'ont pas d'équivalent documenté (filtre de mots
-  sensibles, contrôle d'`Origin`) : l'absence dans ce document signifie « non trouvé dans
-  le code ou la docs », pas nécessairement « absent du binaire ».
+- Certaines fonctionnalités d'OpenAmika n'ont pas d'équivalent documenté (contrôle d'`Origin`) :
+  l'absence dans ce document signifie « non trouvé dans le code ou la docs », pas
+  nécessairement « absent du binaire ».
 - La comparaison porte sur les deux IA et leurs serveurs vocaux ; elle ne juge pas la qualité
   artistique des personnages ni le contenu des scénarios.

@@ -7,6 +7,9 @@
 | `python -m monika` | Starts Monika locally: the conversation happens in the page (the process lives as long as the page is open) |
 | `./lancer-monika.sh` | Starts the GPT-SoVITS voice server if needed, checks that it answers, then starts Monika (same options as below) |
 | `python -m monika --mode voix` | Conversation out loud (answers also shown on screen) |
+| `./scripts/install.sh` | Creates the venv, installs dependencies, `.env`, `config/settings.json`; then the wizard |
+| `python -m monika --setup` | First-run wizard: language, provider, key, name, voice |
+| `python -m monika --update` | Compares the checkout with the git remote; prints the update commands (never pulls) |
 | `python -m monika --config` | Shows the loaded configuration (secrets masked) |
 | `python -m monika --roles` | The model roles and the model each one uses |
 | `python -m monika --telephone` | The `tailscale serve` command and the HTTPS link to open from your phone |

@@ -22,14 +22,6 @@ def _owner(name: str) -> str:
     return f"d'{name}" if name[0].lower() in "aeiouyhéèêàâîïôûü" else f"de {name}"
 
 
-def sensitive_block(tier: str | None) -> str:
-    """The tone section for this message's level (mild gets nothing)."""
-    key = {"bad": "prompt.sensitive_bad", "severe": "prompt.sensitive_severe"}.get(
-        tier or ""
-    )
-    return tr(key) if key else ""
-
-
 def _section(header: str, body: str) -> str:
     return f"{header}\n{body.strip()}"
 
@@ -49,7 +41,6 @@ def build_system_prompt(
     morning_block: str = "",
     recipe_block: str = "",
     persona_block: str = "",
-    tone_block: str = "",
     already_said: str = "",
     reflection_block: str = "",
 ) -> str:
@@ -93,8 +84,6 @@ def build_system_prompt(
         parts.append(_section(tr("prompt.summary_header"), summary))
     if already_said.strip():
         parts.append(tr("prompt.already_said", text=already_said.strip()))
-    if tone_block.strip():
-        parts.append(tone_block.strip())
     if character_block.strip():
         parts.append(character_block.strip())
     return "\n\n".join(parts)

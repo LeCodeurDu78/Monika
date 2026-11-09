@@ -118,7 +118,7 @@ class Page {
       this.avatar = new Avatar(document.getElementById('avatar'));
     } catch (err) {
       console.error('[avatar]', err);
-      fail('Avatar 3D indisponible : bibliothèques manquantes. Lance « python scripts/vendor_web.py » une fois.');
+      fail('Avatar 3D indisponible : les bibliothèques de web/static/vendor/ sont manquantes.');
       return;
     }
     if (!this.avatar.init()) { fail(this.avatar.error); return; }

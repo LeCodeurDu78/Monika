@@ -50,8 +50,11 @@ embeddings on the CPU, **hybrid** search (meaning + keywords) then **reranking**
   interrupted (Ctrl+C or `/quit`) and resumes where it left off. Follow it with `/documents` or
   `--rag-status`.
 - **Formats**: text (`.txt .md .rst .json .yaml …`), code (`.py .js .rs .sh`, `PKGBUILD`,
-  `Makefile`, …), PDF (one page = one position) and Word `.docx` (paragraphs and tables). No
-  OCR: a scanned PDF is ignored ("no extractable text").
+  `Makefile`, …), PDF (one page = one position) and Word `.docx` (paragraphs and tables).
+  **Scanned PDFs** go through RapidOCR: pages whose text layer is shorter than
+  `RAG_OCR_MIN_CHARS` are rendered with pypdfium2 and recognised on the CPU (`RAG_OCR_DPI`,
+  `RAG_OCR_MAX_PAGES`). It is on by default (`RAG_OCR_ENABLED=true`); if `rapidocr-onnxruntime`
+  or `pypdfium2` is missing, the text layer is still indexed and the error is reported, never fatal.
 - **Secrets excluded by default**: hidden files and folders, `.env*`, keys (`*.pem`, `*.key`,
   `id_rsa*`…), `.ssh/ .gnupg/ .aws/ .kube/`, `credentials*`, `secrets.*`, `*.kdbx`, `*.tfvars`,
   `.netrc`…; plus `node_modules`, `.git`, caches and Monika's data folder. A file whose **content**

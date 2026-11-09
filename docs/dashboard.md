@@ -43,7 +43,7 @@ by double-click; its **❯ / ❮ button** collapses or reopens the panel.
 - **Talking from the page**: the **🎙 Talk** button opens the browser microphone
   (`getUserMedia`, echo cancellation and noise reduction requested) and plays the reply **here**, through
   headphones or the speakers of the device viewing the page. See
-  [Talking to Monika in the browser](voix.md#talking-to-monika-in-the-browser).
+  [Talking to Monika in the browser](voice.md#talking-to-monika-in-the-browser).
 - **Dashboard** (second tab), seven blocks: *Conversation*, *Context* (size of the
   conversation), *Relationship* (Monika's level, favour and mood; her journal, where you can
   edit or delete each note, correct or clear the overall impression, or clear everything;
@@ -62,7 +62,7 @@ by double-click; its **❯ / ❮ button** collapses or reopens the panel.
   for the phone, go through Tailscale, see [From your phone](#from-your-phone-tailscale).
   Another device on the local network requires `WEB_HOST=0.0.0.0` **and**
   `WEB_TOKEN` (without a token, the page is open to whoever reaches the port); see
-  [Access to the page](securite.md#access-to-the-page).
+  [Access to the page](security.md#access-to-the-page).
 - **WebGL** is required in the browser; without it, the page says so and the dashboard
   still works.
 
@@ -95,11 +95,18 @@ A "Settings" link in the header opens this page (same server). It has three bloc
 - **Settings**: a readable, grouped selection (model, behaviour, character, roles, memory,
   documents, voice, page). Keys defined in `.env` are **greyed out and marked**: `.env`
   keeps precedence, the page does not pretend to control them, and the API **refuses** them (400)
-  even when called by hand. "Save" validates then writes
-  `<MONIKA_HOME>/settings.json` (in `0600`, atomic write) and **applies live** what can
+  even when called by hand. "Save" validates then writes the file named by
+  `MONIKA_SETTINGS_FILE` (default `<MONIKA_HOME>/settings.json`; the installer uses
+  `config/settings.json`) in `0600`, atomic write, and **applies live** what can
   be applied (temperature, `MAX_STEPS`, thresholds, roles, `PERSONA_TEXT`…); a banner lists the keys that
   require a restart (port, URL, models, devices, index). **All or nothing**: an out-of-range
   value is refused with a message and writes nothing.
+- **Provider and language**: a selector applies OpenRouter or Ollama (address, model, key),
+  and another switches the whole interface between French and English immediately. Both write
+  their value to `.env`, because `.env` has priority; the provider change asks for a restart,
+  the language does not.
+- **MCP reload**: `mcp_servers.json` is watched. An edit closes the sessions, re-reads the file
+  and reconnects within a couple of seconds, without restarting Monika.
 - **API key**: the page only says "set" or "not set" and never shows the
   value. Saving replaces the single `OPENAI_API_KEY` line in the project's `.env` (one line, without
   a newline, file in `0600`); restart required.

@@ -48,13 +48,10 @@ class Paths:
 
     @property
     def settings_file(self) -> Path:
-        """Written by the settings page; the .env keeps priority over it."""
-        return self.home / "settings.json"
+        """Written by the settings page; MONIKA_SETTINGS_FILE or <home>/settings.json."""
+        from monika.config import settings_json_path
 
-    @property
-    def words_file(self) -> Path:
-        """The user's own sensitive-word bank (empty at first; edited from the settings page)."""
-        return self.home / "words.json"
+        return settings_json_path()
 
     @property
     def character_state(self) -> Path:

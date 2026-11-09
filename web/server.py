@@ -17,6 +17,7 @@ import socket
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 import uvicorn
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
@@ -53,6 +54,47 @@ class ActionError(Exception):
         self.status = status
 
 
+_LOOPBACK = frozenset({"localhost", "127.0.0.1", "::1"})
+
+
+def _origin_ok(origin: str | None, host: str | None) -> bool:
+    """Same-origin check for writes and the WebSocket; a missing Origin is a non-browser client."""
+    if not origin:
+        return True  # curl, CLI, MCP: no browser to forge a request
+    if not host:
+        return False
+    parsed = urlsplit(origin)
+    if parsed.scheme not in ("http", "https"):
+        return False
+    if parsed.netloc.lower() == host.lower():
+        return True
+
+    def host_port(netloc: str, scheme: str) -> tuple[str, int]:
+        value = urlsplit(f"{scheme}://{netloc}")
+        port = value.port or (443 if scheme == "https" else 80)
+        return (value.hostname or "").lower(), port
+
+    left, left_port = host_port(parsed.netloc, parsed.scheme)
+    right, right_port = host_port(host, parsed.scheme)
+    return left == right and left_port == right_port and left in _LOOPBACK
+
+
+def _csp(nonce: str = "") -> str:
+    """Content-Security-Policy: same-origin assets, one nonced inline script (the import map)."""
+    scripts = "'self'" + (f" 'nonce-{nonce}'" if nonce else "")
+    return (
+        "default-src 'self'; "
+        f"script-src {scripts}; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data: blob:; "
+        "font-src 'self' data:; "
+        "media-src 'self' blob: data:; "
+        "connect-src 'self' blob: ws: wss:; "
+        "worker-src 'self' blob:; "
+        "object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'"
+    )
+
+
 def create_app(
     hub: Hub,
     snapshot: Snapshot,
@@ -85,8 +127,16 @@ def create_app(
             stamp = int(path.stat().st_mtime) if path.exists() else 0
             return f'\"/static/{rel}?v={stamp}\"' if stamp else f'\"/static/{rel}\"'
 
+        nonce = secrets.token_urlsafe(16)
+        html = asset_ref.sub(versioned, html).replace(
+            "<script", f'<script nonce="{nonce}"'
+        )
         return HTMLResponse(
-            asset_ref.sub(versioned, html), headers={"Cache-Control": "no-store"}
+            html,
+            headers={
+                "Cache-Control": "no-store",
+                "Content-Security-Policy": _csp(nonce),
+            },
         )
 
     @app.middleware("http")
@@ -128,6 +178,20 @@ def create_app(
         kind = response.headers.get("content-type", "")
         if kind.startswith(("text/html", "text/css")) or "javascript" in kind:
             response.headers["Cache-Control"] = "no-store"
+        return response
+
+    @app.middleware("http")
+    async def security(request: Request, call_next: Any) -> Any:
+        """Refuse a browser write from another origin, then add the security headers."""
+        if request.method not in ("GET", "HEAD", "OPTIONS") and not _origin_ok(
+            request.headers.get("origin"), request.headers.get("host")
+        ):
+            return JSONResponse({"error": "Origine refusée."}, status_code=403)
+        response = await call_next(request)
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("Referrer-Policy", "no-referrer")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("Content-Security-Policy", _csp())
         return response
 
     @app.get("/")
@@ -291,18 +355,30 @@ def create_app(
                 )
             return await act("settings_update", body)
 
-        @app.post("/api/settings/words")
-        async def settings_words(request: Request) -> JSONResponse:
+        @app.post("/api/settings/language")
+        async def settings_language(request: Request) -> JSONResponse:
             try:
                 body = await request.json()
             except ValueError:
                 body = None
             if not isinstance(body, dict):
                 return JSONResponse(
-                    {"error": "Liste de mots attendue sous forme d'objet JSON."},
+                    {"error": "Langue attendue sous forme d'objet JSON."}, status_code=400
+                )
+            return await act("settings_language", body)
+
+        @app.post("/api/settings/provider")
+        async def settings_provider(request: Request) -> JSONResponse:
+            try:
+                body = await request.json()
+            except ValueError:
+                body = None
+            if not isinstance(body, dict):
+                return JSONResponse(
+                    {"error": "Fournisseur attendu sous forme d'objet JSON."},
                     status_code=400,
                 )
-            return await act("settings_words", body)
+            return await act("settings_provider", body)
 
         @app.post("/api/settings/secret")
         async def settings_secret(request: Request) -> JSONResponse:
@@ -322,6 +398,9 @@ def create_app(
     async def live(ws: WebSocket) -> None:
         if not allowed(ws.query_params.get("token") or ws.cookies.get(COOKIE)):
             await ws.close(code=1008)  # the page must not open a live channel without it
+            return
+        if not _origin_ok(ws.headers.get("origin"), ws.headers.get("host")):
+            await ws.close(code=1008)  # a page from another origin must not open the stream
             return
         await ws.accept()
         queue = hub.subscribe()

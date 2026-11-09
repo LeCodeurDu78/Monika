@@ -8,7 +8,6 @@ Everything is stored in `~/.config/monika` (configurable via `MONIKA_HOME`, fold
 | `rag/` | Document index (local Qdrant) and SQLite manifest |
 | `character/` | `state.json` (emotions and relationship) and `journal.json` (Monika's notes about you), in `0600`; delete them to reset everything |
 | `settings.json` | Settings changed from `/settings` (`.env` takes precedence), in `0600` |
-| `words.json` | Your sensitive-word list (empty at first, three levels), in `0600` |
 | `voice/` | Your reference voice, `models/`, `cache/` |
 | `tool_results/` | Large tool results (purged after 14 days) |
 | `logs/` | `audit.jsonl` and MCP server logs |
@@ -35,34 +34,15 @@ Everything is stored in `~/.config/monika` (configurable via `MONIKA_HOME`, fold
   sessions, settings, sending messages and commands. The API key is never read back
   (the page only receives a boolean), everything else is. With a token, every route, every
   static file and the WebSocket require it; it is accepted in the `X-Monika-Token` header, in
-  `?token=` or in a cookie (HttpOnly, SameSite strict, one year). There is still **no `Origin`
-  check and no security header (CSP)**: a page open in this browser can still act on your
-  behalf, and the token passes once in the URL (history, proxy logs) on first
-  load. Everything coming from memory is still displayed as text, never as HTML.
-- **Remote access**: see [the page and the phone](page.md#from-your-phone-tailscale).
+  `?token=` or in a cookie (HttpOnly, SameSite strict, one year). Writes (`POST`, `PUT`,
+  `DELETE`) and the WebSocket now require a **same-origin** `Origin` (a missing `Origin`, as
+  with `curl`, is accepted); a cross-site page gets `403`. Every response carries a
+  **Content-Security-Policy** (same-origin scripts, one nonced inline import map, no framing)
+  plus `X-Content-Type-Options`, `Referrer-Policy` and `X-Frame-Options`. The token still
+  passes once in the URL on first load (history, proxy logs), and an XSS inside the page itself
+  would still run with its privileges: keep dependencies and custom MCP servers trustworthy.
+  Everything coming from memory is displayed as text, never as HTML.
+- **Remote access**: see [the page and the phone](dashboard.md#from-your-phone-tailscale).
   Another device on the local network requires `WEB_HOST=0.0.0.0` **and** `WEB_TOKEN` (without a
   token, the page is open to whoever reaches the port).
 
-## Sensitive words
-
-A deterministic filter (no model call) spots a word from **your** list in your message and colours
-the reply's tone, without ever blocking or filtering it. The repository ships **no** word: the list
-is yours, and it decides what counts.
-
-- **Three levels.** `mild`: nothing mechanical (at most a pout). `bad`: a calm-tone block in the
-  prompt and a pout. `severe`: a tone block that asks her not to engage on that ground (without
-  reproach or retaliation), crossed arms, and a line in the audit log. The most
-  serious level wins when several words cross.
-- **The list**: `~/.config/monika/words.json`, created empty on first launch (with a note), then
-  editable from the **Settings** page (one word per line, 64 characters and 500 words per level at
-  most). It is reloaded **live**: saving rebuilds the next turn's filter without
-  restarting. `SENSITIVE_WORDS_ENABLED=false` turns the filter off entirely.
-- **Recognition**: accents and capitals, apostrophes and elisions (`l'idiot`, `t'es con`), leetspeak
-  (`cl@nker`, `cl4nker`, `1d10t`), glue characters (`- _ + .`), zero-width
-  characters, simple plurals (`idiots`). Whole words only: `rigger` does not match `trigger`.
-- **What is injected**: a block written in the code, never the detected word (no prompt
-  reinjection), and only for that turn. The audit log contains only the level, never the word or the
-  sentence.
-- **What is not done**: the model's reply is not censored and the turn is never blocked;
-  French false positives (`merde` sometimes affectionate) remain possible, hence the `mild` level with no
-  mechanical effect and the switch.

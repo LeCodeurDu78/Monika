@@ -84,6 +84,13 @@ class ToolRegistry:
     def tools(self) -> list[Tool]:
         return list(self._tools.values())
 
+    def remove_source(self, source: str) -> int:
+        """Drop every tool from one source (used when an MCP server is reloaded)."""
+        names = [name for name, tool in self._tools.items() if tool.source == source]
+        for name in names:
+            del self._tools[name]
+        return len(names)
+
     def schemas(self, names: set[str] | None = None) -> list[dict[str, Any]]:
         """Function-calling definitions, all of them or only the given `names`."""
         if names is None:

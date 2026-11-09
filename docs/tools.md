@@ -12,6 +12,9 @@ Claude Desktop; other location: `MCP_SERVERS_FILE`). Two transports: local comma
 - **Robustness**: a failed server does not prevent the others from starting. `"enabled": false`
   disables a server; `"start_timeout_s": 90` gives more time to a slow start (for
   example `npx` the first time).
+- **Hot reload**: `mcp_servers.json` is watched while Monika runs. An edit closes the sessions,
+  re-reads the file and reconnects within a couple of seconds — no restart, no lost conversation.
+  The tools of a removed server disappear from the model at the same time.
 - **Limiting tools**: the schema of every tool is sent to the model on **every** request
   (a large server can weigh tens of thousands of tokens). `"enabled_tools": ["a", "b"]`
   keeps only those tools from a server; `"disabled_tools": ["c"]` removes some (and

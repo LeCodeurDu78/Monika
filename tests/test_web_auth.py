@@ -69,3 +69,42 @@ def test_live_channel_refuses_a_missing_token() -> None:
 def test_without_a_token_the_page_stays_open_locally() -> None:
     with client(token="") as page:
         assert page.get("/api/status").status_code == 200
+
+
+def test_page_has_csp_and_security_headers() -> None:
+    with client(token="") as page:
+        response = page.get("/")
+
+        assert response.status_code == 200
+        assert "nonce-" in response.headers["content-security-policy"]
+        assert response.headers["x-content-type-options"] == "nosniff"
+        assert response.headers["x-frame-options"] == "DENY"
+
+
+def test_setup_page_is_gone() -> None:
+    class FakeSettingsApi:
+        def actions(self) -> dict:
+            return {}
+
+    app = create_app(Hub(), snapshot, settings_api=FakeSettingsApi())
+    with TestClient(app) as page:
+        assert page.get("/setup").status_code == 404
+
+
+def test_cross_origin_write_is_refused() -> None:
+    async def action() -> None:
+        return None
+
+    app = create_app(Hub(), snapshot, actions={"chat_stop": action})
+    with TestClient(app) as page:
+        refused = page.post(
+            "/api/chat/stop",
+            headers={"Origin": "https://evil.example"},
+        )
+        allowed = page.post(
+            "/api/chat/stop",
+            headers={"Origin": "http://testserver"},
+        )
+
+        assert refused.status_code == 403
+        assert allowed.status_code == 200
