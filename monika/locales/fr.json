@@ -1,6 +1,6 @@
 {
   "help": {
-    "full": "Commandes : /help, /tools (liste des outils), /context (taille de la conversation), /memory (mon carnet sur toi), /forget ID (supprime une entrée), /relationship (où nous en sommes ; « /relationship reset » repart de zéro), /journal (mes notes sur toi ; « /journal forget ID », « /journal clear »), /nightly (note de la nuit dans Obsidian ; « show DATE », « delete DATE », « accept ID », « refuse ID »), /sessions (sessions enregistrées ; « /resume ID », « /search MOT », « /session forget ID »), /index [dossier] (indexe tes documents), /documents (état de l'index), /remind QUAND : TEXTE (dans 20 minutes, demain 8h, toutes les 2 heures, chaque jour à 8h, chaque lundi et jeudi à 9h), /tasks (tâches planifiées ; « /task cancel ID »), /briefing (le briefing du matin tout de suite), /stop (arrête tout ce qui tourne), /custom-tools (tes serveurs MCP : liste ; « code NOM », « disable NOM », « delete NOM »), /recipes (mes procédures apprises ; « keep ID », « refuse ID », « forget ID »), /clear (oublie la conversation en cours), /quit (ou Ctrl+D). Ctrl+C interrompt la réponse et arrête ce qui tourne en arrière-plan."
+    "full": "Commandes : /help, /tools (liste des outils), /context (taille de la conversation), /memory (ma mémoire sur toi, faits cités), /forget ID (supprime une entrée), /relationship (où nous en sommes ; « /relationship reset » repart de zéro), /journal (mes notes sur toi ; « /journal forget ID », « /journal clear »), /nightly (note de la nuit dans Obsidian ; « show DATE », « delete DATE », « accept ID », « refuse ID »), /sessions (sessions enregistrées ; « /resume ID », « /search MOT », « /session forget ID »), /index [dossier] (indexe tes documents), /documents (état de l'index), /remind QUAND : TEXTE (dans 20 minutes, demain 8h, toutes les 2 heures, chaque jour à 8h, chaque lundi et jeudi à 9h), /tasks (tâches planifiées ; « /task cancel ID »), /briefing (le briefing du matin tout de suite), /stop (arrête tout ce qui tourne), /custom-tools (tes serveurs MCP : liste ; « code NOM », « disable NOM », « delete NOM »), /recipes (mes procédures apprises ; « keep ID », « refuse ID », « forget ID »), /clear (oublie la conversation en cours), /quit (ou Ctrl+D). Ctrl+C interrompt la réponse et arrête ce qui tourne en arrière-plan."
   },
   "cli": {
     "arrived": "Monika est là.",
@@ -52,7 +52,7 @@
     "session_forget_usage": "Usage : /session forget ID (les ids s'affichent avec /sessions).",
     "session_not_found": "Aucune session avec l'id {id}.",
     "session_deleted": "Session {id} supprimée.",
-    "memory_disabled": "Mon carnet est désactivé ou indisponible (voir le message au lancement).",
+    "memory_disabled": "Ma mémoire est désactivée ou indisponible (voir le message au lancement).",
     "memory_error": "[erreur mémoire] {kind}: {error}",
     "memory_header": "Ce que je sais de toi :",
     "memory_empty": "Je ne sais encore rien de toi.",

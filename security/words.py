@@ -1,4 +1,4 @@
-"""Tiered sensitive-word matcher (three levels), ported from OpenSakura.
+"""Tiered sensitive-word matcher (three levels).
 
 The bank is the user's: the repository ships no word at all. Matching is deterministic and cheap, so it
 runs at the start of every turn without a model call:

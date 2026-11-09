@@ -1,4 +1,4 @@
-"""Emotion tags for the GPT-SoVITS voice: the French rewrite of OpenSakura's TTS mapper.
+"""Emotion tags for the GPT-SoVITS voice.
 
 Three steps, in this order:
   1. quadrant lag — an abrupt mood change is spread over a few phrases instead of jumping
@@ -30,7 +30,7 @@ MIN_HALF_LENGTH = 10  # Neither half of a split text may be shorter than this
 S_CURVE_STEEPNESS = 10.0
 S_CURVE_MIDPOINT = 0.7
 
-# Step 1: lag values, exactly as in OpenSakura (full strength after ~3 phrases, or ~4 after a diagonal).
+# Step 1: lag values (full strength after ~3 phrases, or ~4 after a diagonal).
 ADJACENT_INITIAL_MULT = 0.15
 ADJACENT_STEP = 0.35
 DIAGONAL_INITIAL_MULT = 0.0

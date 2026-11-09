@@ -1,15 +1,16 @@
-"""Audio output through pacat (PulseAudio/PipeWire), reporting the playback level for the avatar."""
+"""Audio output through sounddevice (PortAudio), reporting the playback level for the avatar."""
 
 from __future__ import annotations
 
 import asyncio
 import logging
-import shutil
+import threading
 from collections import deque
 from collections.abc import Callable
 
 import numpy as np
 
+from voice.backend import BackendUnavailable, device_arg, extra_settings, sounddevice
 from voice.errors import PlaybackError
 
 log = logging.getLogger(__name__)
@@ -29,26 +30,28 @@ def levels_of(pcm: np.ndarray, window_samples: int) -> list[float]:
     return out
 
 
-class PacatSink:
+class SoundDeviceSink:
     """One playback stream: open, write PCM chunks, then close (waits for the sound to finish)."""
 
     def __init__(
         self,
         sample_rate: int = 24000,
         device: str = "",
-        command: str = "pacat",
         latency_ms: int = 100,
         on_level: LevelCallback | None = None,
     ) -> None:
-        self._rate = sample_rate
+        self._rate = max(1, int(sample_rate))
         self._device = device
-        self._command = command
-        self._latency = latency_ms / 1000
+        self._latency = max(0.0, latency_ms / 1000)
         self._on_level = on_level
-        self._window = max(1, sample_rate * LEVEL_WINDOW_MS // 1000)
-        self._proc: asyncio.subprocess.Process | None = None
-        self._stderr = b""
-        self._drain: asyncio.Task | None = None
+        self._window = max(1, self._rate * LEVEL_WINDOW_MS // 1000)
+        self._max_buffer = self._rate * 2 * 2  # two seconds of int16 mono
+        self._stream = None
+        self._buffer = bytearray()
+        self._lock = threading.Condition()
+        self._closed = True
+        self._aborted = False
+        self._failed = False
         self._emitter: asyncio.Task | None = None
         self._timeline: deque[tuple[float, float]] = deque()
         self._wake = asyncio.Event()
@@ -58,70 +61,98 @@ class PacatSink:
 
     @property
     def is_open(self) -> bool:
-        return self._proc is not None
+        return self._stream is not None
 
     async def open(self) -> None:
-        exe = shutil.which(self._command)
-        if exe is None:
-            raise PlaybackError(
-                f"{self._command} est introuvable : installe libpulse "
-                "(sudo pacman -S libpulse) puis vérifie que `pactl info` répond."
-            )
-        args = [
-            exe,
-            "--playback",
-            "--raw",
-            "--format=s16le",
-            f"--rate={self._rate}",
-            "--channels=1",
-            f"--latency-msec={int(self._latency * 1000)}",
-            "--client-name=Monika",
-            "--stream-name=Voix",
-        ]
-        if self._device:
-            args.append(f"--device={self._device}")
-        self._proc = await asyncio.create_subprocess_exec(
-            *args,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        self._stderr = b""
+        if self._stream is not None:
+            return
+        try:
+            sd = sounddevice()
+        except BackendUnavailable as exc:
+            raise PlaybackError(str(exc)) from exc
+        with self._lock:
+            self._buffer.clear()
+            self._closed = False
+            self._aborted = False
+            self._failed = False
+            self._lock.notify_all()
         self._timeline.clear()
         self._clock_end = 0.0
-        loop = asyncio.get_running_loop()
-        self._drain = loop.create_task(self._drain_stderr(self._proc))
-        if self._on_level is not None:
-            self._emitter = loop.create_task(self._emit_levels())
-
-    async def _drain_stderr(self, proc: asyncio.subprocess.Process) -> None:
-        # Keep the last messages for diagnostics and never let the pipe fill up
-        assert proc.stderr is not None
-        while chunk := await proc.stderr.read(1024):
-            self._stderr = (self._stderr + chunk)[-2000:]
-
-    def _failure(self) -> PlaybackError:
-        reason = self._stderr.decode("utf-8", "replace").strip().splitlines()
-        where = f"sortie « {self._device} »" if self._device else "sortie par défaut"
-        return PlaybackError(
-            f"La sortie audio ne répond plus ({where}) : {reason[-1] if reason else 'pacat s’est arrêté'}. "
-            "Vérifie la sortie avec `pactl list short sinks` (réglage AUDIO_OUTPUT_DEVICE)."
+        try:
+            self._stream = sd.RawOutputStream(
+                samplerate=self._rate,
+                blocksize=0,
+                device=device_arg(self._device),
+                channels=1,
+                dtype="int16",
+                latency=self._latency,
+                extra_settings=extra_settings(sd),
+                callback=self._output,
+                finished_callback=self._finished,
+            )
+            self._stream.start()
+        except Exception as exc:
+            stream, self._stream = self._stream, None
+            self._close_stream(stream, abort=True)
+            with self._lock:
+                self._closed = True
+                self._aborted = True
+                self._lock.notify_all()
+            raise PlaybackError(self._error_text(exc)) from exc
+        self._latency = max(
+            0.0, float(getattr(self._stream, "latency", self._latency) or self._latency)
         )
+        if self._on_level is not None:
+            self._emitter = asyncio.get_running_loop().create_task(self._emit_levels())
+
+    def _output(self, outdata, frames: int, time_info, status) -> None:
+        if status:
+            log.debug("audio output status: %s", status)
+        need = frames * 2  # int16 mono
+        with self._lock:
+            chunk = bytes(self._buffer[:need])
+            del self._buffer[:need]
+            self._lock.notify_all()
+        if len(chunk) < need:  # underrun: keep the stream going with silence
+            chunk += b"\x00" * (need - len(chunk))
+        try:
+            outdata[:] = chunk
+        except Exception:  # the stream is closing
+            log.debug("could not fill the audio output buffer", exc_info=True)
+
+    def _finished(self) -> None:
+        # A normal close() stops the stream; an unexpected stop must fail the next write.
+        if not self._closed:
+            self._failed = True
+            log.warning("the audio output stream stopped unexpectedly")
 
     async def write(self, pcm: np.ndarray) -> None:
-        """Send int16 mono samples; waits when the audio server has enough to play."""
-        proc = self._proc
-        if proc is None or proc.stdin is None:
+        """Send int16 mono samples; waits when too much audio is already queued."""
+        if self._stream is None or self._failed:
             raise PlaybackError("La sortie audio n'est pas ouverte.")
         if pcm.size == 0:
             return
+        data = np.ascontiguousarray(pcm, dtype=np.int16).tobytes()
         self._schedule_levels(pcm)
         try:
-            proc.stdin.write(pcm.astype(np.int16).tobytes())
-            await proc.stdin.drain()
-        except (BrokenPipeError, ConnectionResetError):
-            await asyncio.sleep(0.05)  # Let the stderr reader catch the last message
-            raise self._failure() from None
+            await asyncio.get_running_loop().run_in_executor(None, self._append, data)
+        except PlaybackError:
+            raise
+        except Exception as exc:
+            raise PlaybackError(self._error_text(exc)) from exc
+
+    def _append(self, data: bytes) -> None:
+        with self._lock:
+            while (
+                len(self._buffer) > self._max_buffer
+                and not self._aborted
+                and not self._closed
+            ):
+                self._lock.wait(0.1)
+            if self._aborted or self._closed:
+                raise PlaybackError("La sortie audio a été interrompue.")
+            self._buffer.extend(data)
+            self._lock.notify_all()
 
     def _schedule_levels(self, pcm: np.ndarray) -> None:
         """Queue the loudness windows at the moment the matching sound reaches the speakers."""
@@ -158,38 +189,60 @@ class PacatSink:
 
     async def close(self) -> None:
         """Finish the sound already sent, then release the stream."""
-        proc = self._proc
-        if proc is None:
+        stream = self._stream
+        if stream is None:
             return
-        if proc.stdin is not None and not proc.stdin.is_closing():
-            try:
-                proc.stdin.close()
-            except OSError:
-                pass
         remaining = max(0.0, self._clock_end - asyncio.get_running_loop().time())
-        try:
-            await asyncio.wait_for(proc.wait(), remaining + 5)
-        except TimeoutError:
-            proc.kill()
-            await proc.wait()
+        if remaining > 0:
+            await asyncio.sleep(min(remaining, 30.0))
+        await asyncio.get_running_loop().run_in_executor(
+            None, self._close_stream, stream, False
+        )
         await self._release()
 
     async def stop(self) -> None:
         """Cut the sound immediately."""
-        proc = self._proc
-        if proc is None:
+        stream = self._stream
+        if stream is None:
             return
-        if proc.returncode is None:
-            proc.kill()
-            await proc.wait()
+        with self._lock:
+            self._aborted = True
+            self._closed = True
+            self._buffer.clear()
+            self._lock.notify_all()
+        await asyncio.get_running_loop().run_in_executor(
+            None, self._close_stream, stream, True
+        )
         await self._release()
 
     async def _release(self) -> None:
-        self._proc = None
-        for task in (self._emitter, self._drain):
-            if task is not None:
-                task.cancel()
-                await asyncio.gather(task, return_exceptions=True)
-        self._emitter = self._drain = None
+        self._stream = None
+        with self._lock:
+            self._closed = True
+            self._aborted = True
+            self._buffer.clear()
+            self._lock.notify_all()
+        if self._emitter is not None:
+            self._emitter.cancel()
+            await asyncio.gather(self._emitter, return_exceptions=True)
+            self._emitter = None
         self._timeline.clear()
         self._notify(0.0)
+
+    def _error_text(self, exc: Exception) -> str:
+        where = f" « {self._device} »" if self._device else ""
+        return (
+            f"La sortie audio{where} ne peut pas être ouverte : {exc}. "
+            "Vérifie AUDIO_OUTPUT_DEVICE (liste : `python -m sounddevice`)."
+        )
+
+    @staticmethod
+    def _close_stream(stream, abort: bool) -> None:
+        try:
+            stream.abort() if abort else stream.stop()
+        except Exception:  # already stopped or unplugged
+            log.debug("could not stop the audio output stream", exc_info=True)
+        try:
+            stream.close()
+        except Exception:
+            log.debug("could not close the audio output stream", exc_info=True)

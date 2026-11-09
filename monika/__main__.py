@@ -144,12 +144,12 @@ def show_roles(settings: Settings) -> int:
 
 
 async def load_memory(settings: Settings, paths: Paths) -> NoteMemory | None:
-    """Open the personal notebook (a JSON file: nothing to download)."""
+    """Open the evidence memory (a private JSON file; embeddings load in the background)."""
     if not settings.fast_memory_enabled:
         console.print("[dim]Mémoire désactivée (FAST_MEMORY_ENABLED=false).[/dim]")
         return None
     memory = NoteMemory(paths.memory_notes, settings)
-    console.print("[green]✓[/green] Mémoire prête (carnet de notes).")
+    console.print("[green]✓[/green] Mémoire prête (faits cités, corrections).")
     return memory
 
 
@@ -306,14 +306,14 @@ async def open_tools(settings: Settings, paths: Paths, masker: Masker, on_manage
 
 async def start_voice(settings: Settings, paths: Paths):
     """Open the microphone and load the speech models; returns a VoiceListener, or None with a message."""
-    from voice.audio import ParecSource
+    from voice.audio import SoundDeviceSource
     from voice.errors import VoiceError
     from voice.listener import VoiceListener
     from voice.stt import Transcriber
     from voice.vad import SileroStreamingVAD
 
     transcriber = Transcriber(settings, paths)
-    probe = ParecSource(settings.audio_input_device)
+    probe = SoundDeviceSource(settings.audio_input_device)
     try:  # Fail fast on a missing or wrong microphone, before any model download
         await probe.start()
         await probe.read_frame()
@@ -329,7 +329,7 @@ async def start_voice(settings: Settings, paths: Paths):
     try:
         seconds = await transcriber.load()
         listener = VoiceListener(
-            ParecSource(settings.audio_input_device),
+            SoundDeviceSource(settings.audio_input_device),
             SileroStreamingVAD(),
             transcriber,
             settings,
@@ -351,11 +351,9 @@ async def start_voice(settings: Settings, paths: Paths):
 
 async def start_speech(settings: Settings, paths: Paths, voice: bool, on_level=None):
     """Connect the voice (GPT-SoVITS over its own HTTP API); returns a Speaker, or None with a message."""
-    import shutil
-
     from voice.errors import VoiceError
     from voice.gptsovits import GptSovitsEngine
-    from voice.playback import PacatSink
+    from voice.playback import SoundDeviceSink
     from voice.speaker import Speaker
 
     if not settings.tts_enabled:
@@ -365,14 +363,6 @@ async def start_speech(settings: Settings, paths: Paths, voice: bool, on_level=N
             )
         return None
     if not voice and not settings.tts_text_mode:
-        return None
-    if (
-        shutil.which("pacat") is None
-    ):  # Checked first: nothing else is worth doing without a sound output
-        console.print(
-            "[red]pacat est introuvable[/red] : installe libpulse (sudo pacman -S libpulse). "
-            "[yellow]Je continue sans voix : mes réponses s'afficheront à l'écran seulement.[/yellow]"
-        )
         return None
     console.print(
         f"[dim]Connexion au serveur GPT-SoVITS ({settings.tts_url}) et chargement de la voix… "
@@ -404,6 +394,19 @@ async def start_speech(settings: Settings, paths: Paths, voice: bool, on_level=N
     )
     for warning in engine.warnings:
         console.print(f"[yellow]⚠ {warning}[/yellow]")
+    sink = SoundDeviceSink(
+        engine.sample_rate, settings.audio_output_device, on_level=on_level
+    )
+    try:  # Fail fast on a missing or wrong output, before the conversation starts
+        await sink.open()
+        await sink.close()
+    except VoiceError as exc:
+        console.print(f"[red]{exc}[/red]")
+        console.print(
+            "[yellow]Je continue sans voix : mes réponses s'afficheront à l'écran seulement.[/yellow]"
+        )
+        engine.close()
+        return None
     tagger = _emotion_tagger(settings, engine)
     block_chars = (
         settings.tts_block_max_chars if settings.tts_render_mode() == "block" else 0
@@ -416,7 +419,7 @@ async def start_speech(settings: Settings, paths: Paths, voice: bool, on_level=N
     )
     return Speaker(
         engine,
-        PacatSink(engine.sample_rate, settings.audio_output_device, on_level=on_level),
+        sink,
         tagger=tagger,
         block_chars=block_chars,
         pauses=pauses,
@@ -787,7 +790,7 @@ async def _run_chat(
             llm = LLMClient(settings)
             health.llm = llm
             if memory is not None:
-                memory.bind_llm(llm)  # le directeur réécrit le carnet ; il lui faut le modèle
+                memory.bind_llm(llm)  # le directeur extrait les faits ; il lui faut le modèle
             recipes, recipe_keeper = load_recipes(settings, paths, llm, masker)
             character = load_character(settings, paths, llm, hub, masker)
             action_director = load_action_director(settings, llm, hub)

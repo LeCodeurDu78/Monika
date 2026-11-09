@@ -1,6 +1,6 @@
 // Voice in the page: the microphone goes up (getUserMedia + AudioWorklet, 16 kHz PCM) and Monika's
 // voice comes back down as PCM played with WebAudio. The terminal's voice mode is untouched: the
-// server keeps `parec`/`pacat` for it, this is only another source and sink.
+// server keeps `sounddevice` for it, this is only another source and sink.
 
 const TARGET_RATE = 16000;
 const FRAME_BYTES = 1024;  // 512 samples, the window the server's VAD expects
@@ -8,7 +8,7 @@ const FRAME_BYTES = 1024;  // 512 samples, the window the server's VAD expects
 // The AudioWorklet's source lives here rather than in a file of its own: the page then ships a single voice
 // module. It turns the microphone (Float32, the browser's own rate) into 16 kHz Int16, 512 samples per
 // message — the frame size the server's voice activity detector expects (see voice/audio.py) — so the page
-// feeds the very same pipeline as `parec`. Linear interpolation is enough for speech.
+// feeds the very same pipeline as the local microphone. Linear interpolation is enough for speech.
 const WORKLET_SRC = `
 const TARGET_RATE = 16000;
 const FRAME_SAMPLES = 512;

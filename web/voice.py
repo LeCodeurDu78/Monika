@@ -2,12 +2,12 @@
 
 The page captures the microphone (`getUserMedia`, echo cancellation), a small AudioWorklet turns it
 into 16 kHz PCM and sends it here as binary frames. Those frames feed the very same `VoiceListener`
-as the terminal's `parec` stream, so the VAD, the endpointer and Whisper are unchanged: only the
-source of the audio differs.
+as the terminal's `sounddevice` stream, so the VAD, the endpointer and Whisper are unchanged: only
+the source of the audio differs.
 
-When the page has the voice on, the shared `Speaker` writes to this page (WebAudio) instead of
-pacat, which is what makes the conversation hands-free in the browser. Turning it off hands the
-voice back to the terminal's output.
+When the page has the voice on, the shared `Speaker` writes to this page (WebAudio) instead of the
+local output, which is what makes the conversation hands-free in the browser. Turning it off hands
+the voice back to the terminal's output.
 """
 
 from __future__ import annotations
@@ -284,7 +284,7 @@ class PageVoice:
                 pass
             self._listener = None
         if self._speaker is not None and self._sink is not None:
-            self._speaker.use_sink(None)  # back to pacat
+            self._speaker.use_sink(None)  # back to the local output
             await self._sink.stop()
             self._sink = None
         if self._hub is not None:

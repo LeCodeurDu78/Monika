@@ -59,7 +59,7 @@ class Hub:
             self.publish("state", state=state)
 
     def on_level(self, level: float) -> None:
-        """Loudness (0..1) of the sound being heard right now; plugs into PacatSink(on_level=...)."""
+        """Loudness (0..1) of the sound being heard right now; plugs into SoundDeviceSink(on_level=...)."""
         self.level = round(min(max(float(level), 0.0), 1.0), 3)
         self.publish("level", value=self.level)
 

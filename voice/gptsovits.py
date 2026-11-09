@@ -13,7 +13,7 @@ A tag with no recording falls back to `neutral1` (or the pack's first tag), exac
 engines of the GPT-SoVITS family: the voice never pretends to feel something it has no clip for.
 
 The engine is driven by `voice/speaker.py`: `synth()` is a blocking int16 PCM generator run on one
-worker thread, so `Speaker` and `PacatSink` did not have to change when XTTS went away.
+worker thread, so `Speaker` and `SoundDeviceSink` did not have to change when XTTS went away.
 """
 
 from __future__ import annotations

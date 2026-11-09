@@ -6,12 +6,12 @@ import { setLanguage, startI18n } from './i18n.js';
 
 const STATE_TEXT = { idle: 'Au repos', listening: 'J’écoute', thinking: 'Je réfléchis', speaking: 'Je parle' };
 const SPEAKING_LEVEL = 0.02;
-// The server sends 20 ms RMS windows (speech sits around 0.02–0.15). OpenSakura's engine expects the 0..1
+// The server sends 20 ms RMS windows (speech sits around 0.02–0.15).
 // shape its own player produces, so the same curve is applied here; the animation stays its own.
 const mouthLevel = (rms) => Math.min(1, Math.pow(Math.min(1, rms * 4.5), 0.85));
 const TAB_KEY = 'monika.tab';   // remembered, so a phone reopens on the section it was on
 const PANEL_KEY = 'monika.panelWidth';   // the panel keeps the width it was dragged to
-const HIDDEN_KEY = 'monika.panelHidden'; // "rangé" state, like OpenSakura's panel arrow
+const HIDDEN_KEY = 'monika.panelHidden'; // "rangé" state
 
 // The loading screen (index.html): real progress while the model downloads, then a fade.
 const LOADING = {
@@ -144,7 +144,7 @@ class Page {
       const response = await fetch('/api/emotions', { cache: 'no-store' });
       if (!response.ok) return;
       const specs = await response.json();
-      setEmotionLabels(specs);   // names for the panels only: the face comes from OpenSakura's table
+      setEmotionLabels(specs);
     } catch (err) {
       console.warn('[emotions] table indisponible, table interne utilisée', err);
     }

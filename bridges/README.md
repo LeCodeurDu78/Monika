@@ -1,34 +1,34 @@
-# Pont MCP vers Hermes ou nanoMuse
+# MCP bridge to Hermes or nanoMuse
 
-`helper_bridge.py` est un serveur MCP **stdio** autonome : une instance sert **un** helper.
-Monika le déclare comme n'importe quel serveur MCP et voit cinq outils : `ask`, `status`,
+`helper_bridge.py` is a standalone **stdio** MCP server: one instance serves **one** helper.
+Monika declares it like any other MCP server and sees five tools: `ask`, `status`,
 `answer`, `stop`, `health`.
 
-Deux adaptateurs sont intégrés aux API réelles, choisis par `HELPER_KIND` :
+Two adapters are built in against the real APIs, chosen by `HELPER_KIND`:
 
 | `HELPER_KIND` | Helper | Routes |
 |---|---|---|
 | `hermes` | Hermes Agent, API server | `/v1/runs`, `/v1/runs/{id}`, `/approval`, `/clarify`, `/stop` |
 | `nanomuse` | nanoMuse local | `/api/threads`, `/api/threads/{id}/events`, `/api/approvals/{id}` |
-| `generic` (défaut) | autre programme | contrat simple décrit plus bas |
+| `generic` (default) | another program | simple contract described below |
 
-Rien n'est copié de Hermes (MIT) ni de nanoMuse (GPL-3.0) : le pont ne fait que parler HTTP.
+Nothing is copied from Hermes (MIT) or nanoMuse (GPL-3.0): the bridge only speaks HTTP.
 
 ## Installation
 
-Aucune dépendance nouvelle : `mcp` est déjà installé avec Monika, le client HTTP vient de la
-bibliothèque standard.
+No new dependency: `mcp` is already installed with Monika, and the HTTP client comes from the
+standard library.
 
 ```bash
-# depuis la racine du projet Monika
+# from the Monika project root
 python -m bridges.helper_bridge
 ```
 
-Le pont lit sa configuration dans l'environnement. Il ne démarre pas si `HELPER_URL` manque.
+The bridge reads its configuration from the environment. It does not start if `HELPER_URL` is missing.
 
 ## Hermes
 
-1. Active l'API server dans `~/.hermes/.env`, puis lance la passerelle :
+1. Enable the API server in `~/.hermes/.env`, then start the gateway:
 
    ```bash
    API_SERVER_ENABLED=true
@@ -36,79 +36,79 @@ Le pont lit sa configuration dans l'environnement. Il ne démarre pas si `HELPER
    hermes gateway
    ```
 
-   Elle écoute par défaut sur `http://127.0.0.1:8642`.
+   It listens by default on `http://127.0.0.1:8642`.
 
-2. Déclare le pont avec `HELPER_KIND=hermes`, `HELPER_TOKEN` = `API_SERVER_KEY` et
+2. Declare the bridge with `HELPER_KIND=hermes`, `HELPER_TOKEN` = `API_SERVER_KEY` and
    `HELPER_URL=http://127.0.0.1:8642`.
 
-Correspondance des outils :
+Tool mapping:
 
-| Outil | Requête envoyée à Hermes |
+| Tool | Request sent to Hermes |
 |---|---|
-| `ask` | `POST /v1/runs` avec `{"input": ..., "instructions": ...}` ; `session_id` si `HELPER_SESSION` est défini |
-| `status` | `GET /v1/runs/{id}` ; le pont lit `status`, `output` et `pending_controls` |
-| `answer` | lit `pending_controls` ; `POST /v1/runs/{id}/approval` avec `choice` pour une approbation, `POST /v1/runs/{id}/clarify` avec `answer` pour une clarification |
+| `ask` | `POST /v1/runs` with `{"input": ..., "instructions": ...}`; `session_id` if `HELPER_SESSION` is set |
+| `status` | `GET /v1/runs/{id}`; the bridge reads `status`, `output` and `pending_controls` |
+| `answer` | reads `pending_controls`; `POST /v1/runs/{id}/approval` with `choice` for an approval, `POST /v1/runs/{id}/clarify` with `answer` for a clarification |
 | `stop` | `POST /v1/runs/{id}/stop` |
 | `health` | `GET /health` |
 
-Le pont renvoie l'id du run, puis `state` vaut `running`, `waiting_for_approval`,
-`waiting_for_answer`, `done`, `error`, `stopped` ou `stopping`. `question` reprend le résumé du
-contrôle en attente. `HELPER_ANSWER_MODE=auto` choisit le type de contrôle ; `approval` ou
-`clarify` force l'un des deux si ta version de Hermes l'exige. L'outil `answer` accepte aussi un
-argument `mode` pour ce seul appel.
+The bridge returns the run id, then `state` is `running`, `waiting_for_approval`,
+`waiting_for_answer`, `done`, `error`, `stopped` or `stopping`. `question` carries the pending
+control's summary. `HELPER_ANSWER_MODE=auto` chooses the control type; `approval` or
+`clarify` forces one of the two if your Hermes version requires it. The `answer` tool also accepts a
+`mode` argument for that single call.
 
 ## nanoMuse
 
-1. Lance le runtime local et récupère le jeton affiché :
+1. Start the local runtime and retrieve the displayed token:
 
    ```bash
    nanomuse serve
    ```
 
-   Garde l'adresse et le jeton ; l'API refuse les requêtes sans
-   `Authorization: Bearer <jeton>` quand l'authentification est active.
+   Keep the address and the token; the API refuses requests without
+   `Authorization: Bearer <token>` when authentication is active.
 
-2. Déclare le pont avec `HELPER_KIND=nanomuse`, `HELPER_URL` (l'adresse affichée) et
-   `HELPER_TOKEN` (le jeton).
+2. Declare the bridge with `HELPER_KIND=nanomuse`, `HELPER_URL` (the displayed address) and
+   `HELPER_TOKEN` (the token).
 
-Correspondance des outils :
+Tool mapping:
 
-| Outil | Requête envoyée à nanoMuse |
+| Tool | Request sent to nanoMuse |
 |---|---|
-| `ask` | `POST /api/threads` avec un titre, puis `POST /api/threads/{id}/send` avec `{"text": ...}` ; le pont renvoie l'id du **fil** |
-| `status` | `GET /api/threads/{id}/events` ; le pont lit le dernier message de l'utilisateur, la réponse de l'assistant, l'approbation et la question en attente |
-| `answer` | approbation : `POST /api/approvals/{approval_id}` avec `{"approved", "scope", "reason"}` ; question libre : un message dans le fil avec `POST /api/threads/{id}/send` |
+| `ask` | `POST /api/threads` with a title, then `POST /api/threads/{id}/send` with `{"text": ...}`; the bridge returns the **thread** id |
+| `status` | `GET /api/threads/{id}/events`; the bridge reads the last user message, the assistant's reply, the approval and the pending question |
+| `answer` | approval: `POST /api/approvals/{approval_id}` with `{"approved", "scope", "reason"}`; free-form question: a message in the thread with `POST /api/threads/{id}/send` |
 | `stop` | `POST /api/threads/{id}/stop` |
 | `health` | `GET /api/health` |
 
-`ask` crée un fil de côté par défaut. `HELPER_THREAD_ID` permet de réutiliser un fil existant
-(par exemple `main`) ; attention, les tâches successives partagent alors la même conversation.
-`HELPER_LANGUAGE` transmet une langue BCP-47 (`fr`, `en`…) dans `language`. Le contexte éventuel
-est préfixé au message sous `[Contexte]`. nanoMuse accepte 20 000 caractères par message : le pont
-refuse au-delà.
+`ask` creates a side thread by default. `HELPER_THREAD_ID` lets you reuse an existing thread
+(for example `main`); note that successive tasks then share the same conversation.
+`HELPER_LANGUAGE` passes a BCP-47 language (`fr`, `en`…) in `language`. Any context
+is prefixed to the message as `[Context]`. nanoMuse accepts 20,000 characters per message: the bridge
+refuses beyond that.
 
-Pour une approbation, `answer` attend `oui`, `non`, `toujours` (ou `yes`, `no`, `always`). Le
-pont convertit en `approved`/`scope` ; un refus avec motif (`non, trop risqué`) garde le texte
-comme `reason`. Pour une question libre, le texte est envoyé tel quel.
+For an approval, `answer` expects `yes`, `no`, `always` (or `oui`, `non`, `toujours`). The
+bridge converts it into `approved`/`scope`; a refusal with a reason (`no, too risky`) keeps the text
+as `reason`. For a free-form question, the text is sent as is.
 
-## Contrat générique
+## Generic contract
 
-Avec `HELPER_KIND=generic` (défaut), le helper doit exposer les routes ci-dessous. Les réponses
-sont du JSON ; une réponse texte brute est aussi acceptée et devient `result`.
+With `HELPER_KIND=generic` (default), the helper must expose the routes below. Responses
+are JSON; a raw text response is also accepted and becomes `result`.
 
-| Opération | Requête | Réponse attendue |
+| Operation | Request | Expected response |
 |---|---|---|
-| `ask` | `POST {HELPER_ASK_PATH}` `{"prompt": "...", "context": "..."}` | `{"id": "...", "state": "queued"}` ou `{"result": "..."}` |
-| `status` | `GET {HELPER_STATUS_PATH}` avec `{id}` remplacé | `{"id", "state", "progress", "result", "question", "error"}` |
-| `answer` | `POST {HELPER_ANSWER_PATH}` `{"id": "...", "answer": "..."}` | un objet du même genre que `status` |
+| `ask` | `POST {HELPER_ASK_PATH}` `{"prompt": "...", "context": "..."}` | `{"id": "...", "state": "queued"}` or `{"result": "..."}` |
+| `status` | `GET {HELPER_STATUS_PATH}` with `{id}` replaced | `{"id", "state", "progress", "result", "question", "error"}` |
+| `answer` | `POST {HELPER_ANSWER_PATH}` `{"id": "...", "answer": "..."}` | an object of the same kind as `status` |
 | `stop` | `POST {HELPER_STOP_PATH}` `{"id": "..."}` | `{"id": "...", "state": "stopped"}` |
 | `health` | `GET {HELPER_HEALTH_PATH}` | `{"ok": true, "detail": "..."}` |
 
-Le pont accepte `state` ou `status`, `result` / `answer` / `output`, `id` / `task_id` / `run_id`.
-Les états terminaux sont : `done`, `completed`, `complete`, `finished`, `success`, `succeeded`,
+The bridge accepts `state` or `status`, `result` / `answer` / `output`, `id` / `task_id` / `run_id`.
+Terminal states are: `done`, `completed`, `complete`, `finished`, `success`, `succeeded`,
 `error`, `failed`, `stopped`, `cancelled`, `canceled`, `interrupted`.
 
-Exemple minimal de helper (à adapter, ce n'est ni Hermes ni nanoMuse) :
+Minimal helper example (to adapt; this is neither Hermes nor nanoMuse):
 
 ```python
 from fastapi import FastAPI
@@ -138,44 +138,44 @@ def stop(body: dict):
 
 @app.get("/health")
 def health():
-    return {"ok": True, "detail": "prêt"}
+    return {"ok": True, "detail": "ready"}
 ```
 
-## Réglages (environnement)
+## Settings (environment)
 
-| Variable | Défaut | Rôle |
+| Variable | Default | Role |
 |---|---|---|
-| `HELPER_KIND` | `generic` | `generic`, `hermes` ou `nanomuse` |
-| `HELPER_URL` | — | **obligatoire** : base HTTP du helper, sans slash final |
-| `HELPER_NAME` | `helper` | nom affiché dans les messages (`Hermes`, `nanoMuse`…) |
-| `HELPER_TOKEN` | vide | jeton envoyé dans l'en-tête d'autorisation |
-| `HELPER_TOKEN_HEADER` | `Authorization` | nom de l'en-tête si le helper en attend un autre |
-| `HELPER_TOKEN_PREFIX` | `Bearer ` | préfixe du jeton ; peut être vide |
-| `HELPER_ASK_PATH` | selon preset | route de création |
-| `HELPER_STATUS_PATH` | selon preset | route d'état ; **doit contenir `{id}`** |
-| `HELPER_ANSWER_PATH` | `/answer` | route de réponse (générique seulement) |
-| `HELPER_STOP_PATH` | selon preset | route d'arrêt |
-| `HELPER_HEALTH_PATH` | selon preset | route de santé |
+| `HELPER_KIND` | `generic` | `generic`, `hermes` or `nanomuse` |
+| `HELPER_URL` | — | **required**: helper's HTTP base, without a trailing slash |
+| `HELPER_NAME` | `helper` | display name in messages (`Hermes`, `nanoMuse`…) |
+| `HELPER_TOKEN` | empty | token sent in the authorization header |
+| `HELPER_TOKEN_HEADER` | `Authorization` | header name if the helper expects another one |
+| `HELPER_TOKEN_PREFIX` | `Bearer ` | token prefix; may be empty |
+| `HELPER_ASK_PATH` | per preset | creation route |
+| `HELPER_STATUS_PATH` | per preset | status route; **must contain `{id}`** |
+| `HELPER_ANSWER_PATH` | `/answer` | answer route (generic only) |
+| `HELPER_STOP_PATH` | per preset | stop route |
+| `HELPER_HEALTH_PATH` | per preset | health route |
 | `HELPER_CLARIFY_PATH` | `/v1/runs/{id}/clarify` | clarification (Hermes) |
-| `HELPER_APPROVAL_PATH` | `/v1/runs/{id}/approval` | approbation (Hermes) |
-| `HELPER_SEND_PATH` | `/api/threads/{id}/send` | message dans un fil (nanoMuse) |
-| `HELPER_APPROVALS_PATH` | `/api/approvals/{id}` | décision d'approbation (nanoMuse) |
-| `HELPER_ANSWER_MODE` | `auto` | `auto`, `approval` ou `clarify` (Hermes) |
-| `HELPER_SESSION` | vide | `session_id` envoyé à Hermes |
-| `HELPER_THREAD_ID` | vide | fil nanoMuse à réutiliser au lieu d'en créer un |
-| `HELPER_LANGUAGE` | vide | langue BCP-47 envoyée à nanoMuse |
-| `HELPER_TIMEOUT_S` | `20` | attente maximale d'une requête HTTP |
-| `HELPER_POLL_S` | `0.5` | intervalle entre deux `status` pendant `wait_s` |
-| `HELPER_MAX_WAIT_S` | `30` | plafond de `wait_s` dans l'outil `ask` |
+| `HELPER_APPROVAL_PATH` | `/v1/runs/{id}/approval` | approval (Hermes) |
+| `HELPER_SEND_PATH` | `/api/threads/{id}/send` | message in a thread (nanoMuse) |
+| `HELPER_APPROVALS_PATH` | `/api/approvals/{id}` | approval decision (nanoMuse) |
+| `HELPER_ANSWER_MODE` | `auto` | `auto`, `approval` or `clarify` (Hermes) |
+| `HELPER_SESSION` | empty | `session_id` sent to Hermes |
+| `HELPER_THREAD_ID` | empty | nanoMuse thread to reuse instead of creating one |
+| `HELPER_LANGUAGE` | empty | BCP-47 language sent to nanoMuse |
+| `HELPER_TIMEOUT_S` | `20` | maximum wait for one HTTP request |
+| `HELPER_POLL_S` | `0.5` | interval between two `status` calls during `wait_s` |
+| `HELPER_MAX_WAIT_S` | `30` | cap on `wait_s` in the `ask` tool |
 
-Les chemins sont validés au démarrage : les routes qui portent un identifiant doivent contenir
-`{id}`, et seuls `http` et `https` sont acceptés. Les redirections sont refusées pour qu'un jeton
-ne parte pas vers un autre hôte.
+Paths are validated at startup: routes that carry an identifier must contain
+`{id}`, and only `http` and `https` are accepted. Redirects are refused so a token
+does not go to another host.
 
-## Déclaration dans `mcp_servers.json`
+## Declaring it in `mcp_servers.json`
 
-Une entrée par helper. Les variables `${...}` sont remplacées par Monika depuis l'environnement
-ou son `.env`.
+One entry per helper. `${...}` variables are replaced by Monika from the environment
+or its `.env`.
 
 ```json
 {
@@ -191,7 +191,7 @@ ou son `.env`.
         "HELPER_TOKEN": "${HERMES_TOKEN}"
       },
       "slow_tools": {
-        "ask": ["Je passe la main à Hermes, une seconde."]
+        "ask": ["I'll hand this to Hermes, one second."]
       }
     },
     "nanomuse": {
@@ -205,27 +205,27 @@ ou son `.env`.
         "HELPER_TOKEN": "${NANOMUSE_TOKEN}"
       },
       "slow_tools": {
-        "ask": ["Je demande à nanoMuse, un instant."]
+        "ask": ["I'm asking nanoMuse, one moment."]
       }
     }
   }
 }
 ```
 
-Monika lance ce serveur **depuis la racine du projet** : `python -m bridges.helper_bridge` y
-trouve le paquet. Si tu lances Monika d'ailleurs, remplace `args` par le chemin absolu de
-`helper_bridge.py`. Sous Windows, utilise le Python qui a `mcp` installé (`py -3`, ou le chemin
-complet de `.venv\Scripts\python.exe`).
+Monika starts this server **from the project root**: `python -m bridges.helper_bridge` finds the
+package there. If you start Monika from elsewhere, replace `args` with the absolute path of
+`helper_bridge.py`. On Windows, use the Python that has `mcp` installed (`py -3`, or the full
+path to `.venv\Scripts\python.exe`).
 
-## Ce que le pont ne fait pas
+## What the bridge does not do
 
-- Il ne lance ni n'arrête Hermes ou nanoMuse : il suppose que le helper tourne déjà.
-- Il ne filtre pas ce que le helper fait de la tâche. Le helper garde ses propres permissions :
-  lance-le avec un compte restreint et écoute seulement sur `127.0.0.1`. L'API server de Hermes
-  donne accès à tout son jeu d'outils (terminal compris) : garde `API_SERVER_KEY` secret.
-- Il ne transmet ni fichiers ni secrets : seuls `prompt`, `context` et `answer` partent en HTTP.
-- Il ne décide pas à la place de Monika : `stop` porte une consigne d'accord explicite, et les
-  réponses du helper arrivent comme des données, jamais comme des ordres.
-- Les tests du dépôt simulent les routes des deux helpers ; ils ne remplacent pas un essai avec
-  un vrai Hermes et un vrai nanoMuse. Le pont n'a pas encore été validé sous Windows avec ces
-  programmes.
+- It neither starts nor stops Hermes or nanoMuse: it assumes the helper is already running.
+- It does not filter what the helper does with the task. The helper keeps its own permissions:
+  run it with a restricted account and listen only on `127.0.0.1`. Hermes's API server
+  gives access to its entire tool set (terminal included): keep `API_SERVER_KEY` secret.
+- It transmits neither files nor secrets: only `prompt`, `context` and `answer` go over HTTP.
+- It does not decide in Monika's place: `stop` carries an explicit agreement instruction, and the helper's
+  replies arrive as data, never as orders.
+- The repository's tests simulate the routes of both helpers; they do not replace a trial with
+  a real Hermes and a real nanoMuse. The bridge has not yet been validated on Windows with these
+  programs.

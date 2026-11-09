@@ -66,7 +66,7 @@ class Paths:
 
     @property
     def memory_notes(self) -> Path:
-        """Le carnet personnel (JSON, 0600) : mes notes, les sujets et les épisodes retenus."""
+        """La mémoire personnelle (JSON, 0600) : événements, faits cités et corrections."""
         return self.memory / "notes.json"
 
     @property

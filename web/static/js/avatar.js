@@ -1,6 +1,5 @@
 // Avatar: Monika's 3D stage. A VRM model, the literature club room, the camera around her, and the playback
 // that turns clips and cues into movement; the motion machinery itself lives in avatar/animation.js.
-// Stage, room and camera adapted from OpenSakura (MIT, (c) 2026 MekaHime Inc.).
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
@@ -462,7 +461,7 @@ const FRAMING = {
 export class Avatar {
   constructor(canvas, opts = {}) {
     this.canvas = canvas;
-    // the motion engine (avatar/animation.js): retargeting, playback and the face, as OpenSakura runs them
+    // the motion engine (avatar/animation.js): retargeting, playback and the face
     this.anim = new Animator({ clipsBase: opts.clipsBase || '/static/assets/clips/', onStatus: opts.onStatus });
     this.view = opts.view || new URLSearchParams(location.search).get('view') || 'bust';
     this.error = null;
@@ -593,8 +592,6 @@ export class Avatar {
   has(name) { return this.anim.has(name); }
 
   // ---------- public API used by the page ----------
-  // The page speaks OpenSakura's vocabulary: an emotion on her face, a clip to play. Nothing sits between the
-  // backend and the engine (no cue controller, no thinking/talking baselines, no second expression table).
   setState(state) { this.state = state; }
   setSound(flag) { this.anim.speaking = !!flag; }
   setMouth(level) { this.anim.setMouth(level); }

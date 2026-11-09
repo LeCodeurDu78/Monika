@@ -1116,7 +1116,7 @@ def build_note(
         lines.append("Mémoire désactivée ou indisponible : je n'ai rien relu.")
     else:
         rewrites = int(memory.get("notes_rewrites") or 0)
-        lines.append(f"- Notes réécrites aujourd'hui : {rewrites} fois.")
+        lines.append(f"- Faits ajoutés aujourd'hui : {rewrites}.")
         topics = [t for t in (memory.get("topics") or []) if isinstance(t, str)]
         events = [e for e in (memory.get("events") or []) if isinstance(e, str)]
         if topics:

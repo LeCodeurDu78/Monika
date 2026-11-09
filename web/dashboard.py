@@ -93,6 +93,7 @@ class Dashboard:
                     "text": i.text,
                     "kind": getattr(i, "kind", ""),
                     "quote": getattr(i, "quote", ""),
+                    "status": getattr(i, "status", "active"),
                 }
                 for i in items
             ],

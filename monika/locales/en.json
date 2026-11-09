@@ -1,6 +1,6 @@
 {
   "help": {
-    "full": "Commands: /help, /tools (list tools), /context (conversation size), /memory (my notebook about you), /forget ID (delete an entry), /relationship (where we stand; “/relationship reset” starts over), /journal (my notes about you; “/journal forget ID”, “/journal clear”), /nightly (last night's note in Obsidian; “show DATE”, “delete DATE”, “accept ID”, “refuse ID”), /sessions (saved sessions; “/resume ID”, “/search WORD”, “/session forget ID”), /index [folder] (index your documents), /documents (index status), /remind WHEN: TEXT (in 20 minutes, tomorrow 8am, every 2 hours, every day at 8am, every Monday and Thursday at 9am), /tasks (scheduled tasks; “/task cancel ID”), /briefing (this morning's briefing right now), /stop (stop everything running), /custom-tools (your MCP servers: list; “code NAME”, “disable NAME”, “delete NAME”), /recipes (learned procedures; “keep ID”, “refuse ID”, “forget ID”), /clear (forget the current conversation), /quit (or Ctrl+D). Ctrl+C interrupts the answer and stops background work."
+    "full": "Commands: /help, /tools (list tools), /context (conversation size), /memory (my memory about you, quoted facts), /forget ID (delete an entry), /relationship (where we stand; “/relationship reset” starts over), /journal (my notes about you; “/journal forget ID”, “/journal clear”), /nightly (last night's note in Obsidian; “show DATE”, “delete DATE”, “accept ID”, “refuse ID”), /sessions (saved sessions; “/resume ID”, “/search WORD”, “/session forget ID”), /index [folder] (index your documents), /documents (index status), /remind WHEN: TEXT (in 20 minutes, tomorrow 8am, every 2 hours, every day at 8am, every Monday and Thursday at 9am), /tasks (scheduled tasks; “/task cancel ID”), /briefing (this morning's briefing right now), /stop (stop everything running), /custom-tools (your MCP servers: list; “code NAME”, “disable NAME”, “delete NAME”), /recipes (learned procedures; “keep ID”, “refuse ID”, “forget ID”), /clear (forget the current conversation), /quit (or Ctrl+D). Ctrl+C interrupts the answer and stops background work."
   },
   "cli": {
     "arrived": "Monika is here.",
@@ -52,7 +52,7 @@
     "session_forget_usage": "Usage: /session forget ID (ids are shown by /sessions).",
     "session_not_found": "No session with id {id}.",
     "session_deleted": "Session {id} deleted.",
-    "memory_disabled": "My notebook is disabled or unavailable (see the startup message).",
+    "memory_disabled": "My memory is disabled or unavailable (see the startup message).",
     "memory_error": "[memory error] {kind}: {error}",
     "memory_header": "What I know about you:",
     "memory_empty": "I don't know anything about you yet.",

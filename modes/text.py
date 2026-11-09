@@ -393,7 +393,8 @@ class TextSession:
             return
         self._write(tr("cli.memory_header") + "\n" if items else tr("cli.memory_empty") + "\n")
         for item in items:
-            self._write(f"  - {item.text}  [id {item.id}]\n")
+            corrected = " (version corrigée)" if item.status == "superseded" else ""
+            self._write(f"  - {item.text}{corrected}  [id {item.id}]\n")
             if item.quote:
                 self._write(f"      « {item.quote} »\n")
         capture = self._agent.capture

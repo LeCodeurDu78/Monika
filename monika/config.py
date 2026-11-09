@@ -161,7 +161,7 @@ class Settings(BaseSettings):
     briefing_city: str = ""  # ville de la météo ; vide = pas de météo
     briefing_sections: str = "meteo,agenda,mails,taches"  # ce qu'il demande
 
-    # Mémoire personnelle (carnet continu, façon OpenSakura) : mes notes, les sujets en cours
+    # Mémoire personnelle à preuves (faits cités, corrections, rappel hybride) : les faits
     # et les épisodes passés, réécrits par un « directeur » tous les MEMORY_CONSOLIDATE_TURNS tours.
     fast_memory_enabled: bool = True
     memory_llm_model: str = ""  # Directeur de mémoire ; vide = REFLECTION_MODEL puis MODEL_NAME
@@ -174,6 +174,9 @@ class Settings(BaseSettings):
     memory_recall_timeout_s: float = Field(5.0, gt=0)
     memory_capture_enabled: bool = True
     memory_capture_min_chars: int = Field(20, ge=1)
+    # Rappel hybride : BM25 toujours, embeddings fastembed quand le modèle est disponible.
+    memory_embeddings_enabled: bool = True
+    memory_embedding_model: str = ""  # vide = RAG_EMBEDDING_MODEL (un seul modèle téléchargé)
 
     # Character: emotions and relationship (favorability) that shape Monika's tone and her 3D avatar
     character_enabled: bool = True
@@ -235,7 +238,7 @@ class Settings(BaseSettings):
     stt_cpu_threads: int = Field(0, ge=0)  # 0 = half of the CPU cores
     stt_prompt: str = ""  # empty = the catalog's prompt for LANGUAGE
     audio_input_device: str = (
-        "@DEFAULT_SOURCE@"  # PulseAudio/PipeWire source name for parec
+        ""  # sounddevice input name or index; empty = default input
     )
     vad_speech_threshold: float = Field(0.5, gt=0.0, lt=1.0)
     vad_end_silence_ms: int = Field(
@@ -285,13 +288,13 @@ class Settings(BaseSettings):
     )  # multiplier on the computed pause
     tts_pause_max_s: float = Field(1.2, ge=0.0, le=5.0)  # never longer than this
     audio_output_device: str = (
-        ""  # PulseAudio/PipeWire sink for pacat; empty = default output
+        ""  # sounddevice output name or index; empty = default output
     )
 
     # Local web page: 3D avatar and dashboard. 127.0.0.1 by default (this computer only). Opening it
     # on the network needs WEB_TOKEN: without it, anyone who reaches the port reads and writes it all.
     web_enabled: bool = True
-    web_port: int = Field(8765, ge=1024, le=65535)
+    web_port: int = Field(4228, ge=1024, le=65535)
     web_host: str = "127.0.0.1"  # WEB_HOST=0.0.0.0 answers on the network (with WEB_TOKEN)
     web_token: SecretStr = SecretStr("")  # empty = no token; the page keeps it in a cookie
 

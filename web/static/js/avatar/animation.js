@@ -1,4 +1,4 @@
-// Animation: the motion and the face, exactly as OpenSakura runs them (web/js/avatar.js, MIT, (c) 2026 MekaHime Inc.).
+// Animation: the motion and the face.
 //
 // Clips (GLB, or FBX) are retargeted onto the VRM at load time: every source bone's world rotation is taken
 // relative to the source rest pose, corrected for the rest-pose difference (T-pose vs A-pose, bone roll) and

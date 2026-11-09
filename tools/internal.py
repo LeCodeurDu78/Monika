@@ -81,7 +81,7 @@ def _guarded(fn):
 
 
 def register_memory_tools(registry: ToolRegistry, memory: NoteMemory) -> None:
-    """Expose le carnet : retenir, chercher, lister et oublier ce que je sais de lui."""
+    """Expose la mémoire : retenir, chercher, lister et oublier ce que je sais de lui."""
 
     async def retenir(args: dict[str, Any]) -> str:
         fact = str(args.get("fait", "")).strip()
@@ -114,9 +114,11 @@ def register_memory_tools(registry: ToolRegistry, memory: NoteMemory) -> None:
     async def lister(args: dict[str, Any]) -> str:
         items = await memory.list_all(limit=_int(args, "limite", 50))
         if not items:
-            return "Mon carnet est vide pour l'instant."
+            return "Ma mémoire est vide pour l'instant."
         return "\n".join(
-            f"- {i.text} [id {i.id}]" + (f" — « {i.quote} »" if i.quote else "")
+            f"- {i.text} [id {i.id}]"
+            + (" (version corrigée)" if i.status == "superseded" else "")
+            + (f" — « {i.quote} »" if i.quote else "")
             for i in items
         )
 

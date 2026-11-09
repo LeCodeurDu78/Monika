@@ -1,73 +1,73 @@
 # Monika
 
-Assistante IA personnelle, locale et en français.
-Inspirée du personnage de Monika (DDLC). Usage strictement personnel.
+A personal AI assistant that runs locally and speaks French.
+Inspired by the character Monika (DDLC). Strictly personal use.
 
-## Aperçu
+## Overview
 
-Monika discute depuis une page dans le navigateur ou à la voix (avec **ta** voix clonée), agit grâce à des outils
-MCP, se souvient de ce qui compte pour toi, retrouve tes documents
-et s'affiche sous forme d'avatar 3D avec un petit tableau de bord dans le navigateur.
-Tout est stocké chez toi ; seul le fournisseur LLM que tu configures reçoit tes messages.
+Monika talks to you from a page in your browser or by voice (with **your** cloned voice), acts through MCP tools,
+remembers what matters to you, finds your documents, and appears as a 3D avatar with a small dashboard in the
+browser. Everything is stored on your machine; only the LLM provider you configure receives your messages.
 
-- **Conversation** dans la page, avec des commandes (`/help`, `/sessions`, `/remind`…) et un bouton
-  🎙 pour parler au micro du navigateur.
-- **Voix** : écoute par Whisper et parole par GPT-SoVITS, lancé à part.
-- **Outils** : serveurs MCP déclarés dans un fichier, plus des outils internes (mémoire, documents)
-  et des outils que Monika peut s'écrire elle-même.
-- **Mémoire** : un carnet de notes réécrit après chaque échange, plus un index de tes documents
-  (RAG) avec citations.
-- **Autonome** : rappels et tâches récurrentes, briefing du matin, recettes apprises.
-- **Personnage** : émotions, relation et journal, visibles sur l'avatar et dans le tableau de bord.
+- **Conversation** in the page, with commands (`/help`, `/sessions`, `/remind`…) and a 🎙 button
+  to talk into the browser microphone.
+- **Voice**: listening with Whisper and speech with GPT-SoVITS, started separately.
+- **Tools**: MCP servers declared in a file, plus built-in tools (memory, documents)
+  and tools Monika can write for herself.
+- **Memory**: durable facts, each backed by your exact sentence, with corrections and hybrid
+  recall, plus an index of your documents (RAG) with citations.
+- **Autonomous**: reminders and recurring tasks, a morning briefing, learned recipes.
+- **Character**: emotions, relationship and journal, visible on the avatar and in the dashboard.
 
 ## Documentation
 
-| Sujet | Document |
-|---|---|
-| Voix : écoute, parole, GPT-SoVITS, micro de la page | [docs/voix.md](docs/voix.md) |
-| Mémoire personnelle et documents (RAG) | [docs/memoire.md](docs/memoire.md) |
-| Outils MCP, outils internes et outils perso | [docs/outils.md](docs/outils.md) |
-| Agent, contexte, recettes, sessions, tâches, briefing | [docs/agent.md](docs/agent.md) |
-| Configuration et structure du projet | [docs/configuration.md](docs/configuration.md) |
-| Commandes du terminal et du chat | [docs/commandes.md](docs/commandes.md) |
-| Avatar, tableau de bord, réglages, téléphone | [docs/page.md](docs/page.md) |
-| Personnage : émotions, relation, journal | [docs/personnage.md](docs/personnage.md) |
-| Données, vie privée, sécurité, mots sensibles | [docs/securite.md](docs/securite.md) |
-| Dépannage | [docs/depannage.md](docs/depannage.md) |
+| Topic | Document                                     |
+|---|----------------------------------------------|
+| Voice: listening, speaking, GPT-SoVITS, page microphone | [docs/voice.md](docs/voix.md)                |
+| Personal memory and documents (RAG) | [docs/memory.md](docs/memoire.md)            |
+| MCP tools, built-in tools and custom tools | [docs/tools.md](docs/outils.md)              |
+| Agent, context, recipes, sessions, tasks, briefing | [docs/agent.md](docs/agent.md)               |
+| Configuration and project structure | [docs/config.md](docs/configuration.md)      |
+| Terminal and chat commands | [docs/commands.md](docs/commandes.md)        |
+| Avatar, dashboard, settings, phone | [docs/dashboard.md](docs/page.md)            |
+| Character: emotions, relationship, journal | [docs/character.md](docs/personnage.md)      |
+| Data, privacy, security, sensitive words | [docs/security.md](docs/securite.md)         |
+| Troubleshooting | [docs/troubleshooting.md](docs/depannage.md) |
 
-Pont MCP vers un helper (Hermes, nanoMuse) : [bridges/README.md](bridges/README.md).
+MCP bridge to a helper (Hermes, nanoMuse): [bridges/README.md](bridges/README.md).
 
 ## Installation
 
-Lance toujours Monika **depuis le dossier du projet** (`.env` y est cherché ; le projet n'est pas
-prévu pour être installé comme paquet).
+Always run Monika **from the project folder** (`.env` is looked up there; the project is not
+meant to be installed as a package).
 
 - **Python 3.12+**.
-- Un accès à une **API compatible OpenAI** (clé et URL dans `.env`).
-- Pour la voix : `ffmpeg`, PyTorch, et idéalement un GPU (4 Go suffisent ; sinon la synthèse
-  tourne sur le CPU, plus lentement) ; le son passe par `parec` et `pacat` (paquet `libpulse`).
-- Pour les serveurs MCP de l'exemple : Node.js (`npx`).
-- Espace disque pour les modèles téléchargés au premier usage : environ 2 Go (documents),
-  2 Go (voix) ; une connexion est nécessaire à ce moment-là. La mémoire, elle, n'a aucun modèle
-  à télécharger.
+- Access to an **OpenAI-compatible API** (key and URL in `.env`).
+- For voice: `ffmpeg`, PyTorch, and ideally a GPU (4 GB is enough; otherwise synthesis
+  runs on the CPU, more slowly); sound goes through `sounddevice`/PortAudio (cross-platform;
+  on Linux, install the PortAudio library).
+- For the example MCP servers: Node.js (`npx`).
+- Disk space for models downloaded on first use: about 2 GB (documents),
+  2 GB (voice); a connection is needed at that moment. Memory reuses the document
+  embedding model (~1 GB) on its first exchange, unless `MEMORY_EMBEDDINGS_ENABLED=false`.
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env          # puis édite LLM_BASE_URL, OPENAI_API_KEY, MODEL_NAME
-python -m monika --config     # vérifie la configuration (secrets masqués)
-python -m monika               # démarre Monika : la conversation se passe dans la page
+cp .env.example .env          # then edit LLM_BASE_URL, OPENAI_API_KEY, MODEL_NAME
+python -m monika --config     # check the configuration (secrets masked)
+python -m monika               # start Monika: the conversation happens in the page
 ```
 
-Le mode voix demande une installation supplémentaire, décrite dans [docs/voix.md](docs/voix.md).
+Voice mode needs an extra installation, described in [docs/voix.md](docs/voix.md).
 
-## Lancement
+## Running
 
 ```bash
-python -m monika               # la conversation se passe dans la page (http://localhost:8765)
-./lancer-monika.sh             # démarre la voix GPT-SoVITS si besoin, puis lance Monika
-python -m monika --mode voix   # conversation à voix haute (réponses aussi à l'écran)
-python -m monika --config      # affiche la configuration chargée (secrets masqués)
+python -m monika               # the conversation happens in the page (http://localhost:8765)
+./lancer-monika.sh             # starts the GPT-SoVITS voice server if needed, then starts Monika
+python -m monika --mode voix   # conversation out loud (answers also shown on screen)
+python -m monika --config      # shows the loaded configuration (secrets masked)
 ```
 
-Toutes les autres options, les commandes du chat et les réglages : [docs/commandes.md](docs/commandes.md).
+All other options, chat commands and settings: [docs/commandes.md](docs/commandes.md).

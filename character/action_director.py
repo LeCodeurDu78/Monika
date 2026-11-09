@@ -1,10 +1,5 @@
 """Action role: what the avatar does right after a reply, decided in the background.
 
-A reduced port of `OpenSakura-main/sakura/action_controller.py`: the same action library, the same
-duration and count rules, but no global state, no prints, no settings coupling and a single chain (the
-delayed follow-up query of the original is gone). The result is a message for the page
-(`hub.publish("avatar_chain", …)`), which `CueController.chain()` plays.
-
 This role is cosmetic: it never blocks the turn, never touches the history, the emotions or the
 favorability. Any failure means "no chain", and the deterministic gestures of `character/cues.py` stay
 the only animation.

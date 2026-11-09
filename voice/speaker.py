@@ -67,7 +67,7 @@ class Speaker:
         self._engine = engine
         self._sink = sink
         self._default_sink = (
-            sink  # pacat, unless the page takes the voice over (see use_sink)
+            sink  # local output, unless the page takes the voice over (see use_sink)
         )
         self._pauses = (
             pauses  # None = the neutral style, nothing inserted (previous behaviour)

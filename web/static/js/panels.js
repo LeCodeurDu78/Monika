@@ -90,12 +90,13 @@ function editableRow({ text, meta, channel, label, maxLength, allowEmpty = false
   return li;
 }
 
-const MEMORY_KINDS = { notes: 'mon carnet', sujet: 'sujet en cours', 'événement': 'épisode passé' };
+const MEMORY_KINDS = { fait: '', engagement: 'promesse', manuel: 'note manuelle' };
 
 function factRow(fact, refresh) {
   const url = `/api/memory/${encodeURIComponent(fact.id)}`;
+  const labels = [MEMORY_KINDS[fact.kind] || '', fact.status === 'superseded' ? 'version corrigée' : ''].filter(Boolean);
   const row = editableRow({
-    text: fact.text, meta: MEMORY_KINDS[fact.kind] || '', channel: 'memory',
+    text: fact.text, meta: labels.join(' · '), channel: 'memory',
     label: 'Texte du souvenir', maxLength: 4000, refresh,
     onSave: (text) => apiRequest(url, 'PUT', { text }),
     onDelete: () => apiRequest(url, 'DELETE'),
@@ -257,7 +258,7 @@ export const sections = {
       for (const fact of m.facts) list.append(factRow(fact, refresh));
       const box = el('div', 'scroll');
       box.append(list);
-      nodes.push(el('div', 'muted', `${m.facts.length} entrée(s) dans mon carnet`), box);
+      nodes.push(el('div', 'muted', `${m.facts.length} fait(s) en mémoire`), box);
     }
     fill('p-memory', ...nodes);
   },
