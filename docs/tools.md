@@ -2,7 +2,8 @@
 
 External tools come only from MCP servers, declared in
 `~/.config/monika/mcp_servers.json` (template: `mcp_servers.example.json`, same format as
-Claude Desktop; other location: `MCP_SERVERS_FILE`). Two transports: local command
+Claude Desktop; other location: `MCP_SERVERS_FILE`), plus the two built-in helpers Hermes
+and nanoMuse (see below). Two transports: local command
 (stdio) or `url` (streamable HTTP); a server cannot have both.
 
 - **Variables**: `${VARIABLE}` in the `command`, `args`, `env`, `cwd`, `url` and
@@ -28,10 +29,14 @@ Claude Desktop; other location: `MCP_SERVERS_FILE`). Two transports: local comma
   text; images and sounds returned are not passed to it (the text says so).
 
 **Bridge to a helper**: `bridges/helper_bridge.py` exposes `ask`, `status`, `answer`, `stop`
-and `health` to a separate program. `HELPER_KIND=hermes` talks to Hermes's API server
-(`/v1/runs`), `HELPER_KIND=nanomuse` to nanoMuse's local API (`/api/threads`); `generic`
-keeps a simple HTTP contract. One instance per helper, declared like any other MCP server;
-configuration and security in [`bridges/README.md`](../bridges/README.md).
+and `health` to a separate program. **Hermes and nanoMuse are built in**: set `HERMES_URL`
+(or `NANOMUSE_URL`), plus the token, in `.env`; nothing to declare in `mcp_servers.json`.
+Monika chooses on her own when to launch a run with `ask`, without waiting for an explicit
+request; `stop` and approvals still need your agreement.
+The `hermes` preset talks to Hermes's API server (`/v1/runs`), `nanomuse` to nanoMuse's
+local API (`/api/threads`); a `generic` helper keeps a simple HTTP contract and is still
+declared like any other MCP server. Configuration and security in
+[`bridges/README.md`](../bridges/README.md).
 
 **Monika's built-in tools**: `lire_resultat` (follow-up on a large result), `memoire_retenir`,
 `memoire_chercher`, `memoire_lister`, `memoire_oublier`, `documents_chercher`,

@@ -1,8 +1,9 @@
 # MCP bridge to Hermes or nanoMuse
 
-`helper_bridge.py` is a standalone **stdio** MCP server: one instance serves **one** helper.
-Monika declares it like any other MCP server and sees five tools: `ask`, `status`,
-`answer`, `stop`, `health`.
+`helper_bridge.py` is a **stdio** MCP server: one instance serves **one** helper.
+Hermes and nanoMuse are **built in**: set `HERMES_URL` / `NANOMUSE_URL` in `.env` and Monika
+starts the matching bridge by itself — no `mcp_servers.json` entry. Five tools: `ask`,
+`status`, `answer`, `stop`, `health`.
 
 Two adapters are built in against the real APIs, chosen by `HELPER_KIND`:
 
@@ -20,7 +21,7 @@ No new dependency: `mcp` is already installed with Monika, and the HTTP client c
 standard library.
 
 ```bash
-# from the Monika project root
+# from the Monika project root (normally Monika starts it for you)
 python -m bridges.helper_bridge
 ```
 
@@ -38,8 +39,8 @@ The bridge reads its configuration from the environment. It does not start if `H
 
    It listens by default on `http://127.0.0.1:8642`.
 
-2. Declare the bridge with `HELPER_KIND=hermes`, `HELPER_TOKEN` = `API_SERVER_KEY` and
-   `HELPER_URL=http://127.0.0.1:8642`.
+2. In Monika's `.env`, set `HERMES_URL=http://127.0.0.1:8642` and `HERMES_TOKEN` =
+   `API_SERVER_KEY`: the built-in bridge starts as soon as `HERMES_URL` is not empty.
 
 Tool mapping:
 
@@ -68,8 +69,7 @@ control's summary. `HELPER_ANSWER_MODE=auto` chooses the control type; `approval
    Keep the address and the token; the API refuses requests without
    `Authorization: Bearer <token>` when authentication is active.
 
-2. Declare the bridge with `HELPER_KIND=nanomuse`, `HELPER_URL` (the displayed address) and
-   `HELPER_TOKEN` (the token).
+2. In `.env`, set `NANOMUSE_URL` (the displayed address) and `NANOMUSE_TOKEN` (the token).
 
 Tool mapping:
 
@@ -145,7 +145,7 @@ def health():
 
 | Variable | Default | Role |
 |---|---|---|
-| `HELPER_KIND` | `generic` | `generic`, `hermes` or `nanomuse` |
+| `HELPER_KIND` | `generic` | `generic`, `hermes` or `nanomuse` (the last two are set by Monika) |
 | `HELPER_URL` | — | **required**: helper's HTTP base, without a trailing slash |
 | `HELPER_NAME` | `helper` | display name in messages (`Hermes`, `nanoMuse`…) |
 | `HELPER_TOKEN` | empty | token sent in the authorization header |
@@ -172,41 +172,42 @@ Paths are validated at startup: routes that carry an identifier must contain
 `{id}`, and only `http` and `https` are accepted. Redirects are refused so a token
 does not go to another host.
 
-## Declaring it in `mcp_servers.json`
+## Built in: nothing to declare
 
-One entry per helper. `${...}` variables are replaced by Monika from the environment
-or its `.env`.
+Hermes and nanoMuse are built-in MCP servers. Monika adds them automatically when their
+address is set in `.env` or the environment:
+
+| Variable | Server |
+|---|---|
+| `HERMES_URL` (+ `HERMES_TOKEN`) | `hermes` |
+| `NANOMUSE_URL` (+ `NANOMUSE_TOKEN`) | `nanomuse` |
+
+An empty address leaves the server out; a restart applies a change. An entry with the same
+name in `mcp_servers.json` is ignored: the built-in one wins. `python -m monika --tools`
+lists them like any other server.
+
+Monika also decides **on her own** when to start a run: the `ask` tool authorises her to hand
+a task to a helper without waiting for an explicit request. `stop` and the answers to
+approvals still require your agreement.
+
+## Declaring a generic helper in `mcp_servers.json`
+
+Only `HELPER_KIND=generic` (another program) is declared by hand. `${...}` variables are
+replaced by Monika from the environment or its `.env`.
 
 ```json
 {
   "mcpServers": {
-    "hermes": {
-      "enabled": true,
+    "mon_helper": {
       "command": "python",
       "args": ["-m", "bridges.helper_bridge"],
       "env": {
-        "HELPER_KIND": "hermes",
-        "HELPER_NAME": "Hermes",
-        "HELPER_URL": "${HERMES_URL}",
-        "HELPER_TOKEN": "${HERMES_TOKEN}"
+        "HELPER_KIND": "generic",
+        "HELPER_NAME": "mon helper",
+        "HELPER_URL": "${MON_HELPER_URL}",
+        "HELPER_TOKEN": "${MON_HELPER_TOKEN}"
       },
-      "slow_tools": {
-        "ask": ["I'll hand this to Hermes, one second."]
-      }
-    },
-    "nanomuse": {
-      "enabled": true,
-      "command": "python",
-      "args": ["-m", "bridges.helper_bridge"],
-      "env": {
-        "HELPER_KIND": "nanomuse",
-        "HELPER_NAME": "nanoMuse",
-        "HELPER_URL": "${NANOMUSE_URL}",
-        "HELPER_TOKEN": "${NANOMUSE_TOKEN}"
-      },
-      "slow_tools": {
-        "ask": ["I'm asking nanoMuse, one moment."]
-      }
+      "slow_tools": {"ask": ["I'm asking my helper, one moment."]}
     }
   }
 }
@@ -219,13 +220,14 @@ path to `.venv\Scripts\python.exe`).
 
 ## What the bridge does not do
 
-- It neither starts nor stops Hermes or nanoMuse: it assumes the helper is already running.
+- It neither starts nor stops the Hermes or nanoMuse **programs**: it assumes the helper is
+  already running (Monika launches runs, not the service).
 - It does not filter what the helper does with the task. The helper keeps its own permissions:
   run it with a restricted account and listen only on `127.0.0.1`. Hermes's API server
   gives access to its entire tool set (terminal included): keep `API_SERVER_KEY` secret.
 - It transmits neither files nor secrets: only `prompt`, `context` and `answer` go over HTTP.
-- It does not decide in Monika's place: `stop` carries an explicit agreement instruction, and the helper's
-  replies arrive as data, never as orders.
+- It does not decide in Monika's place: `stop` and approval answers carry an explicit
+  agreement instruction, and the helper's replies arrive as data, never as orders.
 - The repository's tests simulate the routes of both helpers; they do not replace a trial with
   a real Hermes and a real nanoMuse. The bridge has not yet been validated on Windows with these
   programs.

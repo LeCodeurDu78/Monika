@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 
 @dataclass(frozen=True)
@@ -29,6 +30,19 @@ def available() -> bool:
     return True
 
 
+_ENGINE: Any = None
+
+
+def _engine() -> Any:
+    """One RapidOCR instance: its ONNX models are expensive to load for every document."""
+    global _ENGINE
+    if _ENGINE is None:
+        from rapidocr_onnxruntime import RapidOCR
+
+        _ENGINE = RapidOCR()
+    return _ENGINE
+
+
 def ocr_pdf(
     path: Path, options: OcrOptions, pages: set[int] | None = None
 ) -> dict[int, str]:
@@ -37,9 +51,8 @@ def ocr_pdf(
         return {}
     import numpy as np
     import pypdfium2 as pdfium
-    from rapidocr_onnxruntime import RapidOCR
 
-    engine = RapidOCR()
+    engine = _engine()
     document = pdfium.PdfDocument(str(path))
     wanted = pages if pages is not None else set(range(1, len(document) + 1))
     out: dict[int, str] = {}

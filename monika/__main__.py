@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 import sys
 import time
 from contextlib import asynccontextmanager
@@ -44,6 +45,11 @@ def dotenv_for_mcp() -> dict[str, str]:
     from dotenv import dotenv_values
 
     return {k: v for k, v in dotenv_values(ENV_FILE).items() if v is not None}
+
+
+def mcp_environment() -> dict[str, str]:
+    """Variables the MCP layer sees: the project's .env, then the real environment."""
+    return {**dotenv_for_mcp(), **os.environ}
 
 
 def setup_logging(settings: Settings) -> Masker:
@@ -277,7 +283,7 @@ async def open_tools(settings: Settings, paths: Paths, masker: Masker, on_manage
     for notice in CustomTools(paths).enforce():
         console.print(f"[yellow]{notice}[/yellow]")
     try:
-        servers = load_mcp_config(paths.mcp_config)
+        servers = load_mcp_config(paths.mcp_config, mcp_environment())
     except McpConfigError as exc:
         console.print(f"[red]{exc}[/red]\nDémarrage sans outils.")
         servers = {}
@@ -933,7 +939,7 @@ async def run_tools_command(
 ) -> int:
     """List MCP servers and tools, and optionally call one tool (for checking a setup)."""
     try:
-        servers = load_mcp_config(paths.mcp_config)
+        servers = load_mcp_config(paths.mcp_config, mcp_environment())
     except McpConfigError as exc:
         console.print(f"[red]{exc}[/red]")
         return 1
@@ -1007,6 +1013,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Assistant de premier lancement : langue, fournisseur, clé, voix, .env.",
     )
     parser.add_argument(
+        "--demo",
+        action="store_true",
+        help="Avec --setup : n'écrit rien et montre les fichiers qui seraient écrits.",
+    )
+    parser.add_argument(
         "--update",
         action="store_true",
         help="Compare le dépôt local au distant et affiche les commandes de mise à jour.",
@@ -1059,7 +1070,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.setup:
         from monika.setup import run_setup
 
-        return run_setup()
+        return run_setup(demo=args.demo)
     if args.update:
         from monika.update import report
 

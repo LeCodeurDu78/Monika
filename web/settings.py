@@ -25,7 +25,6 @@ from monika.config import (
     editable_settings,
     pinned_fields,
     restart_required_fields,
-    settings_json_path,
     write_env_secret,
     write_env_settings,
 )
@@ -266,10 +265,6 @@ class SettingsApi:
             "groups": groups,
             "pinned": sorted(pinned),
             "restart_required": restart_required_fields(),
-            "secrets": {
-                "OPENAI_API_KEY": bool(self._s.openai_api_key.get_secret_value())
-            },
-            "settings_file": str(settings_json_path()),
             "language": self._s.language,
             "provider": self._s.llm_provider,
             "base_url": self._s.llm_base_url,
@@ -434,7 +429,6 @@ class SettingsApi:
     def actions(self) -> dict[str, Callable[..., Awaitable[dict[str, Any]]]]:
         return {
             "settings_update": self._update,
-            "settings_secret": self._secret,
             "settings_provider": self._provider,
             "settings_language": self._language,
         }
@@ -453,19 +447,13 @@ class SettingsApi:
         self._activity()
         return {"restart_required": restart}
 
-    async def _secret(self, name: str, value: str) -> dict[str, Any]:
-        try:
-            write_env_secret(name, value)
-        except SettingsError as exc:
-            raise ActionError(str(exc), 400) from exc
-        self._activity()
-        return {"restart_required": ["openai_api_key"], "secret": True}
-
     async def _provider(self, payload: dict[str, Any]) -> dict[str, Any]:
-        """Apply OpenRouter/Ollama/custom in one gesture, with the key when one is given."""
+        """Apply OpenRouter/Ollama/OpenAI Custom in one gesture, with the key when one is given."""
         name = str(payload.get("provider") or "").strip().lower()
         if name not in {"custom", "openrouter", "ollama"}:
-            raise ActionError("Fournisseur inconnu : custom, openrouter ou ollama.", 400)
+            raise ActionError(
+                "Fournisseur inconnu : OpenAI Custom, OpenRouter ou Ollama.", 400
+            )
         values = {"LLM_PROVIDER": name}
         preset = PROVIDER_PRESETS.get(name)
         if preset is not None:
@@ -481,7 +469,7 @@ class SettingsApi:
             base_url = str(payload.get("base_url") or "").strip()
             if not base_url:
                 raise ActionError(
-                    "URL de base requise pour le fournisseur custom.", 400
+                    "URL de base requise pour le fournisseur OpenAI Custom.", 400
                 )
             values["LLM_BASE_URL"] = base_url.rstrip("/")
             model = str(payload.get("model") or "").strip()
@@ -493,19 +481,22 @@ class SettingsApi:
             self._s.llm_base_url = values["LLM_BASE_URL"].rstrip("/")
             if "MODEL_NAME" in values:
                 self._s.model_name = values["MODEL_NAME"]
+            key_written = False
             if key:
-                write_env_secret("OPENAI_API_KEY", key)
-                self._s.openai_api_key = SecretStr(key)
-            elif name == "ollama" and not self._s.openai_api_key.get_secret_value():
-                write_env_secret("OPENAI_API_KEY", "ollama")
-                self._s.openai_api_key = SecretStr("ollama")
+                write_env_secret("API_KEY", key)
+                self._s.api_key = SecretStr(key)
+                key_written = True
+            elif name == "ollama" and not self._s.api_key.get_secret_value():
+                write_env_secret("API_KEY", "ollama")
+                self._s.api_key = SecretStr("ollama")
+                key_written = True
         except SettingsError as exc:
             raise ActionError(str(exc), 400) from exc
+        restart = ["llm_provider", "llm_base_url", "model_name"]
+        if key_written:
+            restart.append("api_key")
         self._activity()
-        return {
-            "restart_required": ["llm_provider", "llm_base_url", "model_name", "openai_api_key"],
-            "provider": name,
-        }
+        return {"restart_required": restart, "provider": name}
 
     async def _language(self, payload: dict[str, Any]) -> dict[str, Any]:
         """Switch the interface and prompts live, writing LANGUAGE to .env so it survives a restart."""

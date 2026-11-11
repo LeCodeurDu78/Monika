@@ -3,20 +3,21 @@
 ## Configuration
 
 Settings come from the process environment, then `.env` (commented template: `.env.example`),
-then the settings file written by the page (`MONIKA_SETTINGS_FILE`, default
-`<MONIKA_HOME>/settings.json`). `.env` has priority, so the page writes its provider and
+then the settings file written by the page (`MONIKA_SETTINGS_FILE`; `.env.example` selects
+`config/settings.json`, comment that line to use `<MONIKA_HOME>/settings.json`). `.env` has
+priority, so the page writes its provider and
 language choices there; everything else goes to the settings file. The most useful ones:
 
 | Setting | Purpose |
 |---|---|
 | `LANGUAGE` | Language of the interface, prompts and lexicons: `fr` (default) or `en` |
-| `LLM_PROVIDER` | `custom` (keep `LLM_BASE_URL`), `openrouter` or `ollama` (fill address and model) |
-| `LLM_BASE_URL`, `OPENAI_API_KEY`, `MODEL_NAME` | Provider and model (OpenAI-compatible API) |
+| `LLM_PROVIDER` | `custom` (**OpenAI Custom**: keep `LLM_BASE_URL`), `openrouter` or `ollama` (fill address and model) |
+| `LLM_BASE_URL`, `API_KEY`, `MODEL_NAME` | Provider and model (OpenAI-compatible API) |
 | `REFLECTION_MODEL` | Model for the reflection role (memory, summaries, nightly review); empty = `MODEL_NAME` |
 | `SURFACE_LLM_MODEL`, `SURFACE_PROMPT`, `SURFACE_TIMEOUT_S` | Surface role: an immediate line before the tools (empty = disabled) |
 | `REFLECTION_ENABLED`, `REFLECTION_SPEAK`, `REFLECTION_PROMPT` | Advice prepared between turns and spontaneous speech (disabled by default) |
 | `MONIKA_HOME` | Data folder (default `~/.config/monika`) |
-| `MONIKA_SETTINGS_FILE` | Settings file written by the page (default `<MONIKA_HOME>/settings.json`; `config/settings.json` for the project layout) |
+| `MONIKA_SETTINGS_FILE` | Settings file written by the page (`.env.example` selects `config/settings.json`; comment it to use `<MONIKA_HOME>/settings.json`) |
 | `USER_NAME` | Your first name, used in the system prompt |
 | `PERSONA_TEXT` | Free-form instructions about her behaviour, added to her prompt (settings page) |
 | `MAX_STEPS` | Model calls per turn (default 100) |
@@ -58,7 +59,7 @@ agent/         ReAct loop (loop.py), LLM client (llm.py), context (context.py), 
                waiting phrases, system information
 tools/         Audited tool registry (registry.py), MCP client (mcp_client.py), built-in tools (internal.py)
 security/      Secret masking (masking.py), "data, not orders" envelope (untrusted.py), audit (audit.py)
-bridges/       Standalone MCP bridge to an HTTP helper (Hermes, nanoMuse): ask, status, answer, stop, health
+bridges/       Built-in MCP bridge to Hermes / nanoMuse (HERMES_URL, NANOMUSE_URL): ask, status, answer, stop, health
 memory/        Evidence memory: events, quoted facts, corrections, hybrid recall (notes.py)
                and background capture (capture.py)
 rag/           Personal documents: scan, read, chunk, index, hybrid search, reranking

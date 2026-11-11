@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 import re
+import sys
 from collections.abc import Mapping
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
@@ -17,6 +18,7 @@ from mcp.client.stdio import stdio_client
 from mcp.client.streamable_http import create_mcp_http_client, streamable_http_client
 from pydantic import BaseModel, ConfigDict, ValidationError, model_validator
 
+from monika.i18n import tr_list
 from tools.registry import Tool, ToolFailure, ToolRegistry, safe_name
 
 _UNRESOLVED_VAR = re.compile(r"\$\{?([A-Za-z_][A-Za-z0-9_]*)\}?")
@@ -73,29 +75,60 @@ class McpServerConfig(BaseModel):
         return []
 
 
-def load_mcp_config(path: Path) -> dict[str, McpServerConfig]:
-    """Read the servers file; a missing file simply means no MCP servers."""
-    if not path.exists():
-        return {}
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise McpConfigError(f"Impossible de lire {path} : {exc}") from exc
-    servers = data.get("mcpServers") if isinstance(data, dict) else None
-    if not isinstance(servers, dict):
-        raise McpConfigError(f"{path} doit contenir un objet « mcpServers ».")
+# Built in: an address in the environment is all these two helpers need.
+_BUILTIN_HELPERS = {
+    "hermes": ("Hermes", "HERMES_URL", "HERMES_TOKEN"),
+    "nanomuse": ("nanoMuse", "NANOMUSE_URL", "NANOMUSE_TOKEN"),
+}
+
+
+def builtin_servers(env: Mapping[str, str] | None = None) -> dict[str, McpServerConfig]:
+    """Hermes and nanoMuse run by themselves: HERMES_URL / NANOMUSE_URL is enough."""
+    source = os.environ if env is None else env
     out: dict[str, McpServerConfig] = {}
-    for name, raw in servers.items():
+    for name, (label, url_var, token_var) in _BUILTIN_HELPERS.items():
+        url = str(source.get(url_var) or "").strip()
+        if not url:
+            continue
+        variables = {"HELPER_KIND": name, "HELPER_NAME": label, "HELPER_URL": url}
+        token = str(source.get(token_var) or "").strip()
+        if token:
+            variables["HELPER_TOKEN"] = token
+        out[name] = McpServerConfig(
+            command=sys.executable,
+            args=["-m", "bridges.helper_bridge"],
+            env=variables,
+            slow_tools={"ask": tr_list(f"filler.{name}")},
+        )
+    return out
+
+
+def load_mcp_config(
+    path: Path, env: Mapping[str, str] | None = None
+) -> dict[str, McpServerConfig]:
+    """Read the servers file, then add the built-in helpers; a missing file is not an error."""
+    out: dict[str, McpServerConfig] = {}
+    if path.exists():
         try:
-            out[name] = McpServerConfig.model_validate(raw)
-        except ValidationError as exc:
-            reason = "; ".join(
-                f"{'.'.join(map(str, e['loc'])) or 'serveur'} : {e['msg']}"
-                for e in exc.errors()
-            )
-            raise McpConfigError(
-                f"Serveur MCP « {name} » invalide dans {path} — {reason}"
-            ) from exc
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise McpConfigError(f"Impossible de lire {path} : {exc}") from exc
+        servers = data.get("mcpServers") if isinstance(data, dict) else None
+        if not isinstance(servers, dict):
+            raise McpConfigError(f"{path} doit contenir un objet « mcpServers ».")
+        for name, raw in servers.items():
+            try:
+                out[name] = McpServerConfig.model_validate(raw)
+            except ValidationError as exc:
+                reason = "; ".join(
+                    f"{'.'.join(map(str, e['loc'])) or 'serveur'} : {e['msg']}"
+                    for e in exc.errors()
+                )
+                raise McpConfigError(
+                    f"Serveur MCP « {name} » invalide dans {path} — {reason}"
+                ) from exc
+    # A file entry with the same name is neither needed nor used: the built-in wins.
+    out.update(builtin_servers(env))
     return out
 
 
@@ -202,13 +235,15 @@ class McpManager:
             return await self._reload_locked()
 
     async def _reload_locked(self) -> list[ServerStatus]:
+        # Parse first: a half-written or invalid file must leave the running tools untouched.
+        servers = load_mcp_config(self._config_path, self._env)
         old_names = list(self._servers)
         await self._stack.aclose()
         self._stack = AsyncExitStack()
         for name in old_names:
             self._registry.remove_source(f"MCP:{name}")
         self.statuses = []
-        self._servers = load_mcp_config(self._config_path)
+        self._servers = servers
         await self.start()
         return self.statuses
 

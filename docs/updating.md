@@ -11,9 +11,11 @@ python -m monika --update
 - **Update available** → exit code `2`, with the `git pull --ff-only` and `pip install` lines.
 - **Offline / no remote** → exit code `1`, with the reason. Nothing is changed.
 
-The status uses `git ls-remote origin HEAD` (a network read), so it works without fetching into
-your checkout. Local modifications are reported (`git status --porcelain`): commit or stash them
-before pulling, otherwise `git pull` may refuse or mix your edits with upstream.
+The status compares the checkout with the branch's upstream (`git rev-list`, local), falling back
+to `git ls-remote origin HEAD` when no upstream is configured, so it works without fetching into
+your checkout. Local commits that are not pushed count as nothing to pull. Local modifications are
+reported (`git status --porcelain`): commit or stash them before pulling, otherwise `git pull` may
+refuse or mix your edits with upstream.
 
 ## Applying an update
 

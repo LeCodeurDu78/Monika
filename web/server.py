@@ -2,14 +2,16 @@
 
 It listens on 127.0.0.1 by default. When `WEB_HOST` puts it on the network, `WEB_TOKEN` must be set:
 the token is accepted as an `X-Monika-Token` header, a `?token=` query or a cookie, and opening `/`
-with `?token=` once stores it in the cookie so the page itself needs nothing to copy. There is still
-no Origin check and no security header (CSP), so the token is the only lock.
+with `?token=` once stores it in the cookie so the page itself needs nothing to copy. Writes and the
+WebSocket also require a same-origin Origin, every page carries a nonced CSP, and a DNS name is only
+trusted when the token authenticates the client (DNS-rebinding protection).
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
+import ipaddress
 import json
 import re
 import secrets
@@ -57,8 +59,29 @@ class ActionError(Exception):
 _LOOPBACK = frozenset({"localhost", "127.0.0.1", "::1"})
 
 
-def _origin_ok(origin: str | None, host: str | None) -> bool:
-    """Same-origin check for writes and the WebSocket; a missing Origin is a non-browser client."""
+def _host_and_port(netloc: str, scheme: str) -> tuple[str, int]:
+    """The hostname and port of a Host/Origin value; a malformed port raises ValueError."""
+    value = urlsplit(f"{scheme}://{netloc}")
+    port = value.port or (443 if scheme == "https" else 80)
+    return (value.hostname or "").lower(), port
+
+
+def _is_ip(hostname: str) -> bool:
+    """A bare address (LAN or localhost) cannot be an attacker-controlled DNS name."""
+    try:
+        ipaddress.ip_address(hostname)
+    except ValueError:
+        return False
+    return True
+
+
+def _origin_ok(origin: str | None, host: str | None, token: str = "") -> bool:
+    """Same-origin check for writes and the WebSocket; a missing Origin is a non-browser client.
+
+    A DNS name is only trusted when a token authenticates the client. Otherwise a DNS-rebinding
+    page (served under its own name, resolving to 127.0.0.1) would look same-origin and could read
+    the API. Loopback and bare IP addresses stay open: that is the documented local/LAN use.
+    """
     if not origin:
         return True  # curl, CLI, MCP: no browser to forge a request
     if not host:
@@ -66,17 +89,15 @@ def _origin_ok(origin: str | None, host: str | None) -> bool:
     parsed = urlsplit(origin)
     if parsed.scheme not in ("http", "https"):
         return False
-    if parsed.netloc.lower() == host.lower():
-        return True
-
-    def host_port(netloc: str, scheme: str) -> tuple[str, int]:
-        value = urlsplit(f"{scheme}://{netloc}")
-        port = value.port or (443 if scheme == "https" else 80)
-        return (value.hostname or "").lower(), port
-
-    left, left_port = host_port(parsed.netloc, parsed.scheme)
-    right, right_port = host_port(host, parsed.scheme)
-    return left == right and left_port == right_port and left in _LOOPBACK
+    try:
+        left_port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        right, right_port = _host_and_port(host, parsed.scheme)
+    except ValueError:
+        return False  # a malformed port is not a same-origin request
+    left = (parsed.hostname or "").lower()
+    if not left or left != right or left_port != right_port:
+        return False
+    return left in _LOOPBACK or _is_ip(left) or bool(token)
 
 
 def _csp(nonce: str = "") -> str:
@@ -184,7 +205,7 @@ def create_app(
     async def security(request: Request, call_next: Any) -> Any:
         """Refuse a browser write from another origin, then add the security headers."""
         if request.method not in ("GET", "HEAD", "OPTIONS") and not _origin_ok(
-            request.headers.get("origin"), request.headers.get("host")
+            request.headers.get("origin"), request.headers.get("host"), token
         ):
             return JSONResponse({"error": "Origine refusée."}, status_code=403)
         response = await call_next(request)
@@ -380,26 +401,12 @@ def create_app(
                 )
             return await act("settings_provider", body)
 
-        @app.post("/api/settings/secret")
-        async def settings_secret(request: Request) -> JSONResponse:
-            try:
-                body = await request.json()
-            except ValueError:
-                body = None
-            name = body.get("name") if isinstance(body, dict) else None
-            value = body.get("value") if isinstance(body, dict) else None
-            if not isinstance(name, str) or not isinstance(value, str):
-                return JSONResponse(
-                    {"error": "Nom et valeur du secret attendus."}, status_code=400
-                )
-            return await act("settings_secret", name, value)
-
     @app.websocket("/ws")
     async def live(ws: WebSocket) -> None:
         if not allowed(ws.query_params.get("token") or ws.cookies.get(COOKIE)):
             await ws.close(code=1008)  # the page must not open a live channel without it
             return
-        if not _origin_ok(ws.headers.get("origin"), ws.headers.get("host")):
+        if not _origin_ok(ws.headers.get("origin"), ws.headers.get("host"), token):
             await ws.close(code=1008)  # a page from another origin must not open the stream
             return
         await ws.accept()

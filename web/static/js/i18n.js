@@ -41,37 +41,22 @@ const EN = {
   'Retour à Monika': 'Back to Monika',
   'Santé': 'Health',
   'Fournisseur': 'Provider',
-  "OpenRouter, Ollama ou une API compatible OpenAI. Le choix remplit l'adresse et le modèle ; en custom, saisis l'adresse toi-même. La clé est écrite dans .env et demande un redémarrage.":
-    'OpenRouter, Ollama or an OpenAI-compatible API. The choice fills the address and the model; with custom, enter the address yourself. The key is written to .env and needs a restart.',
-  'URL de base (custom)': 'Base URL (custom)',
+  "OpenRouter, Ollama ou OpenAI Custom (une API compatible OpenAI). Le choix remplit l'adresse et le modèle ; en OpenAI Custom, saisis l'adresse toi-même. La clé est écrite dans .env et demande un redémarrage.":
+    'OpenRouter, Ollama or OpenAI Custom (an OpenAI-compatible API). The choice fills the address and the model; with OpenAI Custom, enter the address yourself. The key is written to .env and needs a restart.',
+  'URL de base (OpenAI Custom)': 'Base URL (OpenAI Custom)',
   "Adresse d'une API compatible OpenAI, généralement terminée par /v1. Ignorée pour OpenRouter et Ollama.":
     'OpenAI-compatible API address, usually ending in /v1. Ignored for OpenRouter and Ollama.',
-  "Indique l'URL de base du fournisseur custom.": "Enter the custom provider's base URL.",
-  'URL de base requise pour le fournisseur custom.': 'Base URL required for the custom provider.',
+  "Indique l'URL de base du fournisseur OpenAI Custom.": "Enter the OpenAI Custom provider's base URL.",
+  'URL de base requise pour le fournisseur OpenAI Custom.': 'Base URL required for the OpenAI Custom provider.',
   'Clé API du fournisseur (jamais renvoyée)': 'Provider API key (never sent back)',
   'Appliquer': 'Apply',
   'Tester maintenant': 'Test now',
   'Sondes en cours…': 'Probing…',
-  'Les réglages grisés sont figés par le fichier .env du projet : ils se modifient à la main. Les autres sont enregistrés dans settings.json.':
-    'Greyed settings are pinned by the project .env file: edit them by hand. The others are saved in settings.json.',
   'Enregistrer': 'Save',
   'Recharger': 'Reload',
-  'Clé API': 'API key',
-  'Nouvelle clé OpenAI (une seule ligne)': 'New OpenAI key (one line only)',
-  'Enregistrer la clé': 'Save the key',
-  "La valeur n'est jamais renvoyée par la page. Elle remplace la ligne OPENAI_API_KEY du .env : redémarrage requis.":
-    'The value is never sent back by the page. It replaces the OPENAI_API_KEY line in .env: restart required.',
   'figé par .env': 'pinned by .env',
   'Rien à enregistrer.': 'Nothing to save.',
   'Enregistré.': 'Saved.',
-  'La clé est vide.': 'The key is empty.',
-  'Clé enregistrée.': 'Key saved.',
-  'Clé enregistrée dans le .env : redémarre-moi pour qu’elle soit utilisée.':
-    'Key saved in .env: restart me for it to be used.',
-  'Une clé est configurée (sa valeur n’est jamais affichée).':
-    'A key is configured (its value is never shown).',
-  'Aucune clé configurée : le modèle ne répondra pas.':
-    'No key configured: the model will not answer.',
   'Monika ne répond pas.': 'Monika is not responding.',
   'Langue': 'Language',
   'Comportement': 'Behaviour',
@@ -99,12 +84,7 @@ const EN = {
     'An edited mcp_servers.json is reloaded automatically.',
   'Aucun serveur MCP configuré.': 'No MCP server configured.',
   'Enregistrés dans': 'Saved in',
-  'Fichier :': 'File:',
   'Vide : garde la clé actuelle.': 'Empty: keep the current key.',
-  'Les réglages grisés sont figés par le fichier .env du projet : ils se modifient à la main.' :
-    'Greyed settings are pinned by the project .env file: edit them by hand.',
-  'La valeur n’est jamais renvoyée par la page. Elle remplace la ligne OPENAI_API_KEY du fichier .env : redémarrage requis.' :
-    'The value is never sent back by the page. It replaces the OPENAI_API_KEY line in the .env file: restart required.',
   'Langue appliquée.': 'Language applied.',
   'Fournisseur appliqué.': 'Provider applied.',
   'Fournisseur appliqué. Redémarre Monika :': 'Provider applied. Restart Monika:',

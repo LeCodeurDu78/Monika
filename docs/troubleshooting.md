@@ -9,7 +9,7 @@
 | Neutral voice | The pack has no recording for the tag: `TTS_EMOTION_TAGS=auto` only uses tags that have a file |
 | `No GPT-SoVITS voice pack in …` | `references/emotions.json` is missing (see [The GPT-SoVITS voice](voice.md#the-gpt-sovits-voice)) |
 | A scanned PDF is still empty | Install `rapidocr-onnxruntime` and `pypdfium2`, keep `RAG_OCR_ENABLED=true`, raise `RAG_OCR_MAX_PAGES` |
-| OpenRouter answers 401 | The key is written in `.env` as `OPENAI_API_KEY`; restart after changing it |
+| OpenRouter answers 401 | The key is written in `.env` as `API_KEY`; restart after changing it |
 | Ollama is unreachable | Start `ollama serve`; the default endpoint is `http://127.0.0.1:11434/v1` |
 | An MCP server was edited but tools did not change | `mcp_servers.json` is watched (a couple of seconds); check `python -m monika --tools` and `logs/mcp-<name>.log` |
 | Choppy voice | Close the programs saturating the server's GPU |

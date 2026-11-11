@@ -11,13 +11,11 @@ const groupsBox = document.getElementById('groups');
 const navBox = document.getElementById('settings-nav');
 const healthBox = document.getElementById('health');
 const healthNote = document.getElementById('health-note');
-const secretState = document.getElementById('secret-state');
 const providerState = document.getElementById('provider-state');
 const providerSelect = document.getElementById('provider-select');
 const providerUrl = document.getElementById('provider-url');
 const providerUrlField = document.getElementById('provider-url-field');
 const languageSelect = document.getElementById('language-select');
-const settingsFile = document.getElementById('settings-file');
 
 let values = {};   // name -> value as loaded, to know what actually changed
 const HEALTH_EVERY_MS = 5000;
@@ -122,7 +120,6 @@ function renderGroups(data) {
     navBox.append(link);
   });
   navBox.querySelector('a')?.classList.add('active');
-  settingsFile.textContent = data.settings_file || 'settings.json';
   languageSelect.value = data.language === 'en' ? 'en' : 'fr';
   providerSelect.value = data.provider || 'custom';
   providerUrl.value = data.base_url || '';
@@ -136,19 +133,11 @@ function updateProviderFields() {
   providerUrl.disabled = !custom;
 }
 
-function renderSecret(defined) {
-  secretState.textContent = defined
-    ? 'Une clé est configurée (sa valeur n’est jamais affichée).'
-    : 'Aucune clé configurée : le modèle ne répondra pas.';
-  secretState.className = defined ? 'hint' : 'hint warn';
-}
-
 async function load() {
   const result = await request('/api/settings');
   if (!result.ok) { say(result.error, 'error'); return; }
   if (result.data.language) setLanguage(result.data.language);
   renderGroups(result.data);
-  renderSecret(!!(result.data.secrets || {}).OPENAI_API_KEY);
   restartBox.hidden = true;
   say('');
 }
@@ -195,7 +184,7 @@ async function saveProvider() {
   const provider = providerSelect.value;
   const baseUrl = providerUrl.value.trim();
   if (provider === 'custom' && !baseUrl) {
-    providerState.textContent = "Indique l'URL de base du fournisseur custom.";
+    providerState.textContent = "Indique l'URL de base du fournisseur OpenAI Custom.";
     providerState.className = 'hint err';
     return;
   }
@@ -224,23 +213,9 @@ async function changeLanguage() {
   await load();
 }
 
-async function saveSecret() {
-  const input = document.getElementById('secret');
-  const value = input.value.trim();
-  if (!value) { say('La clé est vide.', 'error'); return; }
-  const result = await request('/api/settings/secret', 'POST', { name: 'OPENAI_API_KEY', value });
-  if (!result.ok) { say(result.error, 'error'); return; }
-  input.value = '';
-  await load();
-  restartBox.hidden = false;
-  restartBox.textContent = 'Clé enregistrée dans le .env : redémarre-moi pour qu’elle soit utilisée.';
-  say('Clé enregistrée.');
-}
-
 document.getElementById('save').addEventListener('click', save);
 document.getElementById('reload').addEventListener('click', load);
 document.getElementById('health-refresh').addEventListener('click', refreshHealth);
-document.getElementById('secret-save').addEventListener('click', saveSecret);
 document.getElementById('provider-save').addEventListener('click', saveProvider);
 providerSelect.addEventListener('change', updateProviderFields);
 languageSelect.addEventListener('change', changeLanguage);

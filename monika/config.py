@@ -11,7 +11,14 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from pydantic import Field, SecretStr, ValidationError, field_validator, model_validator
+from pydantic import (
+    AliasChoices,
+    Field,
+    SecretStr,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 from pydantic_settings import BaseSettings, JsonConfigSettingsSource, SettingsConfigDict
 
 from monika.i18n import normalize_language, set_language, tr
@@ -114,7 +121,7 @@ class Settings(BaseSettings):
     # `ollama` fill the address and model from PROVIDER_PRESETS when they are still the defaults.
     llm_provider: str = "custom"
     llm_base_url: str = DEFAULT_LLM_BASE_URL
-    openai_api_key: SecretStr = SecretStr("")
+    api_key: SecretStr = SecretStr("")
     model_name: str = DEFAULT_MODEL_NAME
     llm_temperature: float = Field(0.7, ge=0.0, le=2.0)
     llm_timeout_s: float = Field(120.0, gt=0)
@@ -310,7 +317,7 @@ class Settings(BaseSettings):
     # Local web page: 3D avatar and dashboard. 127.0.0.1 by default (this computer only). Opening it
     # on the network needs WEB_TOKEN: without it, anyone who reaches the port reads and writes it all.
     web_enabled: bool = True
-    web_port: int = Field(4228, ge=1024, le=65535)
+    web_port: int = Field(8765, ge=1024, le=65535)
     web_host: str = "127.0.0.1"  # WEB_HOST=0.0.0.0 answers on the network (with WEB_TOKEN)
     web_token: SecretStr = SecretStr("")  # empty = no token; the page keeps it in a cookie
 
@@ -515,8 +522,8 @@ class Settings(BaseSettings):
                 self.llm_base_url = preset["llm_base_url"]
             if self.model_name == DEFAULT_MODEL_NAME:
                 self.model_name = preset["model_name"]
-            if self.llm_provider == "ollama" and not self.openai_api_key.get_secret_value():
-                self.openai_api_key = SecretStr("ollama")
+            if self.llm_provider == "ollama" and not self.api_key.get_secret_value():
+                self.api_key = SecretStr("ollama")
         if not self.stt_prompt.strip():
             self.stt_prompt = tr("voice.stt_prompt")
         if self.loop_stop_after <= self.loop_warn_after:
@@ -624,13 +631,13 @@ def get_settings() -> Settings:
 # --- what the settings page may change ---------------------------------------------------------
 
 # Paths and secrets are edited by hand: writing one from the browser would turn the page into a way of
-# making Monika read arbitrary folders. OPENAI_API_KEY has its own one-line path below.
+# making Monika read arbitrary folders. API_KEY has its own one-line path below.
 NOT_EDITABLE = frozenset(
     {
         "monika_home",
         "rag_roots",
         "mcp_servers_file",
-        "openai_api_key",
+        "api_key",
         "tts_speakers_dir",
         "web_token",
         "obsidian_vault",
@@ -737,7 +744,7 @@ PROVIDER_PRESETS: dict[str, dict[str, str]] = {
     },
 }
 ENV_WRITABLE = frozenset(
-    {"OPENAI_API_KEY"}
+    {"API_KEY"}
 )  # The only secret the page may write, one line in .env
 _BOUNDS = frozenset(
     {"less_than", "less_than_equal", "greater_than", "greater_than_equal"}
@@ -914,7 +921,7 @@ def write_env_secret(name: str, value: str) -> None:
     if not replaced:
         out.append(f"{key}={value}")
     _atomic_write(ENV_FILE, "\n".join(out) + "\n")
-    get_settings().openai_api_key = SecretStr(value)
+    get_settings().api_key = SecretStr(value)
 
 
 def _read_json(path: Path | None = None) -> dict[str, Any]:

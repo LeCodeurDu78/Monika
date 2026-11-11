@@ -20,11 +20,22 @@ class UpdateStatus:
     current: str
     remote: str
     dirty: bool
+    ahead: int = 0
+    behind: int = 0
+    tracked: bool = True  # remote is the branch's upstream, not just the remote default HEAD
     error: str = ""
 
     @property
     def available(self) -> bool:
-        return bool(self.remote and self.current and self.remote != self.current)
+        if self.behind > 0:
+            return True
+        # Without an upstream, a different remote commit is the only signal there is.
+        return bool(
+            self.remote
+            and self.current
+            and self.remote != self.current
+            and not self.tracked
+        )
 
 
 def _git(*args: str, timeout: float = 10.0) -> str:
@@ -41,17 +52,28 @@ def _git(*args: str, timeout: float = 10.0) -> str:
     return result.stdout.strip()
 
 
+def _upstream() -> tuple[str, int, int]:
+    """The branch's upstream and (ahead, behind); RuntimeError when it has none."""
+    upstream = _git("rev-parse", "--short", "@{u}")
+    counts = _git("rev-list", "--left-right", "--count", "HEAD...@{u}").split()
+    return upstream, int(counts[0]), int(counts[1])
+
+
 def check() -> UpdateStatus:
-    """Read the local and remote HEAD; network failures become a message, never an exception."""
+    """Read the local and upstream state; network failures become a message, never an exception."""
     try:
         branch = _git("rev-parse", "--abbrev-ref", "HEAD") or "?"
         current = _git("rev-parse", "--short", "HEAD")
         dirty = bool(_git("status", "--porcelain"))
-        remote_line = _git("ls-remote", "origin", "HEAD")
-        remote = remote_line.split()[0][:7] if remote_line else ""
-        return UpdateStatus(branch, current, remote, dirty)
+        try:
+            remote, ahead, behind = _upstream()
+            return UpdateStatus(branch, current, remote, dirty, ahead, behind)
+        except RuntimeError:  # no upstream: fall back to the remote's default branch
+            remote_line = _git("ls-remote", "origin", "HEAD")
+            remote = remote_line.split()[0][:7] if remote_line else ""
+            return UpdateStatus(branch, current, remote, dirty, tracked=False)
     except Exception as exc:  # noqa: BLE001 - offline, no remote, git missing
-        return UpdateStatus("?", "", "", False, f"{type(exc).__name__}: {exc}")
+        return UpdateStatus("", "", "", False, error=f"{type(exc).__name__}: {exc}")
 
 
 def report() -> int:

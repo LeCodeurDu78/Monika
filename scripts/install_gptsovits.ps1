@@ -30,4 +30,4 @@ if ($Models) {
 Write-Host ""
 Write-Host "GPT-SoVITS est prêt dans $Dir"
 Write-Host "  Demarrage : cd $Dir; .venv\Scripts\python.exe api_v2.py -a 127.0.0.1 -p 9880"
-Write-Host "  Avec Monika : lancer-monika.sh (ou la commande equivalente Windows)"
+Write-Host "  Avec Monika : demarre api_v2.py puis 'python -m monika' (voir docs/voice.md)"

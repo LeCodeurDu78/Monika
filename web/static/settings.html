@@ -24,18 +24,18 @@
     <div class="settings-stack">
       <section class="panel settings-card" id="s-provider" aria-labelledby="h-provider">
         <h2 id="h-provider">Fournisseur</h2>
-        <p class="hint">OpenRouter, Ollama ou une API compatible OpenAI. Le choix remplit l'adresse et le modèle ; en custom, saisis l'adresse toi-même. La clé est écrite dans .env et demande un redémarrage.</p>
+        <p class="hint">OpenRouter, Ollama ou OpenAI Custom (une API compatible OpenAI). Le choix remplit l'adresse et le modèle ; en OpenAI Custom, saisis l'adresse toi-même. La clé est écrite dans .env et demande un redémarrage.</p>
         <div class="fields">
           <div class="field">
             <label for="provider-select">Fournisseur</label>
             <select id="provider-select">
-              <option value="custom">custom</option>
+              <option value="custom">OpenAI Custom</option>
               <option value="openrouter">OpenRouter</option>
               <option value="ollama">Ollama</option>
             </select>
           </div>
           <div class="field" id="provider-url-field" hidden>
-            <label for="provider-url">URL de base (custom)</label>
+            <label for="provider-url">URL de base (OpenAI Custom)</label>
             <input id="provider-url" type="url" autocomplete="off" spellcheck="false" placeholder="https://api.example.com/v1">
             <span class="hint">Adresse d'une API compatible OpenAI, généralement terminée par /v1. Ignorée pour OpenRouter et Ollama.</span>
           </div>
@@ -53,19 +53,6 @@
 
       <div id="groups" class="settings-groups"></div>
 
-      <section class="panel settings-card" id="s-secret" aria-labelledby="h-secret">
-        <h2 id="h-secret">Clé API</h2>
-        <p class="hint" id="secret-state"></p>
-        <div class="field">
-          <label for="secret">Nouvelle clé OpenAI (une seule ligne)</label>
-          <input id="secret" type="password" autocomplete="off">
-          <span class="hint">La valeur n’est jamais renvoyée par la page. Elle remplace la ligne OPENAI_API_KEY du fichier .env : redémarrage requis.</span>
-        </div>
-        <div class="row">
-          <button id="secret-save" type="button">Enregistrer la clé</button>
-        </div>
-      </section>
-
       <section class="panel settings-card" id="s-health" aria-labelledby="h-health">
         <h2 id="h-health">Santé</h2>
         <ul id="health" class="health-list">
@@ -82,8 +69,6 @@
 
   <footer class="settings-bar">
     <div class="settings-bar-text">
-      <p class="hint">Les réglages grisés sont figés par le fichier .env du projet : ils se modifient à la main.</p>
-      <p class="hint">Fichier : <code id="settings-file">settings.json</code></p>
       <p id="restart" class="notice" hidden></p>
     </div>
     <div class="row">

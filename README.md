@@ -35,7 +35,7 @@ browser. Everything is stored on your machine; only the LLM provider you configu
 | Updates | [docs/updating.md](docs/updating.md) |
 | Troubleshooting | [docs/troubleshooting.md](docs/troubleshooting.md) |
 
-MCP bridge to a helper (Hermes, nanoMuse): [bridges/README.md](bridges/README.md).
+Built-in MCP bridge to Hermes / nanoMuse (`HERMES_URL`, `NANOMUSE_URL`): [bridges/README.md](bridges/README.md).
 
 ## Installation
 
@@ -71,19 +71,24 @@ python -m monika --config     # check the configuration (secrets masked)
 python -m monika               # start Monika: the conversation happens in the page
 ```
 
-**Providers.** `LLM_PROVIDER=custom` keeps your own OpenAI-compatible endpoint.
+**Providers.** **OpenAI Custom** (`LLM_PROVIDER=custom`) keeps your own OpenAI-compatible endpoint.
 `openrouter` and `ollama` fill the address and model automatically:
 
 ```bash
 # OpenRouter
 LLM_PROVIDER=openrouter
-OPENAI_API_KEY=sk-or-...
+API_KEY=sk-or-...
 
 # Ollama, locally
 LLM_PROVIDER=ollama            # http://127.0.0.1:11434/v1, qwen2.5:7b
 ```
 
 The settings page has the same choice, with the key field. A provider change needs a restart.
+
+To see the wizard without touching your configuration, `python -m monika --setup --demo` asks the
+same questions in a temporary folder and prints the `.env` and `settings.json` it would have
+written (the key is masked). `./scripts/install.sh --demo` shows the installer steps and then runs
+that demo wizard, installing nothing.
 
 **Speech recognition** uses **faster-whisper**, running locally on the CPU; the model
 (`STT_MODEL`, `small` by default) is downloaded on first use and `STT_LANGUAGE` sets the spoken

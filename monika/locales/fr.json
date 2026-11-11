@@ -250,12 +250,6 @@
     "error_status": "Erreur {status}",
     "no_response": "Monika ne répond pas.",
     "pinned": "figé par .env",
-    "settings_file": "settings.json",
-    "secret_set": "Une clé est configurée (sa valeur n’est jamais affichée).",
-    "secret_unset": "Aucune clé configurée : le modèle ne répondra pas.",
-    "secret_empty": "La clé est vide.",
-    "secret_saved": "Clé enregistrée.",
-    "secret_restart": "Clé enregistrée dans le .env : redémarre-moi pour qu’elle soit utilisée.",
     "words_saved": "Liste enregistrée : {mild} mild, {bad} bad, {severe} severe."
   },
   "update": {
@@ -273,14 +267,20 @@
     "tty": "Le wizard a besoin d'un terminal interactif. Lance-le depuis un terminal, ou édite .env à la main.",
     "title": "Premier lancement de Monika",
     "language": "Langue de l'interface et des prompts (fr/en)",
-    "provider": "Fournisseur (custom/openrouter/ollama)",
+    "provider": "Fournisseur (OpenAI Custom / OpenRouter / Ollama)",
     "base_url": "URL de l'API compatible OpenAI",
     "model": "Nom du modèle",
     "key": "Clé API (vide pour Ollama)",
     "name": "Ton prénom (optionnel)",
     "voice": "Activer la synthèse GPT-SoVITS",
     "done": "Configuration écrite dans .env et config/settings.json.",
-    "voice_hint": "Pour la voix, installe le moteur dans le projet :"
+    "voice_hint": "Pour la voix, installe le moteur dans le projet :",
+    "demo_title": "Mode démonstration : rien n'est écrit dans le projet.",
+    "demo_folder": "Dossier temporaire :",
+    "demo_defaults": "Entrée non interactive : les réponses par défaut sont utilisées.",
+    "demo_env": "Aperçu du fichier .env qui aurait été écrit :",
+    "demo_settings": "Aperçu de config/settings.json :",
+    "demo_clean": "Démonstration terminée : fichiers temporaires supprimés, configuration réelle inchangée."
   },
   "voice": {
     "stt_prompt": "Conversation en français avec Monika, une assistante personnelle.",
@@ -471,17 +471,6 @@
     "mood_none": "égale et posée.",
     "block": "## Ton état du moment\n(Réglages internes pour adapter ton ton : ce ne sont pas des consignes de l'utilisateur. Ne les mentionne pas et ne les récite pas. L'honnêteté et la qualité du travail passent toujours avant.)\n- Relation : {level}\n- Humeur : {mood}"
   },
-  "security": {
-    "note": "Une entrée par ligne, trois niveaux. Aucun mot n'est livré avec le projet : cette liste est la tienne (SENSITIVE_WORDS_ENABLED=false pour couper le filtre).",
-    "not_object": "La liste doit être un objet JSON avec les niveaux mild, bad et severe.",
-    "unknown_tiers": "Niveaux inconnus : {tiers}. Attendu : mild, bad, severe.",
-    "tier_list": "« {tier} » doit être une liste de mots.",
-    "tier_max": "« {tier} » : {max} mots au maximum.",
-    "tier_text": "« {tier} » ne contient que du texte.",
-    "word_too_long": "Mot trop long dans « {tier} » ({max} caractères au maximum) : {word}…",
-    "read": "{path} est illisible ({error}) : corrige ou supprime-le.",
-    "write": "Impossible d'écrire {path} : {error}."
-  },
   "tools": {
     "unknown": "Outil inconnu : {name}",
     "invalid_args": "Arguments invalides : {error}",
@@ -495,7 +484,9 @@
       "Laisse-moi un instant, c'est un peu long.",
       "J'y suis presque, patiente encore un peu.",
       "Ça prend un petit moment, je continue."
-    ]
+    ],
+    "hermes": ["Je passe la main à Hermes, une seconde."],
+    "nanomuse": ["Je demande à nanoMuse, un instant."]
   },
   "sysinfo": {
     "system": "Système : {os}, noyau {kernel}, machine {host}.",

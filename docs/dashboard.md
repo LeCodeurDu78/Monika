@@ -84,7 +84,7 @@ internet. HTTPS is also what gives the phone the microphone.
 
 ## Settings page (`/settings`)
 
-A "Settings" link in the header opens this page (same server). It has three blocks:
+A "Settings" link in the header opens this page (same server). It has two blocks:
 
 - **Health**: seven indicators — LLM, speech recognition, GPT-SoVITS voice, MCP servers, fast
   memory, documents, local page. Each probe is bounded to 1.5 s and launched in parallel; the
@@ -96,20 +96,19 @@ A "Settings" link in the header opens this page (same server). It has three bloc
   documents, voice, page). Keys defined in `.env` are **greyed out and marked**: `.env`
   keeps precedence, the page does not pretend to control them, and the API **refuses** them (400)
   even when called by hand. "Save" validates then writes the file named by
-  `MONIKA_SETTINGS_FILE` (default `<MONIKA_HOME>/settings.json`; the installer uses
-  `config/settings.json`) in `0600`, atomic write, and **applies live** what can
+  `MONIKA_SETTINGS_FILE` (`config/settings.json` as selected by `.env.example`; comment the
+  line to use `<MONIKA_HOME>/settings.json`) in `0600`, atomic write, and **applies live** what can
   be applied (temperature, `MAX_STEPS`, thresholds, roles, `PERSONA_TEXT`…); a banner lists the keys that
   require a restart (port, URL, models, devices, index). **All or nothing**: an out-of-range
   value is refused with a message and writes nothing.
 - **Provider and language**: a selector applies OpenRouter or Ollama (address, model, key),
   and another switches the whole interface between French and English immediately. Both write
   their value to `.env`, because `.env` has priority; the provider change asks for a restart,
-  the language does not.
+  the language does not. The key is never sent back by the page: it replaces the single
+  `API_KEY` line in the project's `.env` (one line, without a newline, file in `0600`) and
+  needs a restart.
 - **MCP reload**: `mcp_servers.json` is watched. An edit closes the sessions, re-reads the file
   and reconnects within a couple of seconds, without restarting Monika.
-- **API key**: the page only says "set" or "not set" and never shows the
-  value. Saving replaces the single `OPENAI_API_KEY` line in the project's `.env` (one line, without
-  a newline, file in `0600`); restart required.
 
 What the page **cannot** change: `MONIKA_HOME`, the indexed folders (`RAG_ROOTS`), the
 MCP servers file and the voice folder — writing a path from the browser would make the

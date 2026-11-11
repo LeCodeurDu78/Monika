@@ -96,15 +96,65 @@ def test_cross_origin_write_is_refused() -> None:
         return None
 
     app = create_app(Hub(), snapshot, actions={"chat_stop": action})
-    with TestClient(app) as page:
+    with TestClient(app, base_url="http://127.0.0.1") as page:
         refused = page.post(
             "/api/chat/stop",
             headers={"Origin": "https://evil.example"},
         )
         allowed = page.post(
             "/api/chat/stop",
-            headers={"Origin": "http://testserver"},
+            headers={"Origin": "http://127.0.0.1"},
         )
 
         assert refused.status_code == 403
+        assert allowed.status_code == 200
+
+
+def test_a_rebinding_name_is_refused_without_a_token() -> None:
+    """A DNS name resolving to 127.0.0.1 must not pass as same-origin on the open page."""
+
+    async def action() -> None:
+        return None
+
+    app = create_app(Hub(), snapshot, actions={"chat_stop": action})
+    with TestClient(app, base_url="http://127.0.0.1") as page:
+        refused = page.post(
+            "/api/chat/stop",
+            headers={"Host": "evil.example", "Origin": "http://evil.example"},
+        )
+
+        assert refused.status_code == 403
+
+
+def test_a_lan_address_is_allowed_and_a_hostname_needs_the_token() -> None:
+    async def action() -> None:
+        return None
+
+    app = create_app(Hub(), snapshot, actions={"chat_stop": action})
+    with TestClient(app, base_url="http://127.0.0.1") as page:
+        lan = page.post(
+            "/api/chat/stop",
+            headers={
+                "Host": "192.168.1.10:8765",
+                "Origin": "http://192.168.1.10:8765",
+            },
+        )
+
+        assert lan.status_code == 200
+
+    secured = create_app(Hub(), snapshot, actions={"chat_stop": action}, token=TOKEN)
+    with TestClient(secured, base_url="https://monika.tailnet.ts.net") as page:
+        missing_token = page.post(
+            "/api/chat/stop",
+            headers={"Origin": "https://monika.tailnet.ts.net"},
+        )
+        allowed = page.post(
+            "/api/chat/stop",
+            headers={
+                "Origin": "https://monika.tailnet.ts.net",
+                "X-Monika-Token": TOKEN,
+            },
+        )
+
+        assert missing_token.status_code == 401  # the origin is accepted, the token is not
         assert allowed.status_code == 200

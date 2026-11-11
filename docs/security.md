@@ -7,7 +7,7 @@ Everything is stored in `~/.config/monika` (configurable via `MONIKA_HOME`, fold
 | `memory/` | Events and quoted facts (`notes.json`, `0600`); old notebooks archived next to it |
 | `rag/` | Document index (local Qdrant) and SQLite manifest |
 | `character/` | `state.json` (emotions and relationship) and `journal.json` (Monika's notes about you), in `0600`; delete them to reset everything |
-| `settings.json` | Settings changed from `/settings` (`.env` takes precedence), in `0600` |
+| `config/settings.json` | Settings changed from `/settings` (`.env` takes precedence), in `0600`; comment `MONIKA_SETTINGS_FILE` to keep it in `MONIKA_HOME` instead |
 | `voice/` | Your reference voice, `models/`, `cache/` |
 | `tool_results/` | Large tool results (purged after 14 days) |
 | `logs/` | `audit.jsonl` and MCP server logs |
@@ -31,8 +31,8 @@ Everything is stored in `~/.config/monika` (configurable via `MONIKA_HOME`, fold
 ## Access to the page
 
 - **Without `WEB_TOKEN`**, the page is open to anything that reaches the port — memories, journal,
-  sessions, settings, sending messages and commands. The API key is never read back
-  (the page only receives a boolean), everything else is. With a token, every route, every
+  sessions, settings, sending messages and commands. The API key is never read back,
+  everything else is. With a token, every route, every
   static file and the WebSocket require it; it is accepted in the `X-Monika-Token` header, in
   `?token=` or in a cookie (HttpOnly, SameSite strict, one year). Writes (`POST`, `PUT`,
   `DELETE`) and the WebSocket now require a **same-origin** `Origin` (a missing `Origin`, as

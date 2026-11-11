@@ -66,7 +66,7 @@ class LLMClient:
         self._client = AsyncOpenAI(
             base_url=settings.llm_base_url,
             # Local servers often need no key, but the SDK refuses an empty one
-            api_key=settings.openai_api_key.get_secret_value() or "sans-cle",
+            api_key=settings.api_key.get_secret_value() or "sans-cle",
             timeout=settings.llm_timeout_s,
             max_retries=settings.llm_max_retries,
             http_client=http_client,
@@ -175,7 +175,7 @@ class LLMClient:
                 f"Impossible de joindre le LLM à {url} (réseau, URL ou serveur arrêté)."
             )
         if isinstance(exc, (openai.AuthenticationError, openai.PermissionDeniedError)):
-            return LLMError(f"Clé API refusée par {url} : vérifie OPENAI_API_KEY.")
+            return LLMError(f"Clé API refusée par {url} : vérifie API_KEY.")
         if isinstance(exc, openai.NotFoundError):
             return LLMError(
                 f"Modèle ou adresse introuvable (MODEL_NAME={model}, LLM_BASE_URL={url})."

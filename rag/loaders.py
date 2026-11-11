@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from rag.filters import find_secret
 from rag.ocr import OcrOptions, ocr_pdf
+
+log = logging.getLogger(__name__)
 
 TEXT_EXT = {
     ".txt",
@@ -210,9 +213,9 @@ def _load_pdf(path: Path, ocr: OcrOptions | None = None) -> Loaded:
                     for number, text in ocr_pdf(path, ocr, weak).items():
                         if len(text.strip()) > len(texts.get(number, "").strip()):
                             texts[number] = text
-                except Exception:
+                except Exception as exc:
                     # OCR is optional: a missing wheel or a broken page never loses the text layer.
-                    pass
+                    log.debug("OCR ignoré pour %s : %s", path, exc)
         pages = [(n, t) for n, t in sorted(texts.items()) if t.strip()]
     except SkipFile:
         raise
